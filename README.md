@@ -22,3 +22,6 @@ graph TD
     E[ChessAI] --> F[Position Analysis]
     E --> G[Move Generation]
     E --> H[Model Integration]
+
+### Demo
+![Chess AI Demo](./demo.gif)

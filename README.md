@@ -24,4 +24,4 @@ graph TD
     E --> H[Model Integration]
 
 ### Demo
-![Chess AI Demo](./demo.gif)
+![](./demo.gif)

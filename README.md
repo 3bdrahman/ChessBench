@@ -13,16 +13,6 @@ The system focuses on:
 - **Stagnation Detection**: Position repetition tracking and countermeasures
 - **Comprehensive Statistics**: Capture tracking, check frequency, game duration
 
-### Architecture
-```mermaid
-graph TD
-    A[ChessGame] --> B[Game Management]
-    A --> C[Move Validation]
-    A --> D[Stats Tracking]
-    E[ChessAI] --> F[Position Analysis]
-    E --> G[Move Generation]
-    E --> H[Model Integration]
-```
 ### Demo
 
 ![](./demo.gif)

@@ -1,4 +1,4 @@
-# Chess AI Benchmark System
+# AI Chess Benchmark
 
 ## Overview
 AI battle system that pits different AI models against each other, featuring sophisticated position analysis and tactical decision-making. 

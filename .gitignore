@@ -1,0 +1,31 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test & coverage
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Environments
+.env
+.venv
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tooling
+.ruff_cache/
+.mypy_cache/
+
+# Build
+dist/
+build/
+*.egg-info/

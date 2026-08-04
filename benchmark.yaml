@@ -1,0 +1,34 @@
+# Chess LLM Benchmark Configuration
+# Copy to benchmark.yaml and customize
+
+# Game rules
+time_control_seconds_per_move: 30
+opening_book: "eco_balanced"  # "eco_balanced", "eco_all", "startpos"
+games_per_pairing: 10
+colors: "alternating"  # "alternating", "fixed"
+
+# Model params (benchmark mode - temperature 0 for reproducibility)
+temperature: 0.0
+max_tokens: 100
+seed: 42
+
+# Concurrency
+max_parallel_games: 4
+
+# Players: list of "provider:model_id"
+# Available providers: openai, anthropic, google, nim, openrouter, ollama
+# Use `python -m benchmark.runner --players openai:gpt-4o anthropic:claude-3-5-sonnet` to override
+players:
+  - "openai:gpt-4o"
+  - "anthropic:claude-3-5-sonnet-20241022"
+  - "google:gemini-1.5-pro"
+  - "openrouter:anthropic/claude-3.5-sonnet"
+
+# API keys - loaded from environment variables:
+# OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, NIM_API_KEY, OPENROUTER_API_KEY
+# Or set here (not recommended for shared configs)
+api_keys: {}
+
+# Output
+output_dir: "runs"
+run_name: null  # Auto-generated from timestamp if null

@@ -1,0 +1,71 @@
+"""Anthropic provider implementation."""
+
+import os
+from typing import Optional
+from anthropic import AsyncAnthropic
+from .base import ModelProvider, ModelInfo, CompletionResult, ChatMessage
+from .registry import register_provider
+
+
+@register_provider
+class AnthropicProvider(ModelProvider):
+    name = "anthropic"
+    requires_api_key = True
+    
+    def validate_key(self, api_key: str) -> bool:
+        return api_key.startswith("sk-ant-") and len(api_key) > 30
+    
+    async def list_models(self, api_key: str) -> list[ModelInfo]:
+        # Anthropic doesn't have a models endpoint, use known models
+        known_models = [
+            ("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet"),
+            ("claude-3-5-haiku-20241022", "Claude 3.5 Haiku"),
+            ("claude-3-opus-20240229", "Claude 3 Opus"),
+            ("claude-3-sonnet-20240229", "Claude 3 Sonnet"),
+            ("claude-3-haiku-20240307", "Claude 3 Haiku"),
+        ]
+        return [
+            ModelInfo(
+                id=model_id,
+                name=name,
+                provider="anthropic",
+                context_window=200000,
+            )
+            for model_id, name in known_models
+        ]
+    
+    async def complete(self, api_key: str, model: str, messages: list[ChatMessage], **params) -> CompletionResult:
+        client = AsyncAnthropic(api_key=api_key)
+        
+        # Convert messages - Anthropic uses system prompt separately
+        system_prompt = ""
+        user_messages = []
+        for m in messages:
+            if m.role == "system":
+                system_prompt = m.content
+            else:
+                user_messages.append({"role": m.role, "content": m.content})
+        
+        temperature = params.get("temperature", 0.1)
+        max_tokens = params.get("max_tokens", 100)
+        
+        import time
+        start = time.time()
+        
+        response = await client.messages.create(
+            model=model,
+            system=system_prompt if system_prompt else None,
+            messages=user_messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        
+        latency_ms = int((time.time() - start) * 1000)
+        
+        return CompletionResult(
+            text=response.content[0].text if response.content else "",
+            tokens_in=response.usage.input_tokens if response.usage else None,
+            tokens_out=response.usage.output_tokens if response.usage else None,
+            latency_ms=latency_ms,
+            raw_response=response.model_dump() if hasattr(response, 'model_dump') else None
+        )

@@ -31,7 +31,7 @@ jobs:
       run: ruff check .
     
     - name: Run type checking (mypy)
-      run: mypy .
+      run: mypy --config-file pyproject.toml .
     
     - name: Run tests with coverage
       run: |

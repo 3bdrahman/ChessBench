@@ -1,9 +1,8 @@
 """OpenAI provider implementation."""
 
-import os
-from typing import Optional
 from openai import AsyncOpenAI
-from .base import ModelProvider, ModelInfo, CompletionResult, ChatMessage
+
+from .base import ChatMessage, CompletionResult, ModelInfo, ModelProvider
 from .registry import register_provider
 
 
@@ -11,14 +10,14 @@ from .registry import register_provider
 class OpenAIProvider(ModelProvider):
     name = "openai"
     requires_api_key = True
-    
+
     def validate_key(self, api_key: str) -> bool:
         return api_key.startswith("sk-") and len(api_key) > 20
-    
+
     async def list_models(self, api_key: str) -> list[ModelInfo]:
         client = AsyncOpenAI(api_key=api_key)
         models = await client.models.list()
-        
+
         # Filter for chat models
         chat_models = []
         for model in models.data:
@@ -31,29 +30,29 @@ class OpenAIProvider(ModelProvider):
                     context_window=128000 if "gpt-4" in model_id else 8192,
                 ))
         return chat_models
-    
+
     async def complete(self, api_key: str, model: str, messages: list[ChatMessage], **params) -> CompletionResult:
         client = AsyncOpenAI(api_key=api_key)
-        
+
         # Convert messages
         openai_messages = [{"role": m.role, "content": m.content} for m in messages]
-        
+
         # Extract common params
         temperature = params.get("temperature", 0.1)
         max_tokens = params.get("max_tokens", 100)
-        
+
         import time
         start = time.time()
-        
+
         response = await client.chat.completions.create(
             model=model,
             messages=openai_messages,
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        
+
         latency_ms = int((time.time() - start) * 1000)
-        
+
         return CompletionResult(
             text=response.choices[0].message.content,
             tokens_in=response.usage.prompt_tokens if response.usage else None,

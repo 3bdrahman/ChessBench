@@ -1,16 +1,15 @@
 """Replay engine for demo chess games."""
 
 import asyncio
-import os
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Callable, Awaitable
 
 import chess
 import chess.pgn
 
-from models.game_state import GameMove, GameStats
 from game.async_game import GameState
+from models.game_state import GameMove, GameStats
 
 _GAMES_DIR = Path(__file__).parent / "games"
 

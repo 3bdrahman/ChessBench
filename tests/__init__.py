@@ -1,3 +1,3 @@
 """Test configuration."""
 
-pytest_plugins = []
+pytest_plugins: list = []  # type: ignore[assignment]

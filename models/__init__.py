@@ -1,16 +1,16 @@
 """Models package."""
 
-from .chess_ai import ChessAI, ModelType, OpenAIChessAI, AnthropicChessAI, LlamaChessAI
-from .game_state import GameMove, GameStats
+from .chess_ai import AnthropicChessAI, ChessAI, LlamaChessAI, ModelType, OpenAIChessAI
 from .evaluation import PositionEvaluator
+from .game_state import GameMove, GameStats
 
 __all__ = [
-    "ChessAI",
-    "ModelType", 
-    "OpenAIChessAI",
     "AnthropicChessAI",
-    "LlamaChessAI",
+    "ChessAI",
     "GameMove",
     "GameStats",
+    "LlamaChessAI",
+    "ModelType",
+    "OpenAIChessAI",
     "PositionEvaluator",
 ]

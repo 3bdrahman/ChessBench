@@ -2,13 +2,12 @@
 
 import asyncio
 import json
-from typing import Dict, List, Optional, Any
+import re
 from dataclasses import dataclass
 from enum import Enum
-from providers.chess_ai import ProviderChessAI
-from providers.base import ChatMessage, CompletionResult
+
 from providers import get_provider
-import re
+from providers.base import ChatMessage
 
 
 class JudgmentCriteria(Enum):
@@ -29,7 +28,7 @@ class ReasoningJudgment:
     fen: str
     move_uci: str
     reasoning_trace: str
-    scores: Dict[JudgmentCriteria, float]  # 0-10 scale
+    scores: dict[JudgmentCriteria, float]  # 0-10 scale
     overall_score: float
     feedback: str
     judge_model: str
@@ -41,16 +40,16 @@ class GameJudgment:
     game_id: str
     white_player: str
     black_player: str
-    move_judgments: List[ReasoningJudgment]
-    white_avg_scores: Dict[JudgmentCriteria, float]
-    black_avg_scores: Dict[JudgmentCriteria, float]
+    move_judgments: list[ReasoningJudgment]
+    white_avg_scores: dict[JudgmentCriteria, float]
+    black_avg_scores: dict[JudgmentCriteria, float]
     correlation_with_result: float
     timestamp: str
 
 
 class LLMJudge:
     """LLM-as-Judge for evaluating chess reasoning quality."""
-    
+
     JUDGE_PROMPT = """You are an expert chess analyst evaluating the quality of an LLM's chess reasoning.
 
 You will be given:
@@ -96,7 +95,7 @@ Do not include any other text. Scores must be numbers 0-10 (can be decimal)."""
         if not self.provider.validate_key(judge_api_key):
             raise ValueError(f"Invalid API key for {judge_provider}")
         self.judge_model_name = f"{judge_provider}:{judge_model}"
-    
+
     async def _complete_with_retry(self, prompt: str, max_retries: int = 3) -> str:
         """Complete a prompt with retry logic."""
         for attempt in range(max_retries):
@@ -109,22 +108,22 @@ Do not include any other text. Scores must be numbers 0-10 (can be decimal)."""
                 )
                 if result.text and result.text.strip():
                     return result.text.strip()
-            except Exception as e:
+            except Exception:
                 if attempt == max_retries - 1:
                     raise
                 await asyncio.sleep(0.5 * (attempt + 1))
         raise ValueError(f"Failed to get valid response after {max_retries} attempts")
-    
+
     async def judge_reasoning(
-        self, 
-        fen: str, 
-        move_uci: str, 
+        self,
+        fen: str,
+        move_uci: str,
         reasoning_trace: str,
         move_number: int,
         player: str
     ) -> ReasoningJudgment:
         """Judge a single move's reasoning."""
-        
+
         # Build the evaluation prompt
         eval_prompt = f"""{self.JUDGE_PROMPT}
 
@@ -135,14 +134,14 @@ Player: {player}
 
 Reasoning trace:
 {reasoning_trace}"""
-        
+
         # Get judgment from judge LLM with retry logic
         try:
             result = await self._complete_with_retry(eval_prompt)
-            
+
             # Extract JSON from response
             judgment_data = self._extract_json(result)
-            
+
             if judgment_data:
                 scores = {
                     JudgmentCriteria.TACTICAL_AWARENESS: judgment_data.get("tactical_awareness", 0),
@@ -156,15 +155,15 @@ Reasoning trace:
                 overall = scores[JudgmentCriteria.OVERALL_QUALITY]
             else:
                 # Fallback scoring
-                scores = {c: 5.0 for c in JudgmentCriteria}
+                scores = dict.fromkeys(JudgmentCriteria, 5.0)
                 feedback = "Failed to parse judgment"
                 overall = 5.0
-            
+
         except Exception as e:
-            scores = {c: 0.0 for c in JudgmentCriteria}
-            feedback = f"Judgment error: {str(e)}"
+            scores = dict.fromkeys(JudgmentCriteria, 0.0)
+            feedback = f"Judgment error: {e!s}"
             overall = 0.0
-        
+
         return ReasoningJudgment(
             move_number=move_number,
             player=player,
@@ -176,8 +175,8 @@ Reasoning trace:
             feedback=feedback,
             judge_model=self.judge_model_name
         )
-    
-    def _extract_json(self, text: str) -> Optional[Dict]:
+
+    def _extract_json(self, text: str) -> dict | None:
         """Extract JSON object from text."""
         # Try to find JSON object
         json_match = re.search(r'\{.*\}', text, re.DOTALL)
@@ -186,7 +185,7 @@ Reasoning trace:
                 return json.loads(json_match.group())
             except json.JSONDecodeError:
                 pass
-        
+
         # Try to find JSON in code blocks
         code_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
         if code_match:
@@ -194,19 +193,19 @@ Reasoning trace:
                 return json.loads(code_match.group(1))
             except json.JSONDecodeError:
                 pass
-        
+
         return None
-    
+
     async def judge_game(
-        self, 
+        self,
         game_id: str,
         white_player: str,
         black_player: str,
-        moves_data: List[Dict]
+        moves_data: list[dict]
     ) -> GameJudgment:
         """Judge all moves in a game."""
         move_judgments = []
-        
+
         for move_data in moves_data:
             judgment = await self.judge_reasoning(
                 fen=move_data["fen_before"],
@@ -216,16 +215,16 @@ Reasoning trace:
                 player=move_data["player"]
             )
             move_judgments.append(judgment)
-            
+
             # Small delay to avoid rate limits
             await asyncio.sleep(0.1)
-        
+
         # Calculate average scores per player
-        white_scores = {c: 0.0 for c in JudgmentCriteria}
-        black_scores = {c: 0.0 for c in JudgmentCriteria}
+        white_scores = dict.fromkeys(JudgmentCriteria, 0.0)
+        black_scores = dict.fromkeys(JudgmentCriteria, 0.0)
         white_count = 0
         black_count = 0
-        
+
         for j in move_judgments:
             if j.player == white_player:
                 for c in JudgmentCriteria:
@@ -235,19 +234,19 @@ Reasoning trace:
                 for c in JudgmentCriteria:
                     black_scores[c] += j.scores[c]
                 black_count += 1
-        
+
         for c in JudgmentCriteria:
             white_scores[c] = white_scores[c] / white_count if white_count > 0 else 0
             black_scores[c] = black_scores[c] / black_count if black_count > 0 else 0
-        
+
         # Calculate correlation with result (simplified)
         # Higher reasoning quality should correlate with better results
         white_overall = white_scores[JudgmentCriteria.OVERALL_QUALITY]
         black_overall = black_scores[JudgmentCriteria.OVERALL_QUALITY]
-        
+
         # Simple correlation: if white won and white_overall > black_overall, positive correlation
         correlation = 0.0  # Would need actual game result
-        
+
         return GameJudgment(
             game_id=game_id,
             white_player=white_player,
@@ -262,11 +261,10 @@ Reasoning trace:
 
 async def demo():
     """Demo the LLM judge with sample reasoning."""
-    import os
-    
+
     # This would need actual API keys
     # judge = LLMJudge("openai", "gpt-4o", os.getenv("OPENAI_API_KEY"))
-    
+
     # Sample reasoning to test JSON extraction
     sample_reasoning = """{
   "tactical_awareness": 8.5,
@@ -277,11 +275,11 @@ async def demo():
   "overall_quality": 7.8,
   "feedback": "Strong tactical vision with accurate calculation of the knight fork. Good justification for the move. Could improve by acknowledging the opponent's counterplay on the c-file."
 }"""
-    
+
     judge = LLMJudge("mock", "mock", "")
     extracted = judge._extract_json(sample_reasoning)
     print("Extracted judgment:", extracted)
-    
+
     # Test with text wrapper
     wrapped = f"Here is my evaluation:\n\n```json\n{sample_reasoning}\n```\n\nEnd."
     extracted2 = judge._extract_json(wrapped)

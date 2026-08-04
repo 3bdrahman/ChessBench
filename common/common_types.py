@@ -2,7 +2,6 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
 
 
 @dataclass
@@ -11,9 +10,9 @@ class ModelInfo:
     id: str
     name: str
     provider: str
-    context_window: Optional[int] = None
-    pricing_tier: Optional[str] = None
-    capabilities: Optional[list[str]] = None
+    context_window: int | None = None
+    pricing_tier: str | None = None
+    capabilities: list[str] | None = None
 
 
 @dataclass
@@ -27,10 +26,10 @@ class ChatMessage:
 class CompletionResult:
     """Result from a completion request."""
     text: str
-    tokens_in: Optional[int] = None
-    tokens_out: Optional[int] = None
-    latency_ms: Optional[int] = None
-    raw_response: Optional[dict] = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    latency_ms: int | None = None
+    raw_response: dict | None = None
 
 
 class ModelProvider(ABC):
@@ -42,14 +41,11 @@ class ModelProvider(ABC):
     @abstractmethod
     async def list_models(self, api_key: str) -> list["ModelInfo"]:
         """List available models from the provider."""
-        pass
 
     @abstractmethod
     async def complete(self, api_key: str, model: str, messages: list["ChatMessage"], **params) -> "CompletionResult":
         """Complete a chat conversation."""
-        pass
 
     @abstractmethod
     def validate_key(self, api_key: str) -> bool:
         """Validate an API key format (doesn't make network calls)."""
-        pass

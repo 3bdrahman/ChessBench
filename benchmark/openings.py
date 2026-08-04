@@ -1,9 +1,8 @@
 """ECO opening book for benchmark games."""
 
-from typing import List, Dict, Optional
-import chess
 import random
 
+import chess
 
 # Standard ECO openings (100 positions, ~2-3 moves deep)
 # Format: (ECO code, name, moves in UCI, starting FEN if not initial)
@@ -26,7 +25,7 @@ ECO_OPENINGS = [
     ("A07", "King's Indian Attack", ["g1f3", "g8f6", "g2g3", "d7d5"]),
     ("A08", "Reti Opening", ["g1f3", "d7d5", "c2c4", "e7e6"]),
     ("A09", "Reti Opening", ["g1f3", "d7d5", "c2c4", "g8f6"]),
-    
+
     # A10-A19: English Opening
     ("A10", "English Opening", ["c2c4", "e7e5"]),
     ("A11", "English, Four Knights", ["c2c4", "g8f6", "b1c3", "e7e5"]),
@@ -38,7 +37,7 @@ ECO_OPENINGS = [
     ("A17", "English, Mikenas-Carls", ["c2c4", "g8f6", "d2d4", "e7e6", "b1c3"]),
     ("A18", "English, Anglo-Indian", ["c2c4", "g8f6", "g2g3", "d7d5"]),
     ("A19", "English, Anglo-Indian", ["c2c4", "g8f6", "g2g3", "d7d5", "c1g2"]),
-    
+
     # A20-A29: English Opening
     ("A20", "English Opening", ["c2c4", "e7e5", "g2g3"]),
     ("A21", "English, Bremen System", ["c2c4", "e7e5", "g2g3", "g8f6"]),
@@ -50,7 +49,7 @@ ECO_OPENINGS = [
     ("A27", "English, Closed", ["c2c4", "g8f6", "g2g3", "d7d5", "c1g2", "c7c6", "b1c3"]),
     ("A28", "English, Closed", ["c2c4", "g8f6", "g2g3", "e7e6", "b1c3", "f8e7"]),
     ("A29", "English, Four Knights, Kingside Fianchetto", ["c2c4", "g8f6", "g2g3", "e7e5", "b1c3", "b8c6", "c1g2"]),
-    
+
     # A30-A39: English, Symmetrical
     ("A30", "English, Symmetrical", ["c2c4", "c7c5"]),
     ("A31", "English, Symmetrical", ["c2c4", "c7c5", "b1c3"]),
@@ -62,7 +61,7 @@ ECO_OPENINGS = [
     ("A37", "English, Symmetrical", ["c2c4", "c7c5", "g1f3", "g8f6"]),
     ("A38", "English, Symmetrical", ["c2c4", "c7c5", "g1f3", "g8f6", "g2g3"]),
     ("A39", "English, Symmetrical", ["c2c4", "c7c5", "g1f3", "g8f6", "g2g3", "c1g2"]),
-    
+
     # A40-A49: Queen's Pawn Games
     ("A40", "Queen's Pawn Game", ["d2d4", "d7d5"]),
     ("A41", "Queen's Pawn Game", ["d2d4", "d7d5", "g1f3"]),
@@ -74,7 +73,7 @@ ECO_OPENINGS = [
     ("A47", "Queen's Indian Defense", ["d2d4", "g8f6", "c2c4", "e7e6", "b1c3", "c1b4"]),
     ("A48", "King's Indian Defense", ["d2d4", "g8f6", "c2c4", "g7g6"]),
     ("A49", "King's Indian Defense", ["d2d4", "g8f6", "c2c4", "g7g6", "b1c3", "f8g7"]),
-    
+
     # A50-A59: Queen's Pawn Games
     ("A50", "Queen's Pawn Game", ["d2d4", "d7d5", "c2c4"]),
     ("A51", "Budapest Gambit", ["d2d4", "g8f6", "c2c4", "e7e5"]),
@@ -86,7 +85,7 @@ ECO_OPENINGS = [
     ("A57", "Benko Gambit", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "b7b5"]),
     ("A58", "Benko Gambit", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "b7b5", "c4b5", "a7a6"]),
     ("A59", "Benko Gambit", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "b7b5", "c4b5", "a7a6", "b1c3"]),
-    
+
     # A60-A69: Benoni Defense
     ("A60", "Benoni Defense", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "e7e6"]),
     ("A61", "Benoni Defense", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "e7e6", "b1c3", "e6e5"]),
@@ -98,7 +97,7 @@ ECO_OPENINGS = [
     ("A67", "Modern Benoni", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "e7e6", "b1c3", "e6e5", "d5e6", "f8e7", "e2e4", "g7g6", "f2f4", "f8g7"]),
     ("A68", "Modern Benoni", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "e7e6", "b1c3", "e6e5", "d5e6", "f8e7", "e2e4", "g7g6", "f2f4", "f8g7", "g1f3"]),
     ("A69", "Modern Benoni", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "e7e6", "b1c3", "e6e5", "d5e6", "f8e7", "e2e4", "g7g6", "f2f4", "f8g7", "g1f3", "g8h8"]),
-    
+
     # A70-A79: Benoni Defense
     ("A70", "Modern Benoni", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "e7e6", "b1c3", "e6e5", "d5e6", "f8e7", "e2e4", "g7g6", "f2f4", "f8g7", "g1f3", "g8h8", "e1e2"]),
     ("A71", "Modern Benoni", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "e7e6", "b1c3", "e6e5", "d5e6", "f8e7", "e2e4", "g7g6", "f2f4", "f8g7", "g1f3", "g8h8", "e1e2", "d8e8"]),
@@ -110,7 +109,7 @@ ECO_OPENINGS = [
     ("A77", "Modern Benoni", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "e7e6", "b1c3", "e6e5", "d5e6", "f8e7", "e2e4", "g7g6", "f2f4", "f8g7", "g1f3", "g8h8", "e1e2", "d8e8", "h2h3", "c8g4", "c1d2", "g4f3", "g2f3", "d8d7"]),
     ("A78", "Modern Benoni", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "e7e6", "b1c3", "e6e5", "d5e6", "f8e7", "e2e4", "g7g6", "f2f4", "f8g7", "g1f3", "g8h8", "e1e2", "d8e8", "h2h3", "c8g4", "c1d2", "g4f3", "g2f3", "d8d7", "e8e7"]),
     ("A79", "Modern Benoni", ["d2d4", "g8f6", "c2c4", "c7c5", "d4d5", "e7e6", "b1c3", "e6e5", "d5e6", "f8e7", "e2e4", "g7g6", "f2f4", "f8g7", "g1f3", "g8h8", "e1e2", "d8e8", "h2h3", "c8g4", "c1d2", "g4f3", "g2f3", "d8d7", "e8e7", "c8g4"]),
-    
+
     # A80-A99: Dutch Defense
     ("A80", "Dutch Defense", ["d2d4", "f7f5"]),
     ("A81", "Dutch Defense", ["d2d4", "f7f5", "g1f3", "g8f6"]),
@@ -122,7 +121,7 @@ ECO_OPENINGS = [
     ("A87", "Dutch Defense", ["d2d4", "f7f5", "g1f3", "g8f6", "c1g5", "e7e6", "e2e3", "c7c6", "d4d5", "e6e5"]),
     ("A88", "Dutch Defense", ["d2d4", "f7f5", "g1f3", "g8f6", "c1g5", "e7e6", "e2e3", "c7c6", "d4d5", "e6e5", "c1d2"]),
     ("A89", "Dutch Defense", ["d2d4", "f7f5", "g1f3", "g8f6", "c1g5", "e7e6", "e2e3", "c7c6", "d4d5", "e6e5", "c1d2", "d8e7"]),
-    
+
     # A90-A99: Dutch Defense
     ("A90", "Dutch Defense", ["d2d4", "f7f5", "g1f3", "g8f6", "c1g5", "e7e6", "e2e3", "c7c6", "d4d5", "e6e5", "c1d2", "d8e7", "d1e2"]),
     ("A91", "Dutch Defense", ["d2d4", "f7f5", "g1f3", "g8f6", "c1g5", "e7e6", "e2e3", "c7c6", "d4d5", "e6e5", "c1d2", "d8e7", "d1e2", "c8d7"]),
@@ -334,11 +333,11 @@ ECO_OPENINGS = [
 
 class OpeningBook:
     """Opening book for benchmark games."""
-    
+
     def __init__(self):
         self.openings = ECO_OPENINGS
         self._precompute_fens()
-    
+
     def _precompute_fens(self):
         """Precompute FEN for each opening."""
         self.opening_fens = []
@@ -357,46 +356,46 @@ class OpeningBook:
                 'fen': board.fen(),
                 'ply': len(moves)
             })
-    
-    def get_random_opening(self) -> Dict:
+
+    def get_random_opening(self) -> dict:
         """Get a random opening."""
         return random.choice(self.opening_fens)
-    
-    def get_opening_by_eco(self, eco: str) -> Optional[Dict]:
+
+    def get_opening_by_eco(self, eco: str) -> dict | None:
         """Get opening by ECO code."""
         for op in self.opening_fens:
             if op['eco'] == eco:
                 return op
         return None
-    
-    def get_all_openings(self) -> List[Dict]:
+
+    def get_all_openings(self) -> list[dict]:
         """Get all openings."""
         return self.opening_fens.copy()
-    
-    def get_openings_by_category(self, category_prefix: str) -> List[Dict]:
+
+    def get_openings_by_category(self, category_prefix: str) -> list[dict]:
         """Get openings by ECO category (e.g., 'A0' for A00-A09)."""
         return [op for op in self.opening_fens if op['eco'].startswith(category_prefix)]
-    
-    def get_balanced_set(self, n: int) -> List[Dict]:
+
+    def get_balanced_set(self, n: int) -> list[dict]:
         """Get a balanced set of n openings across categories."""
         categories = defaultdict(list)
         for op in self.opening_fens:
             cat = op['eco'][0]  # A, B, C, D, E
             categories[cat].append(op)
-        
+
         # Distribute evenly across categories
         result = []
         per_cat = max(1, n // len(categories))
         for cat, ops in categories.items():
             random.shuffle(ops)
             result.extend(ops[:per_cat])
-        
+
         # Fill remaining
         if len(result) < n:
             remaining = [op for op in self.opening_fens if op not in result]
             random.shuffle(remaining)
             result.extend(remaining[:n - len(result)])
-        
+
         random.shuffle(result)
         return result[:n]
 
@@ -406,14 +405,14 @@ from collections import defaultdict
 if __name__ == "__main__":
     book = OpeningBook()
     print(f"Total openings: {len(book.openings)}")
-    
+
     # Show categories
     cats = defaultdict(int)
     for op in book.opening_fens:
         cats[op['eco'][0]] += 1
     for cat, count in sorted(cats.items()):
         print(f"  Category {cat}: {count} openings")
-    
+
     # Show random opening
     op = book.get_random_opening()
     print(f"\nRandom: {op['eco']} - {op['name']}")

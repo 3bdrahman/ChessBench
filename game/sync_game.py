@@ -1,8 +1,9 @@
-import chess
-import time
 import asyncio
-from typing import Optional, List
-from models import GameMove, GameStats, ChessAI
+import time
+
+import chess
+
+from models import ChessAI, GameMove, GameStats
 from providers.base import CompletionResult
 
 
@@ -11,12 +12,12 @@ class ChessGame:
         self.board = chess.Board()
         self.player1 = player1
         self.player2 = player2
-        self.moves: List[GameMove] = []
+        self.moves: list[GameMove] = []
         self.stats = GameStats()
         self.start_time = time.time()
-        self.current_completion_result: Optional[CompletionResult] = None
+        self.current_completion_result: CompletionResult | None = None
 
-    def play_move(self) -> Optional[GameMove]:
+    def play_move(self) -> GameMove | None:
         current_player = self.player1 if len(self.moves) % 2 == 0 else self.player2
 
         max_retries = 3
@@ -44,7 +45,7 @@ class ChessGame:
 
             except Exception as e:
                 if attempt == max_retries - 1:
-                    raise ValueError(f"Invalid move after {max_retries} attempts: {str(e)}")
+                    raise ValueError(f"Invalid move after {max_retries} attempts: {e!s}")
                 continue
 
         raise ValueError(f"Failed to get valid move after {max_retries} attempts")

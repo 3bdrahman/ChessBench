@@ -1,8 +1,7 @@
 """Provider registry for managing model providers."""
 
-from typing import Optional
-from .base import ModelProvider
 
+from .base import ModelProvider
 
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {}
 
@@ -13,7 +12,7 @@ def register_provider(cls: type[ModelProvider]) -> type[ModelProvider]:
     return cls
 
 
-def get_provider(name: str) -> Optional[ModelProvider]:
+def get_provider(name: str) -> ModelProvider | None:
     """Get a provider instance by name."""
     provider_cls = PROVIDER_REGISTRY.get(name)
     if provider_cls:

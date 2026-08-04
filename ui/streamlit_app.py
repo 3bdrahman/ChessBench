@@ -1,24 +1,23 @@
 """Streamlit app with async game loop and provider-agnostic model selection."""
 
-import streamlit as st
-import chess.svg
-import pandas as pd
 import asyncio
+import os
+import sys
 import time
 from datetime import datetime
-from typing import Optional
-import sys
-import os
+
+import chess.svg
+import pandas as pd
+import streamlit as st
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import ModelType, ChessAI, OpenAIChessAI, AnthropicChessAI, LlamaChessAI
+from game.async_game import AsyncChessGame, GameState
 from game.sync_game import ChessGame
-from game.async_game import AsyncChessGame, GameState, run_game_async
+from models import AnthropicChessAI, ChessAI, LlamaChessAI, ModelType, OpenAIChessAI
 from providers import get_provider, list_providers
 from providers.chess_ai import ProviderChessAI
-
 
 # Configure page
 st.set_page_config(
@@ -31,13 +30,13 @@ st.set_page_config(
 
 class ChessUI:
     """UI components for chess game display."""
-    
+
     def __init__(self):
         self.board_placeholder = st.empty()
         self.stats_placeholder = st.empty()
         self.move_history_placeholder = st.empty()
         self.status_placeholder = st.empty()
-    
+
     def display_board(self, board: chess.Board):
         svg_board = chess.svg.board(
             board,
@@ -46,7 +45,7 @@ class ChessUI:
             check=board.king(board.turn) if board.is_check() else None
         )
         self.board_placeholder.write(svg_board, unsafe_allow_html=True)
-    
+
     def display_stats(self, game_state: GameState):
         cols = st.columns(5)
         with cols[0]:
@@ -61,11 +60,11 @@ class ChessUI:
         with cols[4]:
             if game_state.current_player:
                 st.metric("Current Turn", game_state.current_player)
-    
+
     def display_moves(self, moves: list):
         if not moves:
             return
-            
+
         df = pd.DataFrame([{
             "Move #": i + 1,
             "Player": move.player,
@@ -74,9 +73,9 @@ class ChessUI:
             "Capture": "✓" if move.is_capture else "",
             "Check": "✓" if move.is_check else ""
         } for i, move in enumerate(moves)])
-        
+
         self.move_history_placeholder.dataframe(df, hide_index=True, use_container_width=True)
-    
+
     def display_status(self, message: str, status_type: str = "info"):
         if status_type == "success":
             self.status_placeholder.success(message)
@@ -103,7 +102,7 @@ async def fetch_models_for_provider(provider_name: str, api_key: str) -> list:
     provider = get_provider(provider_name)
     if not provider:
         return []
-    
+
     try:
         models = await provider.list_models(api_key)
         return models
@@ -157,7 +156,7 @@ def render_provider_keys_section():
 def render_model_selectors(available_providers: list):
     """Render model selection for White and Black players."""
     st.sidebar.header("♟️ Model Selection")
-    
+
     # Collect all models from all providers
     all_models = {}
     for provider_name, api_key in available_providers:
@@ -169,7 +168,7 @@ def render_model_selectors(available_providers: list):
                 st.session_state[cache_key] = models
         else:
             models = st.session_state[cache_key]
-        
+
         for model in models:
             display_name = f"[{provider_name}] {model.name}"
             all_models[display_name] = {
@@ -178,14 +177,14 @@ def render_model_selectors(available_providers: list):
                 "api_key": api_key,
                 "context_window": model.context_window,
             }
-    
+
     if not all_models:
         st.sidebar.warning("No models available. Please add API keys.")
         return None, None
-    
+
     # Model selectors
     model_options = list(all_models.keys())
-    
+
     col1, col2 = st.sidebar.columns(2)
     with col1:
         st.subheader("White ♔")
@@ -195,7 +194,7 @@ def render_model_selectors(available_providers: list):
             key="white_model",
             index=0 if model_options else None
         )
-    
+
     with col2:
         st.subheader("Black ♚")
         black_model = st.selectbox(
@@ -204,7 +203,7 @@ def render_model_selectors(available_providers: list):
             key="black_model",
             index=1 if len(model_options) > 1 else 0
         )
-    
+
     if white_model and black_model:
         return all_models[white_model], all_models[black_model]
     return None, None
@@ -249,7 +248,7 @@ def main():
     # Lazy import demos package (built separately, may not exist in dev)
     _demo_available = False
     try:
-        from demos import list_demo_games, ReplayEngine
+        from demos import ReplayEngine, list_demo_games
         _demo_available = True
     except ImportError:
         pass
@@ -267,42 +266,42 @@ def main():
     # Sidebar: API Keys and Model Selection
     available_providers = render_provider_keys_section()
     white_config, black_config = render_model_selectors(available_providers)
-    
+
     # Game controls
     st.sidebar.header("🎮 Game Controls")
-    
+
     game_mode = st.sidebar.radio(
         "Game Mode",
         options=["Async (Live Updates)", "Legacy (Blocking)"],
         index=0
     )
-    
+
     delay = st.sidebar.slider("Move Delay (seconds)", 0.0, 2.0, 0.5, 0.1)
-    
+
     # Start game button
     if st.sidebar.button("▶️ Start New Game", type="primary", use_container_width=True):
         if not white_config or not black_config:
             st.error("Please select models for both players.")
             return
-        
+
         try:
             # Initialize game
             if game_mode == "Async (Live Updates)":
                 # Use new provider-agnostic AI
                 white_ai, black_ai = create_provider_ai(white_config, black_config)
-                
+
                 st.success(f"Game started: {white_config['provider']}:{white_config['model_id']} (White) vs {black_config['provider']}:{black_config['model_id']} (Black)")
-                
+
                 # Create placeholders for live updates
                 board_placeholder = st.empty()
                 stats_placeholder = st.empty()
                 moves_placeholder = st.empty()
                 status_placeholder = st.empty()
-                
+
                 # Track game state
                 st.session_state.game_running = True
                 st.session_state.game_start_time = time.time()
-                
+
                 # Run async game
                 async def ui_update(state: GameState):
                     board_placeholder.write(
@@ -314,7 +313,7 @@ def main():
                         ),
                         unsafe_allow_html=True
                     )
-                    
+
                     # Update stats
                     cols = stats_placeholder.columns(5)
                     with cols[0]:
@@ -329,7 +328,7 @@ def main():
                     with cols[4]:
                         if state.current_player:
                             st.metric("Current Turn", state.current_player)
-                    
+
                     # Update moves
                     if state.moves:
                         df = pd.DataFrame([{
@@ -341,22 +340,22 @@ def main():
                             "Check": "✓" if move.is_check else ""
                         } for i, move in enumerate(state.moves)])
                         moves_placeholder.dataframe(df, hide_index=True, use_container_width=True)
-                    
+
                     if state.is_game_over:
                         status_placeholder.success(f"Game Over! Winner: {state.winner}")
                         st.balloons()
-                
+
                 # Run the async game
                 asyncio.run(run_async_game(white_ai, black_ai, ui_update, delay))
-                
+
             else:
                 # Legacy blocking mode
                 player1 = create_legacy_ai_player(ModelType(white_config["model_id"]))
                 player2 = create_legacy_ai_player(ModelType(black_config["model_id"]))
                 game = ChessGame(player1, player2)
-                
+
                 st.success(f"Game started: {player1.name} (White) vs {player2.name} (Black)")
-                
+
                 while not game.is_game_over:
                     current_player = player1 if len(game.moves) % 2 == 0 else player2
                     with st.spinner(f"Thinking... {current_player.name}'s turn"):
@@ -366,14 +365,14 @@ def main():
                             ui.display_stats(game)
                             ui.display_moves(game.moves)
                             time.sleep(delay)
-                
+
                 st.balloons()
                 st.success(f"Game Over! Winner: {game.stats.winner}")
                 ui.display_stats(game)
                 ui.display_moves(game.moves)
-        
+
         except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
+            st.error(f"An error occurred: {e!s}")
             st.error("Please check your API keys and model configurations.")
         finally:
             st.session_state.game_running = False

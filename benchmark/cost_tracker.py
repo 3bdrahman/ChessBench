@@ -1,14 +1,13 @@
 """Cost tracking dashboard for benchmark runs."""
 
 import json
-import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 
 
 @dataclass
@@ -19,10 +18,10 @@ class ModelPricing:
     input_price_per_1k: float  # $ per 1K input tokens
     output_price_per_1k: float  # $ per 1K output tokens
     currency: str = "USD"
-    
+
     def calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
         """Calculate cost for given token usage."""
-        return (input_tokens / 1000 * self.input_price_per_1k + 
+        return (input_tokens / 1000 * self.input_price_per_1k +
                 output_tokens / 1000 * self.output_price_per_1k)
 
 
@@ -75,19 +74,19 @@ class GameCost:
 
 class CostTracker:
     """Track and analyze costs for benchmark runs."""
-    
-    def __init__(self, pricing: Optional[Dict] = None):
+
+    def __init__(self, pricing: dict | None = None):
         self.pricing = pricing or DEFAULT_PRICING
-        self.game_costs: List[GameCost] = []
-        self.player_totals: Dict[str, Dict] = {}
-    
-    def get_pricing(self, provider: str, model: str) -> Optional[ModelPricing]:
+        self.game_costs: list[GameCost] = []
+        self.player_totals: dict[str, dict] = {}
+
+    def get_pricing(self, provider: str, model: str) -> ModelPricing | None:
         """Get pricing for a model."""
         provider_pricing = self.pricing.get(provider, {})
         return provider_pricing.get(model)
-    
+
     def add_game(
-        self, 
+        self,
         game_id: str,
         white_player: str,
         black_player: str,
@@ -105,13 +104,13 @@ class CostTracker:
         """Add a game's cost data."""
         white_pricing = self.get_pricing(white_provider, white_model)
         black_pricing = self.get_pricing(black_provider, black_model)
-        
+
         white_cost = white_pricing.calculate_cost(white_tokens_in, white_tokens_out) if white_pricing else 0.0
         black_cost = black_pricing.calculate_cost(black_tokens_in, black_tokens_out) if black_pricing else 0.0
-        
+
         total_cost = white_cost + black_cost
         cost_per_move = total_cost / total_moves if total_moves > 0 else 0.0
-        
+
         game_cost = GameCost(
             game_id=game_id,
             white_player=white_player,
@@ -126,9 +125,9 @@ class CostTracker:
             duration_sec=duration_sec,
             cost_per_move=cost_per_move
         )
-        
+
         self.game_costs.append(game_cost)
-        
+
         # Update player totals
         for player, cost, tokens_in, tokens_out in [
             (white_player, white_cost, white_tokens_in, white_tokens_out),
@@ -146,14 +145,14 @@ class CostTracker:
                     "losses": 0,
                     "draws": 0,
                 }
-            
+
             self.player_totals[player]["total_cost"] += cost
             self.player_totals[player]["total_games"] += 1
             self.player_totals[player]["total_tokens_in"] += tokens_in
             self.player_totals[player]["total_tokens_out"] += tokens_out
             self.player_totals[player]["total_moves"] += total_moves // 2  # Approximate
             self.player_totals[player]["total_duration"] += duration_sec
-    
+
     def update_result(self, player: str, result: str):
         """Update win/loss/draw for a player."""
         if player in self.player_totals:
@@ -163,13 +162,13 @@ class CostTracker:
                 self.player_totals[player]["losses"] += 1
             else:
                 self.player_totals[player]["draws"] += 1
-    
-    def get_summary(self) -> Dict:
+
+    def get_summary(self) -> dict:
         """Get cost summary."""
         total_cost = sum(g.total_cost for g in self.game_costs)
         total_games = len(self.game_costs)
         total_moves = sum(g.white_tokens_in + g.white_tokens_out + g.black_tokens_in + g.black_tokens_out for g in self.game_costs)
-        
+
         return {
             "total_cost": total_cost,
             "total_games": total_games,
@@ -179,8 +178,8 @@ class CostTracker:
             "cost_by_player": self.get_cost_by_player(),
             "cost_by_provider": self.get_cost_by_provider(),
         }
-    
-    def get_cost_by_player(self) -> Dict[str, Dict]:
+
+    def get_cost_by_player(self) -> dict[str, dict]:
         """Get cost breakdown by player."""
         result = {}
         for player, data in self.player_totals.items():
@@ -197,8 +196,8 @@ class CostTracker:
                 "draws": data["draws"],
             }
         return result
-    
-    def get_cost_by_provider(self) -> Dict[str, Dict]:
+
+    def get_cost_by_provider(self) -> dict[str, dict]:
         """Get cost breakdown by provider."""
         provider_costs = {}
         for game in self.game_costs:
@@ -212,9 +211,9 @@ class CostTracker:
                 provider_costs[provider]["tokens_in"] += tokens_in
                 provider_costs[provider]["tokens_out"] += tokens_out
                 provider_costs[provider]["games"] += 1
-        
+
         return provider_costs
-    
+
     def export_csv(self, path: str):
         """Export cost data to CSV."""
         df = pd.DataFrame([{
@@ -231,24 +230,24 @@ class CostTracker:
             "duration_sec": g.duration_sec,
             "cost_per_move": g.cost_per_move,
         } for g in self.game_costs])
-        
+
         df.to_csv(path, index=False)
-    
-    def generate_dashboard_html(self, output_path: Optional[str] = None) -> str:
+
+    def generate_dashboard_html(self, output_path: str | None = None) -> str:
         """Generate interactive HTML dashboard."""
         if not self.game_costs:
             return "<p>No cost data available</p>"
-        
+
         # Create plots
         summary = self.get_summary()
         player_costs = self.get_cost_by_player()
         provider_costs = self.get_cost_by_provider()
-        
+
         # Cost per player
         players = list(player_costs.keys())
         costs = [player_costs[p]["total_cost"] for p in players]
         games = [player_costs[p]["total_games"] for p in players]
-        
+
         fig1 = go.Figure()
         fig1.add_trace(go.Bar(
             x=players,
@@ -277,7 +276,7 @@ class CostTracker:
             height=400,
             plot_bgcolor='white'
         )
-        
+
         # Cost over time (games)
         fig2 = go.Figure()
         cumulative_cost = 0
@@ -287,7 +286,7 @@ class CostTracker:
             cumulative_cost += g.total_cost
             cum_costs.append(cumulative_cost)
             game_labels.append(f"Game {i+1}")
-        
+
         fig2.add_trace(go.Scatter(
             x=game_labels,
             y=cum_costs,
@@ -303,22 +302,22 @@ class CostTracker:
             height=400,
             plot_bgcolor='white'
         )
-        
+
         # Provider cost breakdown
         providers = list(provider_costs.keys())
         prov_costs = [provider_costs[p]["cost"] for p in providers]
-        
+
         fig3 = px.pie(
             values=prov_costs,
             names=providers,
             title="Cost Distribution by Provider"
         )
         fig3.update_layout(height=400)
-        
+
         # Cost per move
         moves = [g.white_tokens_in + g.white_tokens_out + g.black_tokens_in + g.black_tokens_out for g in self.game_costs]
         cost_per_move = [g.cost_per_move * 1000 for g in self.game_costs]  # per 1K tokens
-        
+
         fig4 = go.Figure()
         fig4.add_trace(go.Scatter(
             x=moves,
@@ -335,7 +334,7 @@ class CostTracker:
             height=400,
             plot_bgcolor='white'
         )
-        
+
         # HTML template
         html = f"""
 <!DOCTYPE html>
@@ -427,7 +426,7 @@ class CostTracker:
                 </thead>
                 <tbody>
 """
-        
+
         for player, data in player_costs.items():
             html += f"""
                 <tr>
@@ -442,7 +441,7 @@ class CostTracker:
                     <td>{data['losses']}</td>
                 </tr>
 """
-        
+
         html += """
                 </tbody>
             </table>
@@ -465,7 +464,7 @@ class CostTracker:
                 </thead>
                 <tbody>
 """
-        
+
         for g in self.game_costs:
             html += f"""
                 <tr>
@@ -479,7 +478,7 @@ class CostTracker:
                     <td>{g.duration_sec:.1f}</td>
                 </tr>
 """
-        
+
         html += """
                 </tbody>
             </table>
@@ -488,25 +487,25 @@ class CostTracker:
 </body>
 </html>
 """
-        
+
         if output_path:
             Path(output_path).write_text(html)
-        
+
         return html
 
 
 def load_costs_from_run(run_dir: str) -> CostTracker:
     """Load cost data from a benchmark run directory."""
     tracker = CostTracker()
-    
+
     games_path = Path(run_dir) / "games.jsonl"
     if not games_path.exists():
         return tracker
-    
+
     with open(games_path) as f:
         for line in f:
             game = json.loads(line)
-            
+
             # Extract token usage from moves
             # This would need move-level data from moves.jsonl
             moves_path = Path(run_dir) / "moves.jsonl"
@@ -517,14 +516,14 @@ def load_costs_from_run(run_dir: str) -> CostTracker:
                         move = json.loads(mline)
                         if move['game_id'] == game['game_id']:
                             moves_data.append(move)
-                
+
                 white_tokens_in = sum(m.get('llm_tokens_in', 0) for m in moves_data if m['color'] == 'white')
                 white_tokens_out = sum(m.get('llm_tokens_out', 0) for m in moves_data if m['color'] == 'white')
                 black_tokens_in = sum(m.get('llm_tokens_in', 0) for m in moves_data if m['color'] == 'black')
                 black_tokens_out = sum(m.get('llm_tokens_out', 0) for m in moves_data if m['color'] == 'black')
             else:
                 white_tokens_in = white_tokens_out = black_tokens_in = black_tokens_out = 0
-            
+
             tracker.add_game(
                 game_id=game['game_id'],
                 white_player=game['white_player'],
@@ -540,30 +539,30 @@ def load_costs_from_run(run_dir: str) -> CostTracker:
                 duration_sec=game['game_duration_sec'],
                 total_moves=game['total_moves']
             )
-            
+
             tracker.update_result(game['white_player'], game['result'])
             # For black player result
             black_result = "1-0" if game['result'] == "0-1" else "0-1" if game['result'] == "1-0" else "1/2-1/2"
             tracker.update_result(game['black_player'], black_result)
-    
+
     return tracker
 
 
 if __name__ == "__main__":
     # Demo
     tracker = CostTracker()
-    
+
     # Add some sample games
     tracker.add_game("g1", "openai:gpt-4o", "anthropic:claude-3.5", "openai", "anthropic", "gpt-4o", "claude-3.5", 1000, 500, 800, 400, 30.0, 40)
     tracker.add_game("g2", "anthropic:claude-3.5", "openai:gpt-4o", "anthropic", "openai", "claude-3.5", "gpt-4o", 900, 450, 1100, 550, 35.0, 45)
     tracker.add_game("g3", "google:gemini-1.5", "openai:gpt-4o", "google", "openai", "gemini-1.5", "gpt-4o", 1200, 600, 1000, 500, 40.0, 50)
-    
+
     tracker.update_result("openai:gpt-4o", "1-0")
     tracker.update_result("anthropic:claude-3.5", "0-1")
     tracker.update_result("anthropic:claude-3.5", "1-0")
     tracker.update_result("openai:gpt-4o", "0-1")
     tracker.update_result("google:gemini-1.5", "1/2-1/2")
     tracker.update_result("openai:gpt-4o", "1/2-1/2")
-    
+
     html = tracker.generate_dashboard_html("cost_dashboard.html")
     print("Dashboard generated: cost_dashboard.html")

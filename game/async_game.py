@@ -1,11 +1,13 @@
 """Async game loop for non-blocking chess games."""
 
-import chess
 import asyncio
 import time
-from typing import Optional, List, Callable, Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from models import GameMove, GameStats, ChessAI
+
+import chess
+
+from models import ChessAI, GameMove, GameStats
 from providers.base import CompletionResult
 
 
@@ -13,39 +15,39 @@ from providers.base import CompletionResult
 class GameState:
     """Current game state for UI updates."""
     board: chess.Board
-    moves: List[GameMove]
+    moves: list[GameMove]
     stats: GameStats
     current_player: str
     is_game_over: bool
-    winner: Optional[str] = None
+    winner: str | None = None
     game_duration: float = 0
-    last_completion_result: Optional[CompletionResult] = None
-    fen_before: Optional[str] = None
+    last_completion_result: CompletionResult | None = None
+    fen_before: str | None = None
 
 
 class AsyncChessGame:
     """Async chess game that yields control to UI between moves."""
-    
-    def __init__(self, player1: ChessAI, player2: ChessAI, starting_fen: Optional[str] = None):
+
+    def __init__(self, player1: ChessAI, player2: ChessAI, starting_fen: str | None = None):
         self.board = chess.Board(starting_fen) if starting_fen else chess.Board()
         self.player1 = player1
         self.player2 = player2
-        self.moves: List[GameMove] = []
+        self.moves: list[GameMove] = []
         self.stats = GameStats()
         self.start_time = time.time()
         self._cancelled = False
-    
+
     def cancel(self):
         """Cancel the game."""
         self._cancelled = True
-    
+
     async def play_game(
-        self, 
+        self,
         ui_callback: Callable[[GameState], Awaitable[None]],
         delay: float = 0.1
     ) -> GameStats:
         """Play a full game with async UI updates."""
-        
+
         while not self.board.is_game_over() and not self._cancelled:
             current_player = self.player1 if len(self.moves) % 2 == 0 else self.player2
             fen_before = self.board.fen()
@@ -95,14 +97,14 @@ class AsyncChessGame:
 
             # Yield to UI
             await asyncio.sleep(delay)
-        
+
         # Final state
         self.stats.game_duration = time.time() - self.start_time
         if self._cancelled and not self.board.is_game_over():
             self.stats.winner = "Cancelled"
         else:
             self.stats.winner = self._determine_winner()
-        
+
         final_state = GameState(
             board=self.board.copy(),
             moves=self.moves.copy(),
@@ -113,16 +115,16 @@ class AsyncChessGame:
             game_duration=self.stats.game_duration,
         )
         await ui_callback(final_state)
-        
+
         return self.stats
-    
+
     def _update_stats(self, move: GameMove) -> None:
         self.stats.total_moves += 1
         if move.is_capture:
             self.stats.capture_moves += 1
         if move.is_check:
             self.stats.check_moves += 1
-    
+
     def _determine_winner(self) -> str:
         # claim_draw=True so the claimable draws (threefold repetition,
         # fifty-move rule) are recognized in addition to the automatic ones.

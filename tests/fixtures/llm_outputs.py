@@ -62,7 +62,7 @@ LLM_OUTPUTS = [
         "text": "The move e2e4 looks best",
         "expected": "e2e4",
     },
-    
+
     # Anthropic Claude outputs
     {
         "provider": "anthropic",
@@ -94,7 +94,7 @@ LLM_OUTPUTS = [
         "text": "I choose b1c3",
         "expected": "b1c3",
     },
-    
+
     # Google Gemini outputs
     {
         "provider": "google",
@@ -126,7 +126,7 @@ LLM_OUTPUTS = [
         "text": "My move is b1c3",
         "expected": "b1c3",
     },
-    
+
     # Ollama local model outputs (often more verbose)
     {
         "provider": "ollama",
@@ -158,7 +158,7 @@ LLM_OUTPUTS = [
         "text": "My move is b1c3",
         "expected": "b1c3",
     },
-    
+
     # Edge cases and malformed outputs
     {
         "provider": "openai",
@@ -190,7 +190,7 @@ LLM_OUTPUTS = [
         "text": "move: e2e4 (best move)",
         "expected": "e2e4",
     },
-    
+
     # Promotion moves
     {
         "provider": "openai",
@@ -210,7 +210,7 @@ LLM_OUTPUTS = [
         "text": "Promote to queen: d7d8q",
         "expected": "d7d8q",
     },
-    
+
     # Invalid/ambiguous outputs (should return None)
     {
         "provider": "openai",

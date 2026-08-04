@@ -1,8 +1,6 @@
 """Game state and move data structures."""
 
 from dataclasses import dataclass
-from typing import Optional, List
-import chess
 
 
 @dataclass
@@ -20,4 +18,4 @@ class GameStats:
     capture_moves: int = 0
     check_moves: int = 0
     game_duration: float = 0
-    winner: Optional[str] = None
+    winner: str | None = None

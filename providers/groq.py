@@ -6,9 +6,10 @@ for hosted demos where users don't need to provide their own API keys.
 
 import os
 import time
-from typing import Optional
+
 from openai import AsyncOpenAI
-from .base import ModelProvider, ModelInfo, CompletionResult, ChatMessage
+
+from .base import ChatMessage, CompletionResult, ModelInfo, ModelProvider
 from .registry import register_provider
 
 # Rate-limited free models known to work well for chess moves

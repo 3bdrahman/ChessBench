@@ -1,6 +1,5 @@
 """Base provider abstraction for LLM providers."""
 
-from common.types import ModelProvider, ModelInfo, CompletionResult, ChatMessage
+from common.common_types import ChatMessage, CompletionResult, ModelInfo, ModelProvider
 
-
-__all__ = ["ModelProvider", "ModelInfo", "CompletionResult", "ChatMessage"]
+__all__ = ["ChatMessage", "CompletionResult", "ModelInfo", "ModelProvider"]

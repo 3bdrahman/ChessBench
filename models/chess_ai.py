@@ -1,16 +1,16 @@
 """Base ChessAI class and legacy implementations."""
 
 from abc import ABC, abstractmethod
-from typing import Optional, List, Dict, Tuple
+from enum import Enum
+
 import chess
+import ollama
 from anthropic import Anthropic
 from openai import OpenAI
-from enum import Enum
+
+from common.common_types import CompletionResult
 from config import *
-import ollama 
-from models.game_state import GameMove, GameStats
 from models.evaluation import PositionEvaluator
-from common.types import CompletionResult
 
 
 class ModelType(Enum):
@@ -25,11 +25,11 @@ class ChessAI(ABC):
         self.position_history = set()
         self.stagnation_threshold = 3
 
-        self.last_completion_result: Optional[CompletionResult] = None
+        self.last_completion_result: CompletionResult | None = None
 
         # Initialize position evaluator
         self.evaluator = PositionEvaluator()
-        
+
         self.prompt_template = """
         You are playing chess as {color}. Current position critical analysis:
         
@@ -86,102 +86,102 @@ class ChessAI(ABC):
 
         Best move given state of the game(UCI notation only):
         """
-    
+
     def _get_piece_locations(self, board: chess.Board):
         return self.evaluator.get_piece_locations(board)
-    
+
     def _get_material_count(self, board: chess.Board):
         return self.evaluator.get_material_count(board)
-    
+
     def _analyze_material_tension(self, board: chess.Board) -> str:
         return self.evaluator.analyze_material_tension(board)
-    
+
     def _annotate_moves(self, board: chess.Board):
         return self.evaluator.annotate_moves(board)
-    
+
     def _analyze_position_repetition(self, board: chess.Board) -> dict:
         current_fen = board.fen().split(' ')[0]
-        
+
         recent_history = self.move_history[-7:] + [current_fen]
         repetitions = sum(1 for pos in recent_history if pos == current_fen)
-        
+
         is_stagnating = repetitions >= self.stagnation_threshold
-        
+
         if len(self.move_history) >= 3:
             recent_positions = self.move_history[-3:] + [current_fen]
             unique_positions = len(set(recent_positions))
             progress_score = unique_positions / 4.0
         else:
             progress_score = 1.0
-            
+
         return {
             "repetitions": repetitions,
             "is_stagnating": is_stagnating,
             "progress_score": progress_score
         }
-    
+
     def _analyze_position_progress(self, board: chess.Board, move: chess.Move) -> float:
         return self.evaluator.analyze_position_progress(board, move)
-    
+
     def _analyze_position_dynamism(self, board: chess.Board) -> str:
         return self.evaluator.analyze_position_dynamism(board)
-    
+
     def _get_castling_rights(self, board: chess.Board):
         return self.evaluator.get_castling_rights(board)
-    
+
     def _analyze_capture_value(self, board: chess.Board, move: chess.Move) -> int:
         return self.evaluator.analyze_capture_value(board, move)
-    
+
     def _calculate_development_score(self, board: chess.Board) -> str:
         return self.evaluator.calculate_development_score(board)
-    
+
     def _analyze_captures(self, board: chess.Board) -> str:
         return self.evaluator.analyze_captures(board)
-    
+
     def _analyze_threats(self, board: chess.Board) -> str:
         return self.evaluator.analyze_threats(board)
-    
+
     def _evaluate_capture(self, board: chess.Board, move: chess.Move) -> float:
         return self.evaluator.evaluate_capture(board, move)
-    
+
     def _categorize_moves(self, board: chess.Board):
         return self.evaluator.categorize_moves(board)
-    
+
     def _analyze_defense(self, board: chess.Board) -> str:
         return self.evaluator.analyze_defense(board)
-    
+
     def _analyze_vulnerabilities(self, board: chess.Board) -> str:
         return self.evaluator.analyze_vulnerabilities(board)
-    
+
     def _analyze_king_safety(self, board: chess.Board) -> str:
         return self.evaluator.analyze_king_safety(board)
-    
+
     def _is_pinned(self, board: chess.Board, square: int) -> bool:
         return self.evaluator.is_pinned(board, square)
-    
+
     def _analyze_pawn_structure(self, board: chess.Board) -> str:
         return self.evaluator.analyze_pawn_structure(board)
-    
+
     def _analyze_undefended_pieces(self, board: chess.Board) -> str:
         return self.evaluator.analyze_undefended_pieces(board)
-    
+
     def _analyze_exposed_pieces(self, board: chess.Board) -> str:
         return self.evaluator.analyze_exposed_pieces(board)
-    
+
     def _analyze_material_balance(self, board: chess.Board) -> str:
         return self.evaluator.analyze_material_balance(board)
-    
+
     def _analyze_center_control(self, board: chess.Board) -> str:
         return self.evaluator.analyze_center_control(board)
-    
+
     def _analyze_development_status(self, board: chess.Board) -> str:
         return self.evaluator.analyze_development_status(board)
-    
+
     def _create_prompt(self, fen: str) -> str:
         board = chess.Board(fen)
         moves = self._categorize_moves(board)
         position_analysis = self._analyze_position_repetition(board)
-        
+
         return self.prompt_template.format(
             color="White" if board.turn == chess.WHITE else "Black",
             position_repetitions=position_analysis["repetitions"],
@@ -205,34 +205,34 @@ class ChessAI(ABC):
             developing_moves=moves['developing_moves'],
             positional_moves=moves['positional_moves']
         )
-    
+
     def _validate_move(self, move_str: str, board: chess.Board) -> str:
         move_str = move_str.strip().lower()
-        
+
         prefixes = ["move:", "i choose", "my move is", "play", "'", '"', "`"]
         for prefix in prefixes:
             if move_str.startswith(prefix):
                 move_str = move_str[len(prefix):].strip()
-        
+
         suffixes = ["'", '"', "`", ".", ",", ":", ";"]
         for suffix in suffixes:
             if move_str.endswith(suffix):
                 move_str = move_str[:-len(suffix)].strip()
-        
+
         if not (4 <= len(move_str) <= 5):
             raise ValueError(f"Invalid move format: {move_str}")
-        
+
         try:
             move = chess.Move.from_uci(move_str)
         except ValueError:
             raise ValueError(f"Invalid UCI format: {move_str}")
-        
+
         if move not in board.legal_moves:
             legal_moves = [m.uci() for m in board.legal_moves]
             raise ValueError(f"Illegal move {move_str}. Legal moves are: {', '.join(legal_moves)}")
-        
+
         return move_str
-    
+
     def _is_valid_square(self, square: str) -> bool:
         if len(square) != 2:
             return False
@@ -241,34 +241,34 @@ class ChessAI(ABC):
             file in 'abcdefgh' and
             rank in '12345678'
         )
-    
+
     async def get_move(self, fen: str) -> str:
         board = chess.Board(fen)
         max_retries = 3
         errors = []
-        
+
         for attempt in range(max_retries):
             try:
                 move_str = await self._get_move_from_model(fen)
                 validated_move = self._validate_move(move_str, board)
-                
+
                 current_fen = board.fen().split(' ')[0]
                 self.move_history.append(current_fen)
-                
+
                 return validated_move
             except ValueError as e:
-                errors.append(f"Attempt {attempt + 1}: {str(e)}")
+                errors.append(f"Attempt {attempt + 1}: {e!s}")
                 continue
-        
+
         legal_moves = list(board.legal_moves)
         if legal_moves:
             fallback_move = legal_moves[0].uci()
             current_fen = board.fen().split(' ')[0]
             self.move_history.append(current_fen)
             return fallback_move
-        
+
         raise ValueError(f"Failed to get valid move after {max_retries} attempts. Errors: {'; '.join(errors)}")
-    
+
     async def get_move_with_result(self, fen: str) -> tuple[str, "CompletionResult"]:
         board = chess.Board(fen)
         max_retries = 3
@@ -290,7 +290,7 @@ class ChessAI(ABC):
                     raw_response=None,
                 )
             except ValueError as e:
-                errors.append(f"Attempt {attempt + 1}: {str(e)}")
+                errors.append(f"Attempt {attempt + 1}: {e!s}")
                 continue
 
         legal_moves = list(board.legal_moves)

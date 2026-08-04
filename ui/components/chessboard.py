@@ -1,11 +1,11 @@
 """Chessboard.js Streamlit component wrapper."""
 
+from pathlib import Path
+from typing import Any
+
+import chess
 import streamlit as st
 import streamlit.components.v1 as components
-from pathlib import Path
-from typing import Optional, List, Dict, Any
-import chess
-
 
 # Get the component directory
 _COMPONENT_DIR = Path(__file__).parent / "chessboard"
@@ -20,15 +20,15 @@ _chessboard_component = components.declare_component(
 def chessboard(
     fen: str = chess.STARTING_FEN,
     orientation: str = "white",
-    last_move: Optional[str] = None,
-    check_square: Optional[str] = None,
-    legal_moves: Optional[List[str]] = None,
+    last_move: str | None = None,
+    check_square: str | None = None,
+    legal_moves: list[str] | None = None,
     show_coordinates: bool = True,
     draggable: bool = True,
     animate: bool = True,
-    on_move: Optional[callable] = None,
-    key: Optional[str] = None
-) -> Dict[str, Any]:
+    on_move: callable | None = None,
+    key: str | None = None
+) -> dict[str, Any]:
     """
     Render an interactive chessboard using chessboard.js.
     
@@ -47,7 +47,7 @@ def chessboard(
     Returns:
         Dict with component state including position, lastMove, etc.
     """
-    
+
     # Prepare config
     config = {
         "position": fen,
@@ -57,7 +57,7 @@ def chessboard(
         "animate": animate,
         "pieceTheme": "https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png",
     }
-    
+
     # Call the component
     component_value = _chessboard_component(
         config=config,
@@ -68,7 +68,7 @@ def chessboard(
         key=key,
         default={"position": fen, "lastMove": last_move}
     )
-    
+
     return component_value or {}
 
 
@@ -82,19 +82,19 @@ def render_chessboard_js():
 
 
 if __name__ == "__main__":
-    import streamlit as st
     import chess
-    
+    import streamlit as st
+
     st.title("Chessboard.js Demo")
-    
+
     # Render chessboard.js library
     render_chessboard_js()
-    
+
     # Demo board
     board = chess.Board()
-    
+
     col1, col2 = st.columns([2, 1])
-    
+
     with col1:
         result = chessboard(
             fen=board.fen(),
@@ -105,15 +105,15 @@ if __name__ == "__main__":
             key="demo_board"
         )
         st.write("Component result:", result)
-    
+
     with col2:
         st.write("**Controls**")
         if st.button("Make Move e2e4"):
             board.push_uci("e2e4")
             st.rerun()
-        
+
         if st.button("Flip Board"):
             st.rerun()
-        
+
         st.write("**Position:**")
         st.code(board.fen())

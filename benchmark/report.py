@@ -1,27 +1,26 @@
 """Report generation for benchmark runs."""
 
 import json
-import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
-from pathlib import Path
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 
 from benchmark.elo import BayesianElo
-from benchmark.logging import BenchmarkLogger, GameLogEntry, MoveLogEntry
+from benchmark.logging import BenchmarkLogger
 
 
 class ReportGenerator:
     """Generate HTML reports from benchmark runs."""
-    
+
     def __init__(self, run_dir: str):
         self.run_dir = Path(run_dir)
         self.logger = BenchmarkLogger(str(self.run_dir))
         self._load_data()
-    
+
     def _load_data(self):
         """Load all data from run directory."""
         # Load games
@@ -31,7 +30,7 @@ class ReportGenerator:
             with open(games_path) as f:
                 for line in f:
                     self.games.append(json.loads(line))
-        
+
         # Load moves
         self.moves = []
         moves_path = self.run_dir / "moves.jsonl"
@@ -39,7 +38,7 @@ class ReportGenerator:
             with open(moves_path) as f:
                 for line in f:
                     self.moves.append(json.loads(line))
-        
+
         # Load summary
         summary_path = self.run_dir / "summary.json"
         if summary_path.exists():
@@ -47,35 +46,35 @@ class ReportGenerator:
                 self.summary = json.load(f)
         else:
             self.summary = {}
-        
+
         # Load config
         self.config = self.summary.get('config', {})
-    
-    def generate_html(self, output_path: Optional[str] = None) -> str:
+
+    def generate_html(self, output_path: str | None = None) -> str:
         """Generate complete HTML report."""
         if output_path is None:
             output_path = self.run_dir / "report.html"
-        
+
         html = self._generate_html_report()
-        
+
         with open(output_path, 'w') as f:
             f.write(html)
-        
+
         return str(output_path)
-    
+
     def _generate_html_report(self) -> str:
         """Generate HTML report content."""
         # Calculate statistics
         players = self._get_players()
         elo_ratings = self._calculate_elo_ratings()
-        
+
         # Generate plots
         elo_plot = self._create_elo_plot(elo_ratings)
         results_heatmap = self._create_results_heatmap()
         move_time_plot = self._create_move_time_plot()
         token_usage_plot = self._create_token_usage_plot()
         opening_performance = self._create_opening_performance()
-        
+
         html = f"""
 <!DOCTYPE html>
 <html>
@@ -169,7 +168,7 @@ class ReportGenerator:
             </thead>
             <tbody>
 """
-        
+
         for i, rating in enumerate(elo_ratings, 1):
             ci_low, ci_high = rating['ci_low'], rating['ci_high']
             rating_class = 'rating-high' if i <= 2 else 'rating-mid' if i <= len(elo_ratings)//2 else 'rating-low'
@@ -183,7 +182,7 @@ class ReportGenerator:
                     <td>{rating['volatility']}</td>
                 </tr>
 """
-        
+
         html += f"""
             </tbody>
         </table>
@@ -215,7 +214,7 @@ class ReportGenerator:
             </thead>
             <tbody>
 """
-        
+
         for game in self.games:
             html += f"""
                 <tr>
@@ -228,7 +227,7 @@ class ReportGenerator:
                     <td>{game['game_duration_sec']:.1f}</td>
                 </tr>
 """
-        
+
         html += """
             </tbody>
         </table>
@@ -241,35 +240,35 @@ class ReportGenerator:
 </html>
 """
         return html
-    
-    def _get_players(self) -> List[str]:
+
+    def _get_players(self) -> list[str]:
         """Get unique players from games."""
         players = set()
         for game in self.games:
             players.add(game['white_player'])
             players.add(game['black_player'])
         return sorted(players)
-    
-    def _calculate_elo_ratings(self) -> List[Dict]:
+
+    def _calculate_elo_ratings(self) -> list[dict]:
         """Calculate ELO ratings from games."""
         elo = BayesianElo()
         for game in self.games:
             elo.add_game(game['white_player'], game['black_player'], game['result_numeric'], game['opening_eco'])
         return elo.leaderboard()
-    
-    def _create_elo_plot(self, ratings: List[Dict]) -> str:
+
+    def _create_elo_plot(self, ratings: list[dict]) -> str:
         """Create ELO rating plot."""
         if not ratings:
             return "<p>No rating data available</p>"
-        
+
         names = [r['name'] for r in ratings]
         rating_vals = [r['rating'] for r in ratings]
         deviations = [r['deviation'] for r in ratings]
         ci_lows = [r['ci_low'] for r in ratings]
         ci_highs = [r['ci_high'] for r in ratings]
-        
+
         fig = go.Figure()
-        
+
         # Add error bars for 95% CI
         fig.add_trace(go.Scatter(
             x=names,
@@ -290,7 +289,7 @@ class ReportGenerator:
             hovertemplate='<b>%{x}</b><br>Rating: %{y:.0f}<br>95% CI: [%{customdata[0]:.0f}, %{customdata[1]:.0f}]<extra></extra>',
             customdata=list(zip(ci_lows, ci_highs))
         ))
-        
+
         fig.update_layout(
             title='ELO Ratings with 95% Confidence Intervals',
             xaxis_title='Player',
@@ -300,21 +299,21 @@ class ReportGenerator:
             plot_bgcolor='white',
             xaxis=dict(tickangle=-45)
         )
-        
+
         return fig.to_html(full_html=False, include_plotlyjs='cdn')
-    
+
     def _create_results_heatmap(self) -> str:
         """Create results cross-table heatmap."""
         if not self.games:
             return "<p>No game data available</p>"
-        
+
         players = self._get_players()
         n = len(players)
         player_idx = {p: i for i, p in enumerate(players)}
-        
+
         # Results matrix: rows=white, cols=black
         results = np.zeros((n, n, 3))  # [wins, draws, losses] from white perspective
-        
+
         for game in self.games:
             w_idx = player_idx[game['white_player']]
             b_idx = player_idx[game['black_player']]
@@ -324,11 +323,11 @@ class ReportGenerator:
                 results[w_idx, b_idx, 2] += 1
             else:
                 results[w_idx, b_idx, 1] += 1
-        
+
         # Win rate from white perspective
         total = results.sum(axis=2, keepdims=True)
         win_rate = np.divide(results[:, :, 0], total[:, :, 0], where=total[:, :, 0] > 0)
-        
+
         fig = go.Figure(data=go.Heatmap(
             z=win_rate,
             x=players,
@@ -341,7 +340,7 @@ class ReportGenerator:
             textfont={"size": 12},
             hovertemplate='White: %{y}<br>Black: %{x}<br>White Win Rate: %{z:.1%}<extra></extra>'
         ))
-        
+
         fig.update_layout(
             title='White Win Rate by Pairing',
             height=400,
@@ -349,33 +348,33 @@ class ReportGenerator:
             yaxis_title='White Player',
             plot_bgcolor='white'
         )
-        
+
         return fig.to_html(full_html=False, include_plotlyjs='cdn')
-    
+
     def _create_move_time_plot(self) -> str:
         """Create move time distribution plot."""
         if not self.moves:
             return "<p>No move timing data available</p>"
-        
+
         df = pd.DataFrame(self.moves)
-        
+
         fig = px.box(
             df, x='player', y='llm_latency_ms',
             title='LLM Latency by Player',
             labels={'llm_latency_ms': 'Latency (ms)', 'player': 'Player'}
         )
         fig.update_layout(height=400, plot_bgcolor='white')
-        
+
         return fig.to_html(full_html=False, include_plotlyjs='cdn')
-    
+
     def _create_token_usage_plot(self) -> str:
         """Create token usage plot."""
         if not self.moves:
             return "<p>No token usage data available</p>"
-        
+
         df = pd.DataFrame(self.moves)
         df['tokens_total'] = df['llm_tokens_in'].fillna(0) + df['llm_tokens_out'].fillna(0)
-        
+
         fig = px.bar(
             df.groupby('player')['tokens_total'].sum().reset_index(),
             x='player', y='tokens_total',
@@ -383,14 +382,14 @@ class ReportGenerator:
             labels={'tokens_total': 'Total Tokens', 'player': 'Player'}
         )
         fig.update_layout(height=400, plot_bgcolor='white')
-        
+
         return fig.to_html(full_html=False, include_plotlyjs='cdn')
-    
+
     def _create_opening_performance(self) -> str:
         """Create opening performance plot."""
         if not self.games:
             return "<p>No opening data available</p>"
-        
+
         # Win rate by opening
         opening_stats = {}
         for game in self.games:
@@ -404,17 +403,17 @@ class ReportGenerator:
                 opening_stats[eco]['black_wins'] += 1
             else:
                 opening_stats[eco]['draws'] += 1
-        
+
         ecos = list(opening_stats.keys())
         white_rates = [opening_stats[e]['white_wins']/opening_stats[e]['total'] for e in ecos]
         black_rates = [opening_stats[e]['black_wins']/opening_stats[e]['total'] for e in ecos]
         draw_rates = [opening_stats[e]['draws']/opening_stats[e]['total'] for e in ecos]
-        
+
         fig = go.Figure()
         fig.add_trace(go.Bar(name='White Win', x=ecos, y=white_rates, marker_color='#27ae60'))
         fig.add_trace(go.Bar(name='Draw', x=ecos, y=draw_rates, marker_color='#f39c12'))
         fig.add_trace(go.Bar(name='Black Win', x=ecos, y=black_rates, marker_color='#e74c3c'))
-        
+
         fig.update_layout(
             title='Result Distribution by Opening (ECO)',
             barmode='stack',
@@ -423,7 +422,7 @@ class ReportGenerator:
             yaxis_title='Proportion',
             plot_bgcolor='white'
         )
-        
+
         return fig.to_html(full_html=False, include_plotlyjs='cdn')
 
 
@@ -444,7 +443,7 @@ if __name__ == "__main__":
         else:
             print("No runs directory")
             sys.exit(1)
-    
+
     generator = ReportGenerator(run_dir)
     output = generator.generate_html()
     print(f"Report generated: {output}")

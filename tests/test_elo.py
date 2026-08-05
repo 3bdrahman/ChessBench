@@ -2,7 +2,7 @@
 
 import pytest
 
-from benchmark.elo import BayesianElo, GameResult, Glicko2
+from chess_fight.benchmark.elo import BayesianElo, GameResult, Glicko2
 
 
 class TestGlicko2:
@@ -153,7 +153,8 @@ class TestBayesianElo:
         import math
         elo = BayesianElo()
         table = elo.cross_table(["A", "B"])
-        assert math.isnan(table[0][1]) and math.isnan(table[1][0])
+        assert math.isnan(table[0][1])
+        assert math.isnan(table[1][0])
 
     def test_missing_player_handling(self):
         """Test that missing players are created with default rating."""

@@ -1,10 +1,9 @@
 """Tests for prompt template rendering."""
 
-
 import chess
 import pytest
 
-from models import ChessAI
+from chess_fight.models.chess_ai import ChessAI
 
 
 class MockChessAI(ChessAI):

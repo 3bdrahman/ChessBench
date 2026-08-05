@@ -3,7 +3,7 @@
 import chess
 import pytest
 
-from move_parser import extract_move, validate_move
+from chess_fight.move_parser import extract_move, validate_move
 from tests.fixtures.llm_outputs import LLM_OUTPUTS
 
 

@@ -4,14 +4,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from providers.anthropic import AnthropicProvider
-from providers.base import ChatMessage, CompletionResult, ModelInfo, ModelProvider
-from providers.google import GoogleProvider
-from providers.nim import NIMProvider
-from providers.ollama import OllamaProvider
-from providers.openai import OpenAIProvider
-from providers.openrouter import OpenRouterProvider
-from providers.registry import PROVIDER_REGISTRY, get_provider, list_providers, register_provider
+from chess_fight.providers.anthropic import AnthropicProvider
+from chess_fight.providers.base import ChatMessage, CompletionResult, ModelInfo, ModelProvider
+from chess_fight.providers.google import GoogleProvider
+from chess_fight.providers.nim import NIMProvider
+from chess_fight.providers.ollama import OllamaProvider
+from chess_fight.providers.openai import OpenAIProvider
+from chess_fight.providers.openrouter import OpenRouterProvider
+from chess_fight.providers.registry import (
+    PROVIDER_REGISTRY,
+    get_provider,
+    list_providers,
+    register_provider,
+)
 
 
 class MockModelProvider(ModelProvider):
@@ -82,7 +87,7 @@ class TestOpenAIProvider:
 
     @pytest.mark.asyncio
     async def test_list_models(self, provider):
-        with patch("providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -104,7 +109,7 @@ class TestOpenAIProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -149,7 +154,7 @@ class TestAnthropicProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("providers.anthropic.AsyncAnthropic") as mock_client_class:
+        with patch("chess_fight.providers.anthropic.AsyncAnthropic") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -182,9 +187,8 @@ class TestGoogleProvider:
         assert provider.validate_key("") is False
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_list_models(self, provider):
-        with patch("providers.google.genai.Client") as mock_client_class:
+        with patch("chess_fight.providers.google.genai.Client") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -200,8 +204,8 @@ class TestGoogleProvider:
             mock_model3.name = "models/embedding-001"
             mock_model3.supported_actions = ["embedContent"]
 
-            # The API returns an iterable of models directly, not a .data attribute
-            mock_client.models.list = AsyncMock(return_value=[mock_model1, mock_model2, mock_model3])
+            # The API returns an iterable of models directly (synchronous)
+            mock_client.models.list.return_value = [mock_model1, mock_model2, mock_model3]
 
             models = await provider.list_models("valid_key_12345678901234567890")
 
@@ -212,7 +216,7 @@ class TestGoogleProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("providers.google.genai.Client") as mock_client_class:
+        with patch("chess_fight.providers.google.genai.Client") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -222,7 +226,7 @@ class TestGoogleProvider:
                 prompt_token_count=100,
                 candidates_token_count=5
             )
-            mock_client.models.generate_content_async = AsyncMock(return_value=mock_response)
+            mock_client.models.generate_content = AsyncMock(return_value=mock_response)
 
             result = await provider.complete(
                 "valid_key_12345678901234567890",
@@ -249,7 +253,7 @@ class TestNIMProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("providers.nim.AsyncOpenAI") as mock_client_class:
+        with patch("chess_fight.providers.nim.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -286,7 +290,7 @@ class TestOpenRouterProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("providers.openrouter.AsyncOpenAI") as mock_client_class:
+        with patch("chess_fight.providers.openrouter.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -320,7 +324,7 @@ class TestOllamaProvider:
 
     @pytest.mark.asyncio
     async def test_list_models(self, provider):
-        with patch("providers.ollama.httpx.AsyncClient") as mock_client_class:
+        with patch("chess_fight.providers.ollama.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
@@ -343,7 +347,7 @@ class TestOllamaProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("providers.ollama.httpx.AsyncClient") as mock_client_class:
+        with patch("chess_fight.providers.ollama.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
 

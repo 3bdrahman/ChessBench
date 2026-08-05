@@ -8,8 +8,8 @@ from pathlib import Path
 import chess
 import chess.pgn
 
-from game.async_game import GameState
-from models.game_state import GameMove, GameStats
+from chess_fight.game.async_game import GameState
+from chess_fight.models.game_state import GameMove, GameStats
 
 _GAMES_DIR = Path(__file__).parent / "games"
 

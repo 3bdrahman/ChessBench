@@ -5,15 +5,15 @@ from unittest.mock import AsyncMock, patch
 import chess
 import pytest
 
-from benchmark.elo import BayesianElo, GameResult, Glicko2
-from benchmark.logging import BenchmarkLogger
-from benchmark.openings import OpeningBook
-from benchmark.runner import BenchmarkConfig, BenchmarkRunner
-from game.async_game import AsyncChessGame, GameState
-from move_parser import extract_move, validate_move
-from providers.base import ChatMessage, CompletionResult, ModelInfo, ModelProvider
-from providers.chess_ai import ProviderChessAI
-from providers.registry import get_provider, list_providers, register_provider
+from chess_fight.benchmark.elo import BayesianElo, GameResult, Glicko2
+from chess_fight.benchmark.logging import BenchmarkLogger
+from chess_fight.benchmark.openings import OpeningBook
+from chess_fight.benchmark.runner import BenchmarkConfig, BenchmarkRunner
+from chess_fight.game.async_game import AsyncChessGame, GameState
+from chess_fight.move_parser import extract_move, validate_move
+from chess_fight.providers.base import ChatMessage, CompletionResult, ModelInfo, ModelProvider
+from chess_fight.providers.chess_ai import ProviderChessAI
+from chess_fight.providers.registry import get_provider, list_providers, register_provider
 
 
 class MockProvider(ModelProvider):
@@ -74,7 +74,7 @@ class TestOpeningBook:
         balanced = book.get_balanced_set(10)
         assert len(balanced) == 10
         # Should have variety across categories (we have many A category)
-        categories = set(op['eco'][0] for op in balanced)
+        categories = {op['eco'][0] for op in balanced}
         # At minimum should have some categories
         assert len(categories) >= 1
 
@@ -254,7 +254,7 @@ class TestBenchmarkConfig:
 class TestMoveParserIntegration:
     """Integration tests for move parser with realistic scenarios."""
 
-    @pytest.mark.parametrize("text,expected", [
+    @pytest.mark.parametrize(("text", "expected"), [
         ("I will play e2e4", "e2e4"),
         ("<thinking>Analysis</thinking>\ng1f3", "g1f3"),
         ("Move: g1f3", "g1f3"),
@@ -305,8 +305,8 @@ class TestAsyncGameIntegration:
             move_idx[0] += 1
             return move
 
-        white_ai._get_move_from_model = mock_get_move
-        black_ai._get_move_from_model = mock_get_move
+        white_ai._get_move_from_model = mock_get_move  # type: ignore[method-assign]
+        black_ai._get_move_from_model = mock_get_move  # type: ignore[method-assign]
 
         game = AsyncChessGame(white_ai, black_ai)
 
@@ -336,7 +336,8 @@ class TestProviderRegistry:
 
     def test_provider_validation(self):
         provider = get_provider("mock_registered")
-        assert provider.validate_key("anything") == True
+        assert provider is not None
+        assert provider.validate_key("anything")
 
 
 class TestProviderChessAI:
@@ -363,7 +364,7 @@ class TestProviderChessAI:
         ai = ProviderChessAI("openai", "gpt-4o", "sk-test12345678901234567890")
         assert ai.last_completion_result is None
 
-        with patch("providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
             mock_response = MagicMock()
@@ -380,14 +381,14 @@ class TestProviderChessAI:
 
     @pytest.mark.asyncio
     async def test_get_move_with_result_falls_back_when_no_completion(self):
-        from providers.chess_ai import ProviderChessAI
+        from chess_fight.providers.chess_ai import ProviderChessAI
 
         ai = ProviderChessAI("openai", "gpt-4o", "sk-test")
 
         async def fake_get_move(fen):
             return "e2e4"
 
-        ai._get_move_from_model = fake_get_move
+        ai._get_move_from_model = fake_get_move  # type: ignore[method-assign]
         move_str, cr = await ai.get_move_with_result(chess.STARTING_FEN)
         assert move_str == "e2e4"
         assert cr.tokens_in is None
@@ -404,7 +405,7 @@ class TestAsyncGameFenBefore:
             return "e2e4"
 
         ai = ProviderChessAI("mock_registered", "mock", "", temperature=0.0)
-        ai._get_move_from_model = fake_get_move
+        ai._get_move_from_model = fake_get_move  # type: ignore[method-assign]
 
         game = AsyncChessGame(ai, ai)
         seen_fen_before: list[str | None] = []
@@ -437,7 +438,7 @@ class TestRunnerMetricsEndToEnd:
         )
         runner = BenchmarkRunner(config)
 
-        with patch("providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
             mock_response = MagicMock()

@@ -29,3 +29,7 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+
+# OMO
+.omo/
+streamlit.log

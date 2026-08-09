@@ -1,18 +1,33 @@
 """Provider abstraction layer for LLM chess AI."""
 
-# Import concrete providers to register them
-from . import (
-    anthropic,  # noqa: F401
-    google,  # noqa: F401
-    groq,  # noqa: F401
-    nim,  # noqa: F401
-    ollama,  # noqa: F401
-    openai,  # noqa: F401
-    openrouter,  # noqa: F401
+from chess_fight.common.common_types import ChatMessage, CompletionResult, ModelInfo, ModelProvider
+from chess_fight.providers.registry import PROVIDER_REGISTRY, get_provider, list_providers, register_provider
+
+# Lazy imports - provider modules are imported on first access via get_provider()
+# This avoids import-time circular dependencies and issues on Streamlit Cloud
+_PROVIDER_MODULES = (
+    "anthropic",
+    "google",
+    "groq",
+    "nim",
+    "ollama",
+    "openai",
+    "openrouter",
+    "stockfish",
 )
-from .base import ChatMessage, CompletionResult, ModelInfo, ModelProvider
+
+def __getattr__(name: str):
+    if name in _PROVIDER_MODULES:
+        import importlib
+        module = importlib.import_module(f".{name}", __name__)
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+def __dir__():
+    return list(globals().keys()) + list(_PROVIDER_MODULES)
+
 from .chess_ai import ProviderChessAI
-from .registry import PROVIDER_REGISTRY, get_provider, list_providers, register_provider
 
 __all__ = [
     "PROVIDER_REGISTRY",
@@ -24,4 +39,5 @@ __all__ = [
     "get_provider",
     "list_providers",
     "register_provider",
+    "stockfish",
 ]

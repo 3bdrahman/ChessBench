@@ -4,9 +4,17 @@
 
 ---
 
+## Live Demo
+
+**Try it now →** [https://chess-fight.streamlit.app](https://chess-fight.streamlit.app)
+
+Pre-configured with OpenRouter free tier — no API keys needed, works instantly in your browser.
+
+---
+
 ## Two Ways to Try
 
-1. **Hosted demo** — no setup needed, just open the link and play.
+1. **Hosted demo** — no setup needed, just open [chess-fight.streamlit.app](https://chess-fight.streamlit.app) and play.
 2. **Self-host on Streamlit Cloud** — deploy your own instance in ~5 minutes.
 
 ---

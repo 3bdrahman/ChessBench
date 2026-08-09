@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from chess_fight.common.common_types import ChatMessage, CompletionResult, ModelInfo, ModelProvider
 from chess_fight.providers.anthropic import AnthropicProvider
-from chess_fight.providers.base import ChatMessage, CompletionResult, ModelInfo, ModelProvider
 from chess_fight.providers.google import GoogleProvider
 from chess_fight.providers.nim import NIMProvider
 from chess_fight.providers.ollama import OllamaProvider
@@ -17,6 +17,15 @@ from chess_fight.providers.registry import (
     list_providers,
     register_provider,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clean_provider_registry():
+    """Ensure provider registry is clean before and after each test."""
+    original = dict(PROVIDER_REGISTRY)
+    yield
+    PROVIDER_REGISTRY.clear()
+    PROVIDER_REGISTRY.update(original)
 
 
 class MockModelProvider(ModelProvider):
@@ -60,9 +69,6 @@ class TestProviderRegistry:
         provider = get_provider("mock_test_register")
         assert provider is not None
         assert provider.name == "mock_test_register"
-
-        if "mock_test_register" in PROVIDER_REGISTRY:
-            del PROVIDER_REGISTRY["mock_test_register"]
 
     def test_list_providers(self):
         providers = list_providers()
@@ -144,13 +150,25 @@ class TestAnthropicProvider:
 
     @pytest.mark.asyncio
     async def test_list_models(self, provider):
-        models = await provider.list_models("sk-ant-test123456789012345678901234")
+        with patch("chess_fight.providers.anthropic.AsyncAnthropic") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
 
-        assert len(models) >= 4
-        assert any(m.id == "claude-3-5-sonnet-20241022" for m in models)
-        assert any(m.id == "claude-3-5-haiku-20241022" for m in models)
-        assert all(m.provider == "anthropic" for m in models)
-        assert all(m.context_window == 200000 for m in models)
+            mock_models = AsyncMock()
+            mock_models.data = [
+                MagicMock(id="claude-3-5-sonnet-20241022", display_name="Claude 3.5 Sonnet"),
+                MagicMock(id="claude-3-5-haiku-20241022", display_name="Claude 3.5 Haiku"),
+                MagicMock(id="claude-3-opus-20240229", display_name="Claude 3 Opus"),
+            ]
+            mock_client.models.list = AsyncMock(return_value=mock_models)
+
+            models = await provider.list_models("sk-ant-test123456789012345678901234")
+
+            assert len(models) >= 3
+            assert any(m.id == "claude-3-5-sonnet-20241022" for m in models)
+            assert any(m.id == "claude-3-5-haiku-20241022" for m in models)
+            assert all(m.provider == "anthropic" for m in models)
+            assert all(m.context_window == 128000 for m in models)
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):

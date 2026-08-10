@@ -146,36 +146,6 @@ class AsyncChessGame:
                     await ui_callback(final_state)
                     return self.stats
 
-            # Handle illegal move defensively - retry once with fresh board state
-            if move not in self.board.legal_moves:
-                _log.warning(
-                    "Illegal move %s from %s (legal: %s), requesting new move",
-                    move_str, current_player.name,
-                    [m.uci() for m in self.board.legal_moves]
-                )
-                # Request a new move from the same player
-                try:
-                    if move_timeout_seconds:
-                        move_str, completion_result = await asyncio.wait_for(
-                            current_player.get_move_with_result(self.board.fen()),
-                            timeout=move_timeout_seconds
-                        )
-                    else:
-                        move_str, completion_result = await current_player.get_move_with_result(self.board.fen())
-                    move = chess.Move.from_uci(move_str)
-                except Exception as exc:
-                    _log.error("Failed to get legal move after retry: %s", exc)
-                    # Fall back to first legal move
-                    move = next(iter(self.board.legal_moves))
-                    move_str = move.uci()
-                    completion_result = CompletionResult(
-                        text=move_str,
-                        tokens_in=None,
-                        tokens_out=None,
-                        latency_ms=0,
-                        raw_response={"fallback": True, "error": str(exc)},
-                    )
-
             if move in self.board.legal_moves:
                 game_move = GameMove(
                     player=current_player.name,

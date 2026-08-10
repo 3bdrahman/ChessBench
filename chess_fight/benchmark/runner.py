@@ -114,9 +114,6 @@ class BenchmarkRunner:
         self.logger = BenchmarkLogger(str(self.run_dir))
         self.start_time = time.time()
 
-        # Initialize Stockfish evaluator for ground-truth analysis
-        self.evaluator = StockfishEvaluator()
-
         # Initialize rate limiter
         self.rate_limiter = ProviderRateLimiter()
 
@@ -240,7 +237,8 @@ class BenchmarkRunner:
         board = chess.Board(opening['fen'])
 
         # Start Stockfish evaluator for this game
-        await self.evaluator.start()
+        evaluator = StockfishEvaluator()
+        await evaluator.start()
 
         self.logger.start_game(
             white_player=white_spec,
@@ -262,7 +260,8 @@ class BenchmarkRunner:
                 cr = state.last_completion_result
 
                 # Evaluate position before the move with Stockfish
-                eval_result = await self.evaluator.evaluate(state.board)
+                board_before = chess.Board(fen_before)
+                eval_result = await evaluator.evaluate(board_before)
 
                 self.logger.log_move(
                     move_number=len(state.moves),
@@ -306,7 +305,7 @@ class BenchmarkRunner:
         )
 
         # Stop evaluator after game
-        await self.evaluator.stop()
+        await evaluator.stop()
 
         # Determine result
         if stats.winner == white_spec:

@@ -256,7 +256,11 @@ class GameExecutionError(BenchmarkError):
 
 def is_retryable(exc: Exception) -> bool:
     """Return True if ``exc`` is a transient error worth retrying."""
-    return isinstance(exc, (RateLimitError, TimeoutError, ConnectionError, NetworkError))
+    if isinstance(exc, (RateLimitError, TimeoutError, ConnectionError, NetworkError)):
+        return True
+    if isinstance(exc, ProviderAPIError) and getattr(exc, "status_code", 0) >= 500:
+        return True
+    return False
 
 
 __all__ = [

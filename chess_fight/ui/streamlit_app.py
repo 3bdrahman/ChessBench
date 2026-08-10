@@ -43,10 +43,7 @@ from chess_fight.ui.error_display import render_error
 # NIM: NVIDIA's hosted inference API, server-side key.
 # Ollama: local-only — works when running the app locally against an Ollama server.
 # Stockfish: real local engine — only shown when the binary is on PATH.
-# (Anthropic, Google, Groq, OpenAI can be hidden to keep the demo UX focused by setting
-# the CHESS_FIGHT_HOSTED_PROVIDERS env var to "openrouter,nim,ollama,stockfish".)
-_env_providers = os.environ.get("CHESS_FIGHT_HOSTED_PROVIDERS")
-HOSTED_PROVIDERS: tuple[str, ...] | None = tuple(_env_providers.split(",")) if _env_providers else None
+from chess_fight.constants import HOSTED_PROVIDERS
 
 RUNS_ROOT = os.environ.get("CHESS_FIGHT_RUNS_ROOT", "runs")
 

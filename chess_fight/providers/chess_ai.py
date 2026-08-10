@@ -38,8 +38,14 @@ class ProviderChessAI(ChessAI):
 
         self.name = f"{provider_name}:{model_id}"
 
-    async def _get_move_from_model(self, fen: str) -> str:
+    async def _get_move_from_model(self, fen: str, validation_attempt: int = 0) -> str:
         prompt = self._create_prompt(fen)
+        if validation_attempt > 0:
+            prompt += (
+                f"\n\n[SYSTEM WARNING]: Your previous attempt failed because you either reasoned "
+                f"for too long without outputting a move, or your move was invalid. "
+                f"You MUST output a legal UCI move enclosed in <move></move> tags immediately."
+            )
 
         # Pass FEN explicitly so providers like Stockfish can use it directly
         # instead of trying to parse it from the full prompt.

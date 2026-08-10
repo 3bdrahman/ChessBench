@@ -363,10 +363,13 @@ class BenchmarkRunner:
         # Generate pairings
         pairings: list[tuple[str, str]] = []
         players = list(self.players.keys())
-        for i, white in enumerate(players):
-            for j, black in enumerate(players):
-                if i != j:
-                    pairings.append((white, black))
+        if self.config.colors == "fixed" and len(players) >= 2:
+            pairings.append((players[0], players[1]))
+        else:
+            for i, white in enumerate(players):
+                for j, black in enumerate(players):
+                    if i != j:
+                        pairings.append((white, black))
 
         # Run games pairing by pairing (for proper Glicko-2 rating periods)
         for pairing_idx, (white, black) in enumerate(pairings):

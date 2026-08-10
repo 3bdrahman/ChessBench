@@ -105,6 +105,7 @@ class TestBayesianElo:
     def test_add_game(self):
         elo = BayesianElo()
         elo.add_game("White", "Black", 1.0)
+        elo.finalize_period()
 
         white_rating = elo.get_rating("White")
         black_rating = elo.get_rating("Black")
@@ -161,6 +162,7 @@ class TestBayesianElo:
         elo = BayesianElo()
         # Don't pre-add players
         elo.add_game("NewPlayer1", "NewPlayer2", 1.0)
+        elo.finalize_period()
 
         rating1 = elo.get_rating("NewPlayer1")
         rating2 = elo.get_rating("NewPlayer2")

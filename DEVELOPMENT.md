@@ -1,6 +1,6 @@
-# Chess LLM Benchmark — Optimization Brainstorm
+# Development Brainstorm & Architecture Notes
 
-**Status**: Planning document — no implementation yet  
+**Status**: Planning document — no implementation yet
 **North Star**: A production-grade, provider-agnostic benchmark for evaluating LLM chess capability that produces statistically valid, reproducible results and a compelling live demo.
 
 ---
@@ -25,15 +25,15 @@ Build the reference tool for "how well does model X play chess?" — usable by r
 ```python
 # providers/base.py
 class ModelProvider(ABC):
-    name: str                           # "openai", "anthropic", "google", "nim"
+    name: str # "openai", "anthropic", "google", "nim"
     requires_api_key: bool
-    
+
     @abstractmethod
     async def list_models(self, api_key: str) -> list[ModelInfo]: ...
-    
+
     @abstractmethod
     async def complete(self, api_key: str, model: str, messages: list[ChatMessage], **params) -> CompletionResult: ...
-    
+
     @abstractmethod
     def validate_key(self, api_key: str) -> bool: ...
 ```
@@ -79,14 +79,14 @@ class ProviderChessAI(ChessAI):
         self.provider = provider
         self.model_id = model_id
         self.api_key = api_key
-        self.params = params  # temperature, max_tokens, etc.
-    
+        self.params = params # temperature, max_tokens, etc.
+
     async def _get_move_from_model(self, fen: str) -> str:
         prompt = self._create_prompt(fen)
         result = await self.provider.complete(self.api_key, self.model_id, [
             {"role": "user", "content": prompt}
         ], **self.params)
-        return extract_move(result.text)  # robust extraction (see §3)
+        return extract_move(result.text) # robust extraction (see §3)
 ```
 
 **Breaking change**: `ChessAI.get_move()` becomes async. Game loop must be async (§4).
@@ -162,16 +162,16 @@ Reduces format errors dramatically.
 @dataclass
 class BenchmarkConfig:
     # Game rules
-    time_control: TimeControl = TimeControl(seconds_per_move=30)  # or Fischer/increment
-    opening_book: OpeningBook = OpeningBook.EC00_EC99_100  # 100 positions from ECO
-    games_per_pairing: int = 10  # min for statistical significance
-    colors: ColorAssignment = ColorAssignment.ALTERNATING  # each model plays both colors
-    
+    time_control: TimeControl = TimeControl(seconds_per_move=30) # or Fischer/increment
+    opening_book: OpeningBook = OpeningBook.EC00_EC99_100 # 100 positions from ECO
+    games_per_pairing: int = 10 # min for statistical significance
+    colors: ColorAssignment = ColorAssignment.ALTERNATING # each model plays both colors
+
     # Model params (benchmark mode)
     temperature: float = 0.0
     max_tokens: int = 100
-    seed: int | None = 42  # for reproducibility
-    
+    seed: int | None = 42 # for reproducibility
+
     # Concurrency
     max_parallel_games: int = 4
 ```
@@ -226,7 +226,7 @@ Every benchmark run produces:
   "llm_tokens_in": 1847,
   "llm_tokens_out": 12,
   "llm_raw_response": "...",
-  "thinking_trace": "...",  // if model supports it
+  "thinking_trace": "...", // if model supports it
   "prompt_hash": "sha256",
   "validation_retries": 0,
   "timestamp_utc": "2026-08-01T18:22:13.441Z"
@@ -254,14 +254,14 @@ Every benchmark run produces:
 ```python
 # game/async_game.py
 class AsyncChessGame:
-    async def play_game(self, white: ProviderChessAI, black: ProviderChessAI, 
+    async def play_game(self, white: ProviderChessAI, black: ProviderChessAI,
                         ui_callback: Callable[[GameState], Awaitable[None]]) -> GameResult:
         while not self.board.is_game_over():
             current = white if self.board.turn == chess.WHITE else black
             move = await current.get_move(self.board.fen())
             self.board.push_uci(move)
             await ui_callback(self.get_state())
-            await asyncio.sleep(0.1)  # yield to UI
+            await asyncio.sleep(0.1) # yield to UI
         return self.result()
 ```
 
@@ -427,26 +427,26 @@ python -m chess_fight.benchmark \
 
 ```
 chess_fight/
-├── config.py              → config.py (env loading only)
-├── models.py              → SPLIT INTO:
-│   ├── chess_ai.py        # Base ChessAI + prompt builder + move parser
-│   ├── game_state.py      # GameMove, GameStats, position analysis
-│   └── evaluation.py      # Heuristics (capture, development, king safety, etc.)
-├── game.py                → game/
+├── config.py → config.py (env loading only)
+├── models.py → SPLIT INTO:
+│   ├── chess_ai.py # Base ChessAI + prompt builder + move parser
+│   ├── game_state.py # GameMove, GameStats, position analysis
+│   └── evaluation.py # Heuristics (capture, development, king safety, etc.)
+├── game.py → game/
 │   ├── __init__.py
-│   ├── sync_game.py       # Legacy (delete after migration)
-│   ├── async_game.py      # New async loop
-│   └── benchmark.py       # Headless runner + ELO + reports
-├── ui.py                  → ui/
+│   ├── sync_game.py # Legacy (delete after migration)
+│   ├── async_game.py # New async loop
+│   └── benchmark.py # Headless runner + ELO + reports
+├── ui.py → ui/
 │   ├── __init__.py
-│   ├── streamlit_app.py   # Entry point
+│   ├── streamlit_app.py # Entry point
 │   ├── components/
-│   │   ├── board.py       # chessboard.js wrapper
+│   │   ├── board.py # chessboard.js wrapper
 │   │   ├── move_log.py
 │   │   ├── stats.py
 │   │   └── replay.py
-│   └── providers_ui.py    # Key entry + model selector
-├── providers/             # NEW
+│   └── providers_ui.py # Key entry + model selector
+├── providers/ # NEW
 │   ├── __init__.py
 │   ├── base.py
 │   ├── registry.py
@@ -456,11 +456,11 @@ chess_fight/
 │   ├── nim.py
 │   ├── openrouter.py
 │   ├── ollama.py
-│   └── chess_ai.py        # ProviderChessAI wrapper
-├── move_parser.py         # NEW - robust UCI extraction + tests
-├── elo.py                 # NEW - Bayesian ELO / Glicko-2
-├── openings.py            # NEW - ECO opening book
-├── logging.py             # NEW - structured JSONL logger
+│   └── chess_ai.py # ProviderChessAI wrapper
+├── move_parser.py # NEW - robust UCI extraction + tests
+├── elo.py # NEW - Bayesian ELO / Glicko-2
+├── openings.py # NEW - ECO opening book
+├── logging.py # NEW - structured JSONL logger
 ├── tests/
 │   ├── test_move_parser.py
 │   ├── test_providers.py
@@ -470,11 +470,11 @@ chess_fight/
 │       ├── llm_outputs/
 │       └── games/
 ├── requirements.txt
-├── pyproject.toml         # ruff, mypy, pytest config
+├── pyproject.toml # ruff, mypy, pytest config
 ├── .streamlit/config.toml
-├── streamlit_app.py       # shim → ui.streamlit_app:main
+├── streamlit_app.py # shim → ui.streamlit_app:main
 ├── Dockerfile
-└── README.md              # Updated with architecture diagram
+└── README.md # Updated with architecture diagram
 ```
 
 ---

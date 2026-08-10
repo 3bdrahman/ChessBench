@@ -1,14 +1,30 @@
-"""Provider-agnostic ChessAI wrapper."""
+"""Provider-agnostic ChessAI wrapper.
 
-from chess_fight.common.common_types import ChatMessage
+Delegates chat completion to a registered :class:`ModelProvider` and parses
+the free-form text response into a UCI move via :mod:`chess_fight.move_parser`.
+"""
+
+from typing import Any
+
+import chess
+
+from chess_fight.common.common_types import ChatMessage, CompletionResult
+from chess_fight.common.exceptions import (
+    MoveValidationError,
+    ProviderError,
+    RateLimitError,
+    TimeoutError,
+)
 from chess_fight.models.chess_ai import ChessAI
+from chess_fight.models.thinking import extract_and_analyze_thinking
+from chess_fight.move_parser import extract_move
 from chess_fight.providers.registry import get_provider
 
 
 class ProviderChessAI(ChessAI):
     """ChessAI implementation using the provider abstraction layer."""
 
-    def __init__(self, provider_name: str, model_id: str, api_key: str, **params):
+    def __init__(self, provider_name: str, model_id: str, api_key: str, **params: Any) -> None:
         super().__init__()
         self.provider_name = provider_name
         self.model_id = model_id
@@ -25,38 +41,67 @@ class ProviderChessAI(ChessAI):
     async def _get_move_from_model(self, fen: str) -> str:
         prompt = self._create_prompt(fen)
 
-        result = await self.provider.complete(
-            self.api_key,
-            self.model_id,
-            [ChatMessage(role="user", content=prompt)],
-            **self.params
-        )
+        # Pass FEN explicitly so providers like Stockfish can use it directly
+        # instead of trying to parse it from the full prompt.
+        params = dict(self.params)
+        params["fen"] = fen
+
+        retry_count = 0
+        while True:
+            try:
+                result = await self.provider.complete(
+                    self.api_key,
+                    self.model_id,
+                    [ChatMessage(role="user", content=prompt)],
+                    **params
+                )
+                break
+            except (RateLimitError, TimeoutError) as exc:
+                retry_count += 1
+                # Populate last_completion_result with error info before re-raising
+                self.last_completion_result = CompletionResult(
+                    text=str(exc),
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    raw_response=getattr(exc, "raw_response", None),
+                    latency_ms=getattr(exc, "latency_ms", 0),
+                    retry_count=retry_count,
+                )
+                raise
+            except ProviderError as exc:
+                self.last_completion_result = CompletionResult(
+                    text=str(exc),
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    raw_response=getattr(exc, "raw_response", None),
+                    latency_ms=getattr(exc, "latency_ms", 0),
+                    retry_count=retry_count,
+                )
+                raise
+
+        # Extract and analyze thinking from the result
+        extract_and_analyze_thinking(result.text)
 
         self.last_completion_result = result
-        return self._extract_move(result.text)
+        if self.last_completion_result:
+            self.last_completion_result.retry_count = retry_count
+        board = chess.Board(fen)
+        move = extract_move(result.text, list(board.legal_moves))
+        if not move:
+            raise MoveValidationError(
+                f"Could not extract legal move from response: {result.text[:100]}",
+                fen=fen,
+                legal_moves=[m.uci() for m in board.legal_moves],
+                raw_text=result.text,
+            )
+        return move
 
     def _extract_move(self, text: str) -> str:
-        """Extract UCI move from LLM output."""
-        import re
+        """Extract a UCI move from raw LLM text.
 
-        # Strip thinking blocks
-        text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
+        Thin wrapper over :func:`chess_fight.move_parser.extract_move` kept
+        for backward compatibility — returns ``""`` when no legal-looking
+        move is found, matching the historical contract.
+        """
+        return extract_move(text) or ""
 
-        # Find UCI pattern: [a-h][1-8][a-h][1-8][qrbn]?
-        uci_pattern = r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b'
-        matches = re.findall(uci_pattern, text.lower())
-
-        if matches:
-            return str(matches[0])
-
-        # Fallback: look for "I will play X" or similar patterns
-        fallback_patterns = [
-            r'(?:play|move|choose)\s+([a-h][1-8][a-h][1-8][qrbn]?)',
-            r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b',
-        ]
-        for pattern in fallback_patterns:
-            match = re.search(pattern, text.lower())
-            if match:
-                return str(match.group(1))
-
-        return ""

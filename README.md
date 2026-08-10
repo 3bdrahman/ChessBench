@@ -57,7 +57,7 @@ The hosted Streamlit demo exposes three providers (OpenRouter, NVIDIA NIM, Ollam
 | **NVIDIA NIM** | NIM key | Hosted Llama / Qwen / Mistral models |
 | **Ollama** | None | Local Llama/Qwen models (run `ollama serve` first) |
 | **Stockfish** | None | **Local grandmaster engine** — install from [stockfishchess.org](https://stockfishchess.org/download/) |
-| Anthropic | `sk-ant-...` | Self-host only — add `anthropic_api_key` and edit `HOSTED_PROVIDERS` |
+| Anthropic | `sk-ant-...` | Self-host only — add `anthropic_api_key` and configure `CHESS_FIGHT_HOSTED_PROVIDERS` |
 | Google | Google AI key | Self-host only — Gemini models |
 | Groq | `gsk_...` | Self-host only — fast inference, generous free tier |
 | OpenAI | `sk-...` | Self-host only — GPT-4o, o1, etc. |

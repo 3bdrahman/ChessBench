@@ -14,6 +14,7 @@ class GameResult:
     black: str
     result: float  # 1.0 = white win, 0.5 = draw, 0.0 = black win
     opening: str | None = None
+    rating_period: int = 0  # Rating period this game belongs to
 
 
 @dataclass
@@ -26,7 +27,7 @@ class Rating:
     phi: float = 0.0
     sigma: float = 0.06
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Convert to Glicko-2 scale (1500 = 0, 173.7178 = 1 deviation)
         self.mu = (self.rating - 1500) / 173.7178
         self.phi = self.deviation / 173.7178
@@ -41,7 +42,7 @@ class Rating:
         return float(173.7178 * self.phi)
 
     @property
-    def confidence_interval_95(self) -> tuple:
+    def confidence_interval_95(self) -> tuple[float, float]:
         """95% confidence interval."""
         margin = 1.96 * self.display_deviation
         return (self.display_rating - margin, self.display_rating + margin)
@@ -54,7 +55,7 @@ class Glicko2:
         self.tau = tau  # System constant for volatility change
         self.ratings: dict[str, Rating] = {}
 
-    def add_player(self, name: str, rating: float = 1500, deviation: float = 350, volatility: float = 0.06):
+    def add_player(self, name: str, rating: float = 1500, deviation: float = 350, volatility: float = 0.06) -> None:
         """Add a new player."""
         self.ratings[name] = Rating(rating, deviation, volatility)
 
@@ -72,7 +73,7 @@ class Glicko2:
         """Expected score against opponent."""
         return 1 / (1 + math.exp(-self._g(phi_j) * (mu - mu_j)))
 
-    def update_ratings(self, results: list[GameResult]):
+    def update_ratings(self, results: list[GameResult]) -> None:
         """Update ratings based on game results."""
         # Group results by player
         player_results = defaultdict(list)
@@ -206,21 +207,39 @@ class Glicko2:
 
 
 class BayesianElo:
-    """Simplified Bayesian ELO (using Glicko-2 under the hood)."""
+    """Simplified Bayesian ELO (using Glicko-2 under the hood).
 
-    def __init__(self):
+    Implements rating periods for mathematically correct Glicko-2 updates.
+    Games are buffered and processed in batches via finalize_period().
+    """
+
+    def __init__(self) -> None:
         self.glicko = Glicko2()
         # cross_table() needs the raw game records; Glicko2 keeps only ratings.
         self.games: list[GameResult] = []
+        self._buffer: list[GameResult] = []
+        self._current_period = 0
 
-    def add_game(self, white: str, black: str, result: float, opening: str | None = None):
-        """Add a game result."""
+    def add_game(self, white: str, black: str, result: float, opening: str | None = None) -> None:
+        """Add a game result to the buffer (doesn't update ratings immediately)."""
         for p in [white, black]:
             if p not in self.glicko.ratings:
                 self.glicko.add_player(p)
-        game = GameResult(white, black, result, opening)
+        game = GameResult(white, black, result, opening, rating_period=self._current_period)
         self.games.append(game)
-        self.glicko.update_ratings([game])
+        self._buffer.append(game)
+
+    def finalize_period(self) -> None:
+        """Process all buffered games as a single rating period.
+
+        This implements proper Glicko-2 batch updates where all games
+        in a period are processed together before ratings are updated.
+        """
+        if not self._buffer:
+            return
+        self.glicko.update_ratings(self._buffer)
+        self._buffer.clear()
+        self._current_period += 1
 
     def get_rating(self, name: str) -> Rating:
         return self.glicko.get_rating(name)

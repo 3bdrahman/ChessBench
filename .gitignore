@@ -30,6 +30,13 @@ dist/
 build/
 *.egg-info/
 
+# Benchmark runtime output
+runs/
+
 # OMO
 .omo/
 streamlit.log
+
+# Playwright / local QA artifacts
+.playwright-mcp/
+streamlit_*.png

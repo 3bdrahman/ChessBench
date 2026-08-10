@@ -118,5 +118,57 @@ class TestPromptTemplate:
             assert pattern not in prompt, f"Unrendered placeholder: {pattern}"
 
 
+class TestAnalyzePositionRepetition:
+    """Regression tests for _analyze_position_repetition.
+
+    Previously the function returned progress_score=1.0 unconditionally when
+    history had fewer than 3 entries, masking early-game stagnation. The fix
+    computes unique/total across the last 4 positions regardless of length.
+    """
+
+    def test_empty_history_returns_real_score(self):
+        ai = MockChessAI()
+        result = ai._analyze_position_repetition(chess.Board())
+        assert result["progress_score"] == 1.0
+        assert result["repetitions"] == 1
+        assert result["is_stagnating"] is False
+
+    def test_short_history_returns_real_score_not_always_one(self):
+        ai = MockChessAI()
+        # After one move, history has 1 entry; previously the function
+        # short-circuited to progress_score=1.0 regardless of repetition.
+        ai.move_history.append(chess.Board().fen().split(" ")[0])
+        board = chess.Board()
+        board.push(chess.Move.from_uci("e2e4"))
+        result = ai._analyze_position_repetition(board)
+        assert 0.0 < result["progress_score"] <= 1.0
+        assert result["is_stagnating"] is False
+
+    def test_repetition_triggers_stagnation_flag(self):
+        ai = MockChessAI()
+        # Simulate the board returning to the same FEN position.
+        starting = chess.Board()
+        ai.move_history.append(starting.fen().split(" ")[0])
+        ai.move_history.append(starting.fen().split(" ")[0])
+        ai.move_history.append(starting.fen().split(" ")[0])
+        result = ai._analyze_position_repetition(starting)
+        assert result["repetitions"] >= ai.stagnation_threshold
+        assert result["is_stagnating"] is True
+        assert result["progress_score"] < 1.0
+
+    def test_all_unique_history_has_full_progress(self):
+        ai = MockChessAI()
+        board = chess.Board()
+        ai.move_history.append(board.fen().split(" ")[0])
+        board.push(chess.Move.from_uci("e2e4"))
+        ai.move_history.append(board.fen().split(" ")[0])
+        board.push(chess.Move.from_uci("e7e5"))
+        ai.move_history.append(board.fen().split(" ")[0])
+        board.push(chess.Move.from_uci("g1f3"))
+        result = ai._analyze_position_repetition(board)
+        assert result["progress_score"] == 1.0
+        assert result["is_stagnating"] is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

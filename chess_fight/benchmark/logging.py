@@ -4,10 +4,21 @@ import json
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import chess
+
+
+class MoveQuality(Enum):
+    """Move quality classification based on centipawn loss."""
+    BEST = "best"           # 0 cp loss
+    EXCELLENT = "excellent" # < 10 cp loss
+    GOOD = "good"           # < 50 cp loss
+    INACCURACY = "inaccuracy"  # < 100 cp loss
+    MISTAKE = "mistake"     # < 300 cp loss
+    BLUNDER = "blunder"     # >= 300 cp loss
 
 
 @dataclass
@@ -28,6 +39,28 @@ class MoveLogEntry:
     prompt_hash: str
     validation_retries: int
     timestamp_utc: str
+    # Stockfish evaluation fields
+    eval_cp_score: int | None = None
+    eval_mate_in: int | None = None
+    eval_best_move_uci: str | None = None
+    eval_best_move_cp: int | None = None
+    eval_top3_moves: list[dict[str, Any]] | None = None
+    eval_depth: int | None = None
+    eval_time_ms: int | None = None
+    # Move quality metrics
+    cp_loss: int | None = None
+    move_quality: str | None = None
+    is_best_move: bool = False
+    # Thinking trace analysis
+    thinking_chars: int | None = None
+    thinking_words: int | None = None
+    thinking_has_structured: bool | None = None
+    thinking_mentions_tactics: bool | None = None
+    thinking_mentions_strategy: bool | None = None
+    thinking_mentions_time_pressure: bool | None = None
+    thinking_mentions_material: bool | None = None
+    thinking_mentions_positional: bool | None = None
+    thinking_mentions_king_safety: bool | None = None
 
 
 @dataclass
@@ -61,6 +94,7 @@ class BenchmarkLogger:
         self.move_log_path = self.run_dir / "moves.jsonl"
         self.summary_path = self.run_dir / "summary.json"
         self.pgn_path = self.run_dir / "games.pgn"
+        self.error_log_path = self.run_dir / "errors.jsonl"
 
         self.current_game_id: str = ""
         self.current_game_moves: list[MoveLogEntry] = []
@@ -68,11 +102,11 @@ class BenchmarkLogger:
         self.run_config: dict[str, Any] = {}
         self.games_completed: list[GameLogEntry] = []
 
-    def start_run(self, config: dict[str, Any]):
+    def start_run(self, config: dict[str, Any]) -> None:
         """Start a new benchmark run."""
         self.run_config = config
         # Clear previous logs
-        for path in [self.game_log_path, self.move_log_path, self.pgn_path]:
+        for path in [self.game_log_path, self.move_log_path, self.pgn_path, self.error_log_path]:
             if path.exists():
                 path.unlink()
 
@@ -80,7 +114,7 @@ class BenchmarkLogger:
                    white_provider: str, black_provider: str,
                    opening_eco: str | None = None,
                    opening_name: str | None = None,
-                   opening_fen: str | None = None):
+                   opening_fen: str | None = None) -> None:
         """Start logging a new game."""
         self.current_game_id = str(uuid.uuid4())[:8]
         self.current_game_moves = []
@@ -99,8 +133,63 @@ class BenchmarkLogger:
                  llm_latency_ms: int, llm_tokens_in: int | None,
                  llm_tokens_out: int | None, llm_raw_response: str,
                  thinking_trace: str | None, prompt_hash: str,
-                 validation_retries: int):
+                 validation_retries: int,
+                 eval_cp_score: int | None = None,
+                 eval_mate_in: int | None = None,
+                 eval_best_move_uci: str | None = None,
+                 eval_best_move_cp: int | None = None,
+                 eval_top3_moves: list[dict[str, Any]] | None = None,
+                 eval_depth: int | None = None,
+                 eval_time_ms: int | None = None) -> None:
         """Log a single move."""
+        # Calculate move quality metrics from Stockfish evaluation
+        cp_loss = None
+        move_quality = None
+        is_best_move = False
+
+        if eval_cp_score is not None and eval_best_move_cp is not None:
+            # cp_loss = best_move_cp - move_cp (positive means loss)
+            cp_loss = eval_best_move_cp - eval_cp_score
+            is_best_move = cp_loss == 0
+
+            # Classify move quality based on cp_loss
+            if cp_loss == 0:
+                move_quality = MoveQuality.BEST.value
+            elif cp_loss < 10:
+                move_quality = MoveQuality.EXCELLENT.value
+            elif cp_loss < 50:
+                move_quality = MoveQuality.GOOD.value
+            elif cp_loss < 100:
+                move_quality = MoveQuality.INACCURACY.value
+            elif cp_loss < 300:
+                move_quality = MoveQuality.MISTAKE.value
+            else:
+                move_quality = MoveQuality.BLUNDER.value
+
+        # Analyze thinking trace if present
+        thinking_chars = None
+        thinking_words = None
+        thinking_has_structured = None
+        thinking_mentions_tactics = None
+        thinking_mentions_strategy = None
+        thinking_mentions_time_pressure = None
+        thinking_mentions_material = None
+        thinking_mentions_positional = None
+        thinking_mentions_king_safety = None
+
+        if thinking_trace and thinking_trace.strip():
+            from chess_fight.models.thinking import analyze_thinking
+            trace = analyze_thinking(thinking_trace)
+            thinking_chars = trace.char_count
+            thinking_words = trace.word_count
+            thinking_has_structured = trace.has_structured_reasoning
+            thinking_mentions_tactics = trace.mentions_tactics
+            thinking_mentions_strategy = trace.mentions_strategy
+            thinking_mentions_time_pressure = trace.mentions_time_pressure
+            thinking_mentions_material = trace.mentions_material
+            thinking_mentions_positional = trace.mentions_positional
+            thinking_mentions_king_safety = trace.mentions_king_safety
+
         entry = MoveLogEntry(
             game_id=self.current_game_id,
             move_number=move_number,
@@ -116,7 +205,26 @@ class BenchmarkLogger:
             thinking_trace=thinking_trace,
             prompt_hash=prompt_hash,
             validation_retries=validation_retries,
-            timestamp_utc=datetime.now(UTC).isoformat() + 'Z'
+            timestamp_utc=datetime.now(UTC).isoformat() + 'Z',
+            eval_cp_score=eval_cp_score,
+            eval_mate_in=eval_mate_in,
+            eval_best_move_uci=eval_best_move_uci,
+            eval_best_move_cp=eval_best_move_cp,
+            eval_top3_moves=eval_top3_moves,
+            eval_depth=eval_depth,
+            eval_time_ms=eval_time_ms,
+            cp_loss=cp_loss,
+            move_quality=move_quality,
+            is_best_move=is_best_move,
+            thinking_chars=thinking_chars,
+            thinking_words=thinking_words,
+            thinking_has_structured=thinking_has_structured,
+            thinking_mentions_tactics=thinking_mentions_tactics,
+            thinking_mentions_strategy=thinking_mentions_strategy,
+            thinking_mentions_time_pressure=thinking_mentions_time_pressure,
+            thinking_mentions_material=thinking_mentions_material,
+            thinking_mentions_positional=thinking_mentions_positional,
+            thinking_mentions_king_safety=thinking_mentions_king_safety,
         )
         self.current_game_moves.append(entry)
 
@@ -125,7 +233,7 @@ class BenchmarkLogger:
             f.write(json.dumps(asdict(entry)) + '\n')
 
     def end_game(self, result: str, result_numeric: float,
-                 total_moves: int, game_duration_sec: float):
+                 total_moves: int, game_duration_sec: float) -> None:
         """End current game and write complete game log."""
         game_entry = GameLogEntry(
             game_id=self.current_game_id,
@@ -158,7 +266,7 @@ class BenchmarkLogger:
         self.current_game_moves = []
         self.current_game_info = {}
 
-    def _write_pgn(self, game: GameLogEntry):
+    def _write_pgn(self, game: GameLogEntry) -> None:
         """Write game to PGN file."""
         pgn_lines = [
             '[Event "Chess LLM Benchmark"]',
@@ -202,7 +310,7 @@ class BenchmarkLogger:
         with open(self.pgn_path, 'a') as f:
             f.write('\n'.join(pgn_lines) + '\n\n')
 
-    def write_summary(self):
+    def write_summary(self) -> None:
         """Write run summary."""
         summary = {
             'run_id': self.run_dir.name,
@@ -230,6 +338,22 @@ class BenchmarkLogger:
         if self.pgn_path.exists():
             return self.pgn_path.read_text()
         return ""
+
+    def log_error(self, game_index: int, white: str, black: str, error: str) -> None:
+        """Record a per-game error to errors.jsonl.
+
+        Called when a single game fails (auth/rate-limit errors are fatal and
+        abort the run, not recorded here).
+        """
+        entry = {
+            "game_index": game_index,
+            "white": white,
+            "black": black,
+            "error": error,
+            "timestamp_utc": datetime.now(UTC).isoformat() + 'Z',
+        }
+        with open(self.error_log_path, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
 
 
 if __name__ == "__main__":

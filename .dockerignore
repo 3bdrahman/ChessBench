@@ -1,0 +1,67 @@
+# Version Control
+.git/
+.gitignore
+.gitattributes
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Packaging
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing / Coverage
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Linting / Type checking
+.mypy_cache/
+.ruff_cache/
+
+# Benchmark outputs
+runs/
+benchmark_logs/
+
+# Streamlit
+.streamlit/
+.streamlit/secrets.toml
+
+# Documentation
+*.md backup
+docs/
+
+# OMO
+.omo/
+.playwright-mcp/
+streamlit_*.png
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Version control patches
+*.patch
+*.skip

@@ -85,7 +85,6 @@ class StockfishEvaluator:
                 await self._engine.configure({
                     "Threads": self.threads,
                     "Hash": self.hash_mb,
-                    "MultiPV": self.multipv,
                 })
             return True
         except Exception as e:
@@ -126,12 +125,15 @@ class StockfishEvaluator:
         try:
             # Use depth-limited analysis with MultiPV
             limit = chess.engine.Limit(depth=self.depth)
-            info = await self._engine.analyse(board, limit)
+            info = await self._engine.analyse(board, limit, multipv=self.multipv)
 
             elapsed_ms = int((time.time() - start_time) * 1000)
 
+            # When multipv > 1, info is a list of dicts. We use the principal variation for the main score.
+            pv_info = info[0] if isinstance(info, list) and info else (info if isinstance(info, dict) else {})
+
             # Extract score
-            score = info.get("score")
+            score = pv_info.get("score")
             cp_score = None
             mate_in = None
             if score:
@@ -141,13 +143,13 @@ class StockfishEvaluator:
                     cp_score = score.white().score()
 
             # Extract best move
-            best_move = info.get("pv", [None])[0]
+            best_move = pv_info.get("pv", [None])[0]
             best_move_uci = best_move.uci() if best_move else None
 
             # Extract best move score
             best_move_cp = None
-            if best_move and "score" in info:
-                best_move_cp = info["score"].white().score()
+            if best_move and "score" in pv_info:
+                best_move_cp = pv_info["score"].white().score()
 
             # Extract top 3 moves from MultiPV
             top3_moves: list[dict[str, Any]] = []

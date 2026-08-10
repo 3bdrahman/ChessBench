@@ -121,7 +121,7 @@ def _draw_completion_result(expander_placeholder, state: GameState) -> None:
     cr = state.last_completion_result
     if cr is None:
         return
-    with expander_placeholder.expander("Last LLM completion", expanded=False):
+    with expander_placeholder.expander("Last LLM completion", expanded=True):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
             st.metric("Latency (ms)", cr.latency_ms if cr.latency_ms is not None else "—")
@@ -424,7 +424,8 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
         return
 
     game_index = {"value": 0}
-    total_games = len(runner.players) * (len(runner.players) - 1) * games
+    num_pairings = 1 if colors == "fixed" else (len(runner.players) * (len(runner.players) - 1))
+    total_games = num_pairings * games
     progress_bar = progress_placeholder.progress(0.0, text=f"Game 0 / {total_games}")
 
     async def live_callback(state: GameState):

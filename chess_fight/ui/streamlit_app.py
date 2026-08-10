@@ -24,7 +24,7 @@ from chess_fight.benchmark.results_view import (
     load_run,
 )
 from chess_fight.benchmark.runner import BenchmarkConfig, BenchmarkRunner
-from chess_fight.common.common_types import is_chess_capable, is_free_tier
+from chess_fight.common.common_types import is_chess_capable
 from chess_fight.common.exceptions import (
     GameExecutionError,
     InvalidApiKeyError,
@@ -291,14 +291,12 @@ def render_model_selectors(available_providers: list):
             if not is_chess_capable(model):
                 filtered_count += 1
                 continue
-            free_marker = " ★free" if is_free_tier(model) else ""
-            display_name = f"[{provider_name}] {model.name}{free_marker}"
+            display_name = f"[{provider_name}] {model.name}"
             all_models[display_name] = {
                 "provider": provider_name,
                 "model_id": model.id,
                 "api_key": api_key,
                 "context_window": model.context_window,
-                "is_free": is_free_tier(model),
             }
 
     if filtered_count:
@@ -306,12 +304,8 @@ def render_model_selectors(available_providers: list):
             f"ⓘ {filtered_count} non-chat model(s) hidden (embedding, audio, image, etc.)"
         )
 
-    show_free_only = st.sidebar.checkbox("Show free models only", value=False)
-    if show_free_only:
-        all_models = {k: v for k, v in all_models.items() if v["is_free"]}
-
     if not all_models:
-        st.sidebar.warning("No chess-capable models available. Please add API keys or change filters.")
+        st.sidebar.warning("No chess-capable models available. Please add API keys.")
         return None, None
 
     model_options = list(all_models.keys())

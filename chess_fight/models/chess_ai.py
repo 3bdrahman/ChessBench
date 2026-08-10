@@ -220,7 +220,7 @@ class ChessAI(ABC):
                 break
                 
             try:
-                move_str = await self._get_move_from_model(fen)
+                move_str = await self._get_move_from_model(fen, validation_attempts)
                 attempted_moves.append(move_str)
                 validated_move = self._validate_move(move_str, board)
 
@@ -273,7 +273,7 @@ class ChessAI(ABC):
                 break
                 
             try:
-                move_str = await self._get_move_from_model(fen)
+                move_str = await self._get_move_from_model(fen, validation_attempts)
                 attempted_moves.append(move_str)
                 validated_move = self._validate_move(move_str, board)
 
@@ -319,7 +319,7 @@ class ChessAI(ABC):
         )
 
     @abstractmethod
-    async def _get_move_from_model(self, fen: str) -> str:
+    async def _get_move_from_model(self, fen: str, validation_attempt: int = 0) -> str:
         """Return the model's UCI move suggestion for the given FEN position.
 
         Implementations should populate ``self.last_completion_result`` with

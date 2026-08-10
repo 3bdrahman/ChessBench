@@ -33,7 +33,7 @@ from chess_fight.common.exceptions import (
     ProviderError,
     SetupError,
 )
-from chess_fight.game.async_game import AsyncChessGame, GameState
+from chess_fight.game.async_game import GameState
 from chess_fight.providers import get_provider, list_providers
 from chess_fight.providers.chess_ai import ProviderChessAI
 from chess_fight.ui.error_display import render_error
@@ -352,23 +352,10 @@ def create_provider_ai(white_config: dict, black_config: dict):
     return white_ai, black_ai
 
 
-# ---------------------------------------------------------------------------
-# Live game
-# ---------------------------------------------------------------------------
 
 
-async def run_async_game(white_ai, black_ai, ui_callback, delay=0.1):
-    """Run the async game loop."""
-    game = AsyncChessGame(white_ai, black_ai)
-    return await game.play_game(ui_callback, delay)
 
-
-# ---------------------------------------------------------------------------
-# In-process benchmark
-# ---------------------------------------------------------------------------
-
-
-def run_in_process_benchmark(white_config: dict, black_config: dict, games: int = 3):
+def run_in_process_benchmark(white_config: dict, black_config: dict, games: int = 3, colors: str = "alternating"):
     """Run the benchmark runner in-process and render live results.
 
     Replaces the subprocess stub. Uses BenchmarkRunner directly so
@@ -399,6 +386,7 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
         temperature=0.0,
         max_tokens=1500,
         api_keys=api_keys,
+        colors=colors,
     )
 
     progress_placeholder = st.empty()
@@ -571,72 +559,6 @@ def render_run_summary(run, *, expanded: bool) -> None:
             st.dataframe(pd.DataFrame(pair_rows), hide_index=True, use_container_width=True)
 
 
-# ---------------------------------------------------------------------------
-# Demo games section — REAL replays from benchmark runs / on-disk demos
-# ---------------------------------------------------------------------------
-
-
-def render_demo_games_section() -> None:
-    """Render the demo-game picker using the real demos package."""
-    try:
-        from demos import ReplayEngine, list_demo_games
-    except ImportError:
-        st.markdown(
-            "Demos module unavailable. Ensure `demos/` is on the import path."
-        )
-        return
-
-    # Always re-derive from real sources — no caching of synthetic state.
-    demo_games = list_demo_games(runs_root=RUNS_ROOT, auto_generate=True)
-    if not demo_games:
-        st.markdown(
-            "**No real demo games yet.** Run a benchmark (sidebar → **Pin & Benchmark**) "
-            "or play a Stockfish vs Stockfish game with the local engine to populate "
-            "`demos/games/` with real PGNs. No synthetic replays are shown."
-        )
-        return
-
-    st.markdown(
-        f"**🎮 {len(demo_games)} real demo game(s)** — sourced from "
-        f"`{RUNS_ROOT}/` benchmark artifacts and `demos/games/`."
-    )
-
-    game_labels = {g.filename: g.display_label() for g in demo_games}
-    selected_demo = st.selectbox(
-        "Choose a demo game to watch:",
-        options=list(game_labels.keys()),
-        format_func=lambda k: game_labels[k],
-        key="demo_game_selector_main",
-    )
-    demo_delay = st.slider(
-        "Replay Speed (seconds per move)", 0.1, 2.0, 0.5, 0.1, key="demo_delay_main"
-    )
-
-    if st.button(
-        "▶️ Watch Demo Game", type="secondary", use_container_width=True, key="watch_demo_main"
-    ):
-        board_placeholder = st.empty()
-        stats_placeholder = st.empty()
-        moves_placeholder = st.empty()
-        status_placeholder = st.empty()
-
-        st.session_state.game_running = True
-        st.session_state.demo_start_time = time.time()
-
-        async def demo_ui_update(state: GameState):
-            _draw_board(board_placeholder, state, st.session_state.get("demo_start_time"))
-            _draw_metrics(stats_placeholder, state, st.session_state.get("demo_start_time"))
-            _draw_moves(moves_placeholder, state.moves)
-            if state.is_game_over:
-                status_placeholder.success(f"Game Over! Winner: {state.winner}")
-                st.balloons()
-
-        engine = ReplayEngine(selected_demo)
-        try:
-            asyncio.run(engine.replay(ui_callback=demo_ui_update, delay=demo_delay))
-        finally:
-            st.session_state.game_running = False
-
 
 # ---------------------------------------------------------------------------
 # Main
@@ -653,7 +575,6 @@ def main():
     # Hero: demo games + benchmark history — both real, no API key needed.
     if "game_running" not in st.session_state or not st.session_state.game_running:
         st.markdown("### 🎮 Get Started")
-        render_demo_games_section()
         st.markdown(
             "**Have API keys?** Add them in the sidebar under **🔑 API Keys**, "
             "pick two models under **♟️ Model Selection**, then click **▶️ Start New Game**."
@@ -717,47 +638,20 @@ def main():
 
     # Live game controls
     st.sidebar.header("🎮 Game Controls")
-    delay = st.sidebar.slider("Move Delay (seconds)", 0.0, 2.0, 0.5, 0.1)
 
     if st.sidebar.button("▶️ Start New Game", type="primary", use_container_width=True):
         if not white_config or not black_config:
             st.error("Please select models for both players.")
             return
 
+        st.session_state.game_running = True
         try:
-            white_ai, black_ai = create_provider_ai(white_config, black_config)
-            st.success(
-                f"Game started: {white_config['provider']}:{white_config['model_id']} (White) "
-                f"vs {black_config['provider']}:{black_config['model_id']} (Black)"
+            run_in_process_benchmark(
+                white_config,
+                black_config,
+                games=1,
+                colors="fixed"
             )
-
-            board_placeholder = st.empty()
-            stats_placeholder = st.empty()
-            moves_placeholder = st.empty()
-            completion_placeholder = st.empty()
-            status_placeholder = st.empty()
-
-            st.session_state.game_running = True
-            st.session_state.game_start_time = time.time()
-
-            async def ui_update(state: GameState):
-                _draw_board(board_placeholder, state, st.session_state.game_start_time)
-                _draw_metrics(stats_placeholder, state, st.session_state.game_start_time)
-                _draw_moves(moves_placeholder, state.moves)
-                _draw_completion_result(completion_placeholder, state)
-                if state.is_game_over:
-                    status_placeholder.success(f"Game Over! Winner: {state.winner}")
-                    st.balloons()
-
-            asyncio.run(run_async_game(white_ai, black_ai, ui_update, delay))
-
-        except ProviderError as exc:
-            render_error(st, exc)
-        except MoveValidationError as exc:
-            render_error(st, exc)
-        except Exception as exc:
-            st.error(f"An error occurred: {exc!s}")
-            st.error("Please check your API keys and model configurations.")
         finally:
             st.session_state.game_running = False
 

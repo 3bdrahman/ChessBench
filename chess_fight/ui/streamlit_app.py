@@ -113,7 +113,7 @@ def _draw_moves(moves_placeholder, moves: list) -> None:
             for i, move in enumerate(moves)
         ]
     )
-    moves_placeholder.dataframe(df, hide_index=True, use_container_width=True)
+    moves_placeholder.dataframe(df, hide_index=True, width="stretch")
 
 
 def _draw_completion_result(expander_placeholder, state: GameState) -> None:
@@ -222,7 +222,7 @@ def render_provider_keys_section():
     if demo_api_key:
         with st.sidebar.expander("🎁 Demo Mode (OpenRouter)", expanded=True):
             st.info("OpenRouter is pre-configured — no key needed!")
-            if st.button("🔌 Use Demo Mode", key="use_demo_key", use_container_width=True):
+            if st.button("🔌 Use Demo Mode", key="use_demo_key", width="stretch"):
                 provider = get_provider("openrouter")
                 if provider and provider.validate_key(demo_api_key):
                     available_providers.append(("openrouter", demo_api_key))
@@ -240,7 +240,7 @@ def render_provider_keys_section():
                 if st.button(
                     f"🔌 Connect to {provider_name.capitalize()}",
                     key=f"connect_{provider_name}",
-                    use_container_width=True,
+                    width="stretch",
                 ):
                     reachable, message = _probe_local_provider(provider_name)
                     if reachable:
@@ -464,7 +464,7 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
     if run is not None:
         render_run_summary(run, expanded=True)
 
-    if st.button("🔙 Return to Main Menu", type="primary", use_container_width=True):
+    if st.button("🔙 Return to Main Menu", type="primary", width="stretch"):
         st.rerun()
 
 
@@ -510,7 +510,7 @@ def render_benchmark_history() -> None:
                         "Tokens out": row.tokens_out or "—",
                     }
                 )
-            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
         # Per-run breakdown.
         st.markdown("### Per-run details")
@@ -555,7 +555,7 @@ def render_run_summary(run, *, expanded: bool) -> None:
                 }
             )
         if rows:
-            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
         # Head-to-head pairings.
         if run.pairings:
@@ -572,7 +572,7 @@ def render_run_summary(run, *, expanded: bool) -> None:
                 for p in run.pairings
             ]
             st.caption("Head-to-head pairings:")
-            st.dataframe(pd.DataFrame(pair_rows), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(pair_rows), hide_index=True, width="stretch")
 
 
 
@@ -612,7 +612,7 @@ def main():
     # If more than 1 game, alternate colors to keep it fair.
     colors_mode = "alternating" if games > 1 else "fixed"
     
-    if st.sidebar.button("▶️ Start Match", type="primary", use_container_width=True):
+    if st.sidebar.button("▶️ Start Match", type="primary", width="stretch"):
         if not white_config or not black_config:
             st.sidebar.error("Please select models for both players.")
             return
@@ -632,7 +632,7 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.header("📊 Analytical Dashboard")
 
-    if st.sidebar.button("📊 Show Analytical Dashboard", use_container_width=True):
+    if st.sidebar.button("📊 Show Analytical Dashboard", width="stretch"):
         st.session_state.show_analytics = not st.session_state.get("show_analytics", False)
 
     if st.session_state.get("show_analytics", False):
@@ -725,7 +725,7 @@ def render_analytical_dashboard():
                 title="Stockfish Evaluation per Ply"
             ).interactive()
 
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
         else:
             st.info("No evaluation data available for this game.")
 
@@ -776,7 +776,7 @@ def render_analytical_dashboard():
             title="Move Quality per Ply (CP Loss)"
         ).interactive()
 
-        st.altair_chart(chart, use_container_width=True)
+        st.altair_chart(chart, width="stretch")
 
         # Summary stats
         col1, col2, col3, col4 = st.columns(4)
@@ -842,7 +842,7 @@ def render_analytical_dashboard():
             })
 
         opening_df = pd.DataFrame(opening_rows).sort_values("Games", ascending=False)
-        st.dataframe(opening_df, hide_index=True, use_container_width=True)
+        st.dataframe(opening_df, hide_index=True, width="stretch")
     else:
         st.info("No opening data available.")
 
@@ -893,7 +893,7 @@ def render_analytical_dashboard():
             })
 
         comparison_df = pd.DataFrame(comparison_rows).sort_values("Games", ascending=False)
-        st.dataframe(comparison_df, hide_index=True, use_container_width=True)
+        st.dataframe(comparison_df, hide_index=True, width="stretch")
     else:
         st.info("No model comparison data available.")
 
@@ -922,7 +922,7 @@ def render_analytical_dashboard():
 
     if thinking_data:
         thinking_df = pd.DataFrame(thinking_data)
-        st.dataframe(thinking_df, hide_index=True, use_container_width=True)
+        st.dataframe(thinking_df, hide_index=True, width="stretch")
 
         # Expandable thinking trace per move
         for ply, move_log in enumerate(selected_game.moves):
@@ -941,12 +941,12 @@ def render_analytical_dashboard():
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("⏮️ Start", use_container_width=True):
+        if st.button("⏮️ Start", width="stretch"):
             st.info("Use the demo game viewer for full replay controls.")
     with col2:
         _ = st.slider("Replay Speed", 0.1, 3.0, 1.0, 0.1, key="replay_speed")
     with col3:
-        if st.button("⏭️ End", use_container_width=True):
+        if st.button("⏭️ End", width="stretch"):
             st.info("Use the demo game viewer for full replay controls.")
 
     st.info("💡 For full replay controls (jump to move, flip board, etc.), use the Demo Games section.")
@@ -960,7 +960,7 @@ def render_analytical_dashboard():
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("📄 Export PGN+Eval", use_container_width=True):
+        if st.button("📄 Export PGN+Eval", width="stretch"):
             from chess_fight.benchmark.export import export_pgn_with_eval
             output_path = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/game_{selected_game.game_id}_eval.pgn"
             try:
@@ -970,7 +970,7 @@ def render_analytical_dashboard():
                 st.error(f"Export failed: {e}")
 
     with col2:
-        if st.button("📊 Export CSV", use_container_width=True):
+        if st.button("📊 Export CSV", width="stretch"):
             from chess_fight.benchmark.export import export_csv
             try:
                 output_dir = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/export_csv"
@@ -980,7 +980,7 @@ def render_analytical_dashboard():
                 st.error(f"Export failed: {e}")
 
     with col3:
-        if st.button("📦 Export Parquet", use_container_width=True):
+        if st.button("📦 Export Parquet", width="stretch"):
             from chess_fight.benchmark.export import export_parquet
             try:
                 output_path = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/export.parquet"

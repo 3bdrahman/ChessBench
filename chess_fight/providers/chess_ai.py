@@ -92,15 +92,17 @@ class ProviderChessAI(ChessAI):
         if self.last_completion_result:
             self.last_completion_result.retry_count = retry_count
         board = chess.Board(fen)
-        move = extract_move(result.text, list(board.legal_moves))
-        if not move:
+        from chess_fight.move_parser import parse_move
+        parsed = parse_move(result.text, board)
+        
+        if not parsed.uci:
             raise MoveValidationError(
-                f"Could not extract legal move from response: {result.text[:100]}",
+                f"Could not extract legal move from response: {result.text[:200]}...",
                 fen=fen,
                 legal_moves=[m.uci() for m in board.legal_moves],
                 raw_text=result.text,
             )
-        return move
+        return parsed.uci
 
     def _extract_move(self, text: str) -> str:
         """Extract a UCI move from raw LLM text.

@@ -81,8 +81,9 @@ class AsyncChessGame:
 
             # Start the player's turn on the clock
             if self.clock:
-                self.clock.start_turn(is_white, 0)
-                self._turn_start_time = time.time() * 1000
+                now_ms = int(time.time() * 1000)
+                self.clock.start_turn(is_white, now_ms)
+                self._turn_start_time = now_ms
 
             # Update UI with current state including clock
             state = GameState(
@@ -126,8 +127,8 @@ class AsyncChessGame:
 
             # End the player's turn on the clock
             if self.clock:
-                elapsed_ms = int((time.time() - self._turn_start_time) * 1000)
-                self.clock.end_turn(is_white, elapsed_ms)
+                elapsed_ms = int(time.time() * 1000 - self._turn_start_time)
+                self.clock.end_turn(is_white, int(time.time() * 1000))
 
                 # Check if time is up
                 if self.clock.is_time_up(is_white):

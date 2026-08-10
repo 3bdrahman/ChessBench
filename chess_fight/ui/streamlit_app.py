@@ -457,7 +457,6 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
         progress_placeholder.empty()
 
     status_placeholder.success("Benchmark complete!")
-    st.balloons()
 
     # Show real ELO leaderboard + per-pairing results from the run we just did.
     run = load_run(runner.run_dir)

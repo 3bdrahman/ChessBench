@@ -333,33 +333,21 @@ def render_model_selectors(available_providers: list):
 
     model_options = list(all_models.keys())
 
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        st.subheader("White ♔")
-        try:
-            white_model = st.selectbox(
-                "Select Model",
-                options=model_options,
-                key="player_white_model",
-                index=0 if model_options else None,
-            )
-        except Exception as e:
-            import traceback
-            st.error(f"Error in white_model: {e}\n\n```python\n{traceback.format_exc()}\n```")
-            white_model = model_options[0] if model_options else None
-    with col2:
-        st.subheader("Black ♚")
-        try:
-            black_model = st.selectbox(
-                "Select Model",
-                options=model_options,
-                key="player_black_model",
-                index=1 if len(model_options) > 1 else 0,
-            )
-        except Exception as e:
-            import traceback
-            st.error(f"Error in black_model: {e}\n\n```python\n{traceback.format_exc()}\n```")
-            black_model = model_options[0] if model_options else None
+    st.sidebar.subheader("White ♔")
+    white_model = st.sidebar.selectbox(
+        "Select Model",
+        options=model_options,
+        key="player_white_model",
+        index=0 if model_options else None,
+    )
+    
+    st.sidebar.subheader("Black ♚")
+    black_model = st.sidebar.selectbox(
+        "Select Model",
+        options=model_options,
+        key="player_black_model",
+        index=1 if len(model_options) > 1 else 0,
+    )
 
     if white_model and black_model:
         return all_models[white_model], all_models[black_model]

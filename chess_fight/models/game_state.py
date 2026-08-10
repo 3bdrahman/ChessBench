@@ -11,6 +11,7 @@ class GameMove:
     timestamp: float
     is_capture: bool
     is_check: bool
+    reasoning: str | None = None
 
 
 @dataclass

@@ -208,11 +208,17 @@ class ChessAI(ABC):
 
     async def get_move(self, fen: str) -> str:
         board = chess.Board(fen)
-        max_retries = 3
+        max_network_retries = 10
+        max_validation_retries = 3
+        network_attempts = 0
+        validation_attempts = 0
         errors: list[str] = []
         attempted_moves: list[str] = []
 
-        for attempt in range(max_retries):
+        while True:
+            if network_attempts >= max_network_retries or validation_attempts >= max_validation_retries:
+                break
+                
             try:
                 move_str = await self._get_move_from_model(fen)
                 attempted_moves.append(move_str)
@@ -223,34 +229,30 @@ class ChessAI(ABC):
 
                 return validated_move
             except (RateLimitError, TimeoutError) as exc:
-                # Retryable transient errors — wait with backoff
-                wait = getattr(exc, "retry_after", None) or (2.0 ** attempt)
+                network_attempts += 1
+                wait = getattr(exc, "retry_after", None) or (2.0 ** network_attempts)
                 wait = min(wait, 60.0)
                 _log.info(
-                    "get_move retry attempt=%d/%d fen=%s error=%s wait=%.1fs",
-                    attempt + 1, max_retries, fen, type(exc).__name__, wait
+                    "get_move retry network_attempt=%d/%d fen=%s error=%s wait=%.1fs",
+                    network_attempts, max_network_retries, fen, type(exc).__name__, wait
                 )
                 await asyncio.sleep(wait)
-                errors.append(f"Attempt {attempt + 1}: {type(exc).__name__}: {exc}")
+                errors.append(f"Network Attempt {network_attempts}: {type(exc).__name__}: {exc}")
             except MoveValidationError as exc:
-                # Model returned unparseable move — retry immediately
-                errors.append(f"Attempt {attempt + 1}: MoveValidationError: {exc}")
+                validation_attempts += 1
+                errors.append(f"Validation Attempt {validation_attempts}: MoveValidationError: {exc}")
             except ProviderError as exc:
-                # Non-retryable provider errors — re-raise immediately
-                _log.error(
-                    "get_move non-retryable error fen=%s error=%s",
-                    fen, exc
-                )
+                _log.error("get_move non-retryable error fen=%s error=%s", fen, exc)
                 raise
             except ValueError as exc:
-                # Legacy validation errors
-                errors.append(f"Attempt {attempt + 1}: {exc}")
+                validation_attempts += 1
+                errors.append(f"Validation Attempt {validation_attempts}: {exc}")
 
         legal_moves = list(board.legal_moves)
         legal_moves_uci = [m.uci() for m in legal_moves]
 
         raise MoveExhaustedError(
-            f"Failed to get valid move after {max_retries} attempts. Errors: {'; '.join(errors)}",
+            f"Failed to get valid move after {validation_attempts} validation / {network_attempts} network attempts. Errors: {'; '.join(errors)}",
             fen=fen,
             legal_moves=legal_moves_uci,
             attempted_moves=attempted_moves,
@@ -259,11 +261,17 @@ class ChessAI(ABC):
 
     async def get_move_with_result(self, fen: str) -> tuple[str, "CompletionResult"]:
         board = chess.Board(fen)
-        max_retries = 3
+        max_network_retries = 10
+        max_validation_retries = 3
+        network_attempts = 0
+        validation_attempts = 0
         errors: list[str] = []
         attempted_moves: list[str] = []
 
-        for attempt in range(max_retries):
+        while True:
+            if network_attempts >= max_network_retries or validation_attempts >= max_validation_retries:
+                break
+                
             try:
                 move_str = await self._get_move_from_model(fen)
                 attempted_moves.append(move_str)
@@ -280,30 +288,30 @@ class ChessAI(ABC):
                     raw_response=None,
                 )
             except (RateLimitError, TimeoutError) as exc:
-                wait = getattr(exc, "retry_after", None) or (2.0 ** attempt)
+                network_attempts += 1
+                wait = getattr(exc, "retry_after", None) or (2.0 ** network_attempts)
                 wait = min(wait, 60.0)
                 _log.info(
-                    "get_move_with_result retry attempt=%d/%d fen=%s error=%s wait=%.1fs",
-                    attempt + 1, max_retries, fen, type(exc).__name__, wait
+                    "get_move_with_result retry network_attempt=%d/%d fen=%s error=%s wait=%.1fs",
+                    network_attempts, max_network_retries, fen, type(exc).__name__, wait
                 )
                 await asyncio.sleep(wait)
-                errors.append(f"Attempt {attempt + 1}: {type(exc).__name__}: {exc}")
+                errors.append(f"Network Attempt {network_attempts}: {type(exc).__name__}: {exc}")
             except MoveValidationError as exc:
-                errors.append(f"Attempt {attempt + 1}: MoveValidationError: {exc}")
+                validation_attempts += 1
+                errors.append(f"Validation Attempt {validation_attempts}: MoveValidationError: {exc}")
             except ProviderError as exc:
-                _log.error(
-                    "get_move_with_result non-retryable error fen=%s error=%s",
-                    fen, exc
-                )
+                _log.error("get_move_with_result non-retryable error fen=%s error=%s", fen, exc)
                 raise
             except ValueError as exc:
-                errors.append(f"Attempt {attempt + 1}: {exc}")
+                validation_attempts += 1
+                errors.append(f"Validation Attempt {validation_attempts}: {exc}")
 
         legal_moves = list(board.legal_moves)
         legal_moves_uci = [m.uci() for m in legal_moves]
 
         raise MoveExhaustedError(
-            f"Failed to get valid move after {max_retries} attempts. Errors: {'; '.join(errors)}",
+            f"Failed to get valid move after {validation_attempts} validation / {network_attempts} network attempts. Errors: {'; '.join(errors)}",
             fen=fen,
             legal_moves=legal_moves_uci,
             attempted_moves=attempted_moves,

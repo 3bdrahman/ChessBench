@@ -121,7 +121,8 @@ def _draw_completion_result(expander_placeholder, state: GameState) -> None:
     cr = state.last_completion_result
     if cr is None:
         return
-    with expander_placeholder.expander("Last LLM completion", expanded=True):
+    title = f"Last LLM completion ({state.current_player})" if state.current_player else "Last LLM completion"
+    with expander_placeholder.expander(title, expanded=True):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
             st.metric("Latency (ms)", cr.latency_ms if cr.latency_ms is not None else "—")

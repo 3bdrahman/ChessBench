@@ -143,7 +143,8 @@ class StockfishEvaluator:
                     cp_score = score.white().score()
 
             # Extract best move
-            best_move = pv_info.get("pv", [None])[0]
+            pv = pv_info.get("pv")
+            best_move = pv[0] if pv else None
             best_move_uci = best_move.uci() if best_move else None
 
             # Extract best move score

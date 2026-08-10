@@ -109,11 +109,22 @@ def _draw_moves(moves_placeholder, moves: list) -> None:
                 "Time": datetime.fromtimestamp(move.timestamp).strftime("%H:%M:%S"),
                 "Capture": "✓" if move.is_capture else "",
                 "Check": "✓" if move.is_check else "",
+                "Reasoning": move.reasoning or "",
             }
             for i, move in enumerate(moves)
         ]
     )
-    moves_placeholder.dataframe(df, hide_index=True, width="stretch")
+    
+    # Configure the Reasoning column to be a text column that doesn't blow up the width
+    column_config = {
+        "Reasoning": st.column_config.TextColumn(
+            "Reasoning",
+            help="Click a cell to read the LLM's full reasoning for this move.",
+            width="large",
+        )
+    }
+    
+    moves_placeholder.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
 
 
 def _draw_completion_result(expander_placeholder, state: GameState) -> None:

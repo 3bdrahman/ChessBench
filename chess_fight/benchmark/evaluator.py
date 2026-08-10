@@ -1,6 +1,6 @@
 """Stockfish evaluator for ground-truth position analysis."""
 
-from __future__ import annotations
+
 
 import contextlib
 import logging

@@ -156,7 +156,8 @@ class AsyncChessGame:
                     move=move_str,
                     timestamp=time.time(),
                     is_capture=self.board.is_capture(move),
-                    is_check=self.board.gives_check(move)
+                    is_check=self.board.gives_check(move),
+                    reasoning=completion_result.text if completion_result else None
                 )
 
                 self.board.push(move)

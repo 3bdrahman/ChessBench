@@ -22,8 +22,9 @@ PROMOTION_PIECES = {
 
 
 def _strip_thinking(text: str) -> str:
-    """Remove <thinking>...</thinking> blocks from text."""
-    return re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    """Remove <thinking>...</thinking> and <reasoning>...</reasoning> blocks from text."""
+    text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    return re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.DOTALL | re.IGNORECASE)
 
 
 def _parse_promotion(text: str) -> tuple[str | None, str]:

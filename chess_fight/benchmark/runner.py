@@ -285,6 +285,7 @@ class BenchmarkRunner:
                     eval_depth=eval_result.depth if eval_result else None,
                     eval_time_ms=eval_result.time_ms if eval_result else None,
                 )
+                move_logs.append(last_move)
             if user_callback is not None:
                 await user_callback(state)
 

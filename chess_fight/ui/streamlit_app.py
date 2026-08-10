@@ -341,7 +341,7 @@ def render_model_selectors(available_providers: list):
         white_model = st.selectbox(
             "Select Model",
             options=model_options,
-            key="white_model",
+            key="player_white_model",
             index=0 if model_options else None,
         )
     with col2:
@@ -349,7 +349,7 @@ def render_model_selectors(available_providers: list):
         black_model = st.selectbox(
             "Select Model",
             options=model_options,
-            key="black_model",
+            key="player_black_model",
             index=1 if len(model_options) > 1 else 0,
         )
 

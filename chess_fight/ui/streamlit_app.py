@@ -334,6 +334,11 @@ def render_model_selectors(available_providers: list):
         return None, None
 
     model_options = list(all_models.keys())
+    
+    if "white_model" in st.session_state and st.session_state["white_model"] not in model_options:
+        del st.session_state["white_model"]
+    if "black_model" in st.session_state and st.session_state["black_model"] not in model_options:
+        del st.session_state["black_model"]
 
     col1, col2 = st.sidebar.columns(2)
     with col1:

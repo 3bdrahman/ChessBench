@@ -1,7 +1,7 @@
 """Provider abstraction layer for LLM chess AI."""
 
 from chess_fight.common.common_types import ChatMessage, CompletionResult, ModelInfo, ModelProvider
-from chess_fight.providers.registry import PROVIDER_REGISTRY, get_provider, list_providers, register_provider
+from chess_fight.providers.registry import PROVIDER_REGISTRY, get_provider, register_provider
 
 # Lazy imports - provider modules are imported on first access via get_provider()
 # This avoids import-time circular dependencies and issues on Streamlit Cloud
@@ -28,6 +28,15 @@ def __dir__():
     return list(globals().keys()) + list(_PROVIDER_MODULES)
 
 from .chess_ai import ProviderChessAI
+
+def list_providers() -> list[str]:
+    """List all available providers, forcing lazy loading."""
+    import sys
+    this_module = sys.modules[__name__]
+    for name in _PROVIDER_MODULES:
+        getattr(this_module, name)
+    from chess_fight.providers.registry import list_providers as _registry_list
+    return _registry_list()
 
 __all__ = [
     "PROVIDER_REGISTRY",

@@ -99,34 +99,7 @@ class AsyncChessGame:
 
             # Get move from player with completion result
             try:
-                task = asyncio.create_task(current_player.get_move_with_result(fen_before))
-                start_wait = time.time()
-                
-                last_ui_update = 0
-                while not task.done():
-                    now = time.time()
-                    if now - last_ui_update >= 1.0:
-                        self.stats.game_duration = now - self.start_time
-                        state = GameState(
-                            board=self.board.copy(),
-                            moves=self.moves.copy(),
-                            stats=self.stats,
-                            current_player=current_player.name,
-                            is_game_over=False,
-                            fen_before=fen_before,
-                            game_duration=self.stats.game_duration,
-                            last_completion_result=current_player.last_completion_result,
-                            clock_state=self.clock.get_state() if self.clock else None,
-                        )
-                        await ui_callback(state)
-                        last_ui_update = now
-
-                    try:
-                        await asyncio.wait_for(asyncio.shield(task), timeout=0.1)
-                    except asyncio.TimeoutError:
-                        pass
-                    
-                move_str, completion_result = task.result()
+                move_str, completion_result = await current_player.get_move_with_result(fen_before)
             except MoveExhaustedError as exc:
                 opponent = self.player2 if is_white else self.player1
                 self.stats.winner = opponent.name

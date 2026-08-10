@@ -508,8 +508,8 @@ def render_benchmark_history() -> None:
                             if row.avg_latency_ms is not None
                             else "—"
                         ),
-                        "Tokens in": row.tokens_in or "—",
-                        "Tokens out": row.tokens_out or "—",
+                        "Tokens in": row.tokens_in if row.tokens_in is not None else None,
+                        "Tokens out": row.tokens_out if row.tokens_out is not None else None,
                     }
                 )
             st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
@@ -552,8 +552,8 @@ def render_run_summary(run, *, expanded: bool) -> None:
                     ),
                     "Captures": ps.captures,
                     "Checks": ps.checks,
-                    "Tokens in": ps.tokens_in_total or "—",
-                    "Tokens out": ps.tokens_out_total or "—",
+                    "Tokens in": ps.tokens_in_total if ps.tokens_in_total is not None else None,
+                    "Tokens out": ps.tokens_out_total if ps.tokens_out_total is not None else None,
                 }
             )
         if rows:

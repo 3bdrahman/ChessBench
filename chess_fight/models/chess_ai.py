@@ -207,8 +207,8 @@ class ChessAI(ABC):
 
     async def get_move(self, fen: str) -> str:
         board = chess.Board(fen)
-        max_network_retries = 10
-        max_validation_retries = 3
+        max_network_retries = 30
+        max_validation_retries = 10
         network_attempts = 0
         validation_attempts = 0
         errors: list[str] = []
@@ -219,7 +219,7 @@ class ChessAI(ABC):
                 break
                 
             try:
-                move_str = await self._get_move_from_model(fen, validation_attempts)
+                move_str = await self._get_move_from_model(fen, validation_attempts, network_attempts)
                 attempted_moves.append(move_str)
                 validated_move = self._validate_move(move_str, board)
 
@@ -230,7 +230,7 @@ class ChessAI(ABC):
             except ProviderError as exc:
                 if is_retryable(exc):
                     network_attempts += 1
-                    wait = getattr(exc, "retry_after", None) or (2.0 ** network_attempts)
+                    wait = getattr(exc, "retry_after", None) or (2.0 ** min(network_attempts, 6))
                     wait = min(wait, 60.0)
                     _log.info(
                         "get_move retry network_attempt=%d/%d fen=%s error=%s wait=%.1fs",
@@ -244,9 +244,13 @@ class ChessAI(ABC):
             except MoveValidationError as exc:
                 validation_attempts += 1
                 errors.append(f"Validation Attempt {validation_attempts}: MoveValidationError: {exc}")
-            except ValueError as exc:
-                validation_attempts += 1
-                errors.append(f"Validation Attempt {validation_attempts}: {exc}")
+            except Exception as exc:
+                network_attempts += 1
+                wait = 2.0 ** min(network_attempts, 6)
+                wait = min(wait, 60.0)
+                _log.warning("get_move unexpected error (treating as network error): %s", exc)
+                await asyncio.sleep(wait)
+                errors.append(f"Unexpected Error Attempt {network_attempts}: {exc}")
 
         legal_moves = list(board.legal_moves)
         legal_moves_uci = [m.uci() for m in legal_moves]
@@ -261,8 +265,8 @@ class ChessAI(ABC):
 
     async def get_move_with_result(self, fen: str) -> tuple[str, "CompletionResult"]:
         board = chess.Board(fen)
-        max_network_retries = 10
-        max_validation_retries = 3
+        max_network_retries = 30
+        max_validation_retries = 10
         network_attempts = 0
         validation_attempts = 0
         errors: list[str] = []
@@ -273,7 +277,8 @@ class ChessAI(ABC):
                 break
                 
             try:
-                move_str = await self._get_move_from_model(fen, validation_attempts)
+                # We pass network_attempts so the provider can correctly populate the UI metric
+                move_str = await self._get_move_from_model(fen, validation_attempts, network_attempts)
                 attempted_moves.append(move_str)
                 validated_move = self._validate_move(move_str, board)
 
@@ -290,7 +295,7 @@ class ChessAI(ABC):
             except ProviderError as exc:
                 if is_retryable(exc):
                     network_attempts += 1
-                    wait = getattr(exc, "retry_after", None) or (2.0 ** network_attempts)
+                    wait = getattr(exc, "retry_after", None) or (2.0 ** min(network_attempts, 6))
                     wait = min(wait, 60.0)
                     _log.info(
                         "get_move_with_result retry network_attempt=%d/%d fen=%s error=%s wait=%.1fs",
@@ -304,9 +309,14 @@ class ChessAI(ABC):
             except MoveValidationError as exc:
                 validation_attempts += 1
                 errors.append(f"Validation Attempt {validation_attempts}: MoveValidationError: {exc}")
-            except ValueError as exc:
-                validation_attempts += 1
-                errors.append(f"Validation Attempt {validation_attempts}: {exc}")
+            except Exception as exc:
+                # Catch unexpected exceptions (like JSON parse errors, generic Http errors) and treat as network failures
+                network_attempts += 1
+                wait = 2.0 ** min(network_attempts, 6)
+                wait = min(wait, 60.0)
+                _log.warning("get_move_with_result unexpected error (treating as network error): %s", exc)
+                await asyncio.sleep(wait)
+                errors.append(f"Unexpected Error Attempt {network_attempts}: {exc}")
 
         legal_moves = list(board.legal_moves)
         legal_moves_uci = [m.uci() for m in legal_moves]

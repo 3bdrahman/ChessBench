@@ -329,7 +329,7 @@ def render_model_selectors(available_providers: list):
 
 def create_provider_ai(white_config: dict, black_config: dict):
     """Create ProviderChessAI instances for both players."""
-    params: dict = {"temperature": 0.1, "max_tokens": 100}
+    params: dict = {"temperature": 0.1, "max_tokens": 1500}
     if white_config["provider"] == "stockfish":
         params["depth"] = st.session_state.get("stockfish_depth", 8)
         params["think_time"] = st.session_state.get("stockfish_think", 1.0)
@@ -397,7 +397,7 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
         max_parallel_games=1,
         opening_book="startpos",
         temperature=0.0,
-        max_tokens=100,
+        max_tokens=1500,
         api_keys=api_keys,
     )
 

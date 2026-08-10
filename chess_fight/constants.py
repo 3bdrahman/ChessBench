@@ -15,7 +15,7 @@ from typing import Any
 # =============================================================================
 # HTTP / Network
 # =============================================================================
-DEFAULT_HTTP_TIMEOUT: float = 30.0
+DEFAULT_HTTP_TIMEOUT: float = 90.0
 DEFAULT_HTTP_RETRIES: int = 3
 DEFAULT_BACKOFF_BASE: float = 2.0
 DEFAULT_MAX_BACKOFF: float = 60.0

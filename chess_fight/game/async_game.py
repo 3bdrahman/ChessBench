@@ -99,13 +99,31 @@ class AsyncChessGame:
 
             # Get move from player with completion result
             try:
-                if move_timeout_seconds:
-                    move_str, completion_result = await asyncio.wait_for(
-                        current_player.get_move_with_result(fen_before),
-                        timeout=move_timeout_seconds
+                task = asyncio.create_task(current_player.get_move_with_result(fen_before))
+                start_wait = time.time()
+                
+                while not task.done():
+                    if move_timeout_seconds and (time.time() - start_wait) > move_timeout_seconds:
+                        task.cancel()
+                        raise TimeoutError()
+                        
+                    # Update UI while waiting
+                    self.stats.game_duration = time.time() - self.start_time
+                    state = GameState(
+                        board=self.board.copy(),
+                        moves=self.moves.copy(),
+                        stats=self.stats,
+                        current_player=current_player.name,
+                        is_game_over=False,
+                        fen_before=fen_before,
+                        game_duration=self.stats.game_duration,
+                        last_completion_result=current_player.last_completion_result,
+                        clock_state=self.clock.get_state() if self.clock else None,
                     )
-                else:
-                    move_str, completion_result = await current_player.get_move_with_result(fen_before)
+                    await ui_callback(state)
+                    await asyncio.sleep(delay)
+                    
+                move_str, completion_result = task.result()
             except TimeoutError:
                 opponent = self.player2 if is_white else self.player1
                 self.stats.winner = opponent.name

@@ -103,10 +103,9 @@ class AsyncChessGame:
                 start_wait = time.time()
                 
                 while not task.done():
-                    if move_timeout_seconds and (time.time() - start_wait) > move_timeout_seconds:
-                        task.cancel()
-                        raise TimeoutError()
-                        
+                    # We no longer cancel the task on move_timeout_seconds.
+                    # We want the LLM to play a full game even if rate limited.
+                    
                     # Update UI while waiting
                     self.stats.game_duration = time.time() - self.start_time
                     state = GameState(
@@ -124,22 +123,6 @@ class AsyncChessGame:
                     await asyncio.sleep(delay)
                     
                 move_str, completion_result = task.result()
-            except TimeoutError:
-                opponent = self.player2 if is_white else self.player1
-                self.stats.winner = opponent.name
-                self.stats.game_duration = time.time() - self.start_time
-                final_state = GameState(
-                    board=self.board.copy(),
-                    moves=self.moves.copy(),
-                    stats=self.stats,
-                    current_player="",
-                    is_game_over=True,
-                    winner=f"{opponent.name} (Time Loss)",
-                    game_duration=self.stats.game_duration,
-                    clock_state=self.clock.get_state() if self.clock else None,
-                )
-                await ui_callback(final_state)
-                return self.stats
             except MoveExhaustedError as exc:
                 opponent = self.player2 if is_white else self.player1
                 self.stats.winner = opponent.name
@@ -164,23 +147,8 @@ class AsyncChessGame:
                 elapsed_ms = int(time.time() * 1000 - self._turn_start_time)
                 self.clock.end_turn(is_white, int(time.time() * 1000))
 
-                # Check if time is up
-                if self.clock.is_time_up(is_white):
-                    opponent = self.player2 if is_white else self.player1
-                    self.stats.winner = opponent.name
-                    self.stats.game_duration = time.time() - self.start_time
-                    final_state = GameState(
-                        board=self.board.copy(),
-                        moves=self.moves.copy(),
-                        stats=self.stats,
-                        current_player="",
-                        is_game_over=True,
-                        winner=f"{opponent.name} (Time Loss)",
-                        game_duration=self.stats.game_duration,
-                        clock_state=self.clock.get_state(),
-                    )
-                    await ui_callback(final_state)
-                    return self.stats
+                # We do not enforce time loss here to ensure the LLMs can play full games
+                # even if they take a long time or hit rate limits.
 
             if move in self.board.legal_moves:
                 game_move = GameMove(

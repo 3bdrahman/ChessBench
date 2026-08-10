@@ -305,8 +305,12 @@ def render_model_selectors(available_providers: list):
             f"ⓘ {filtered_count} non-chat model(s) hidden (embedding, audio, image, etc.)"
         )
 
+    show_free_only = st.sidebar.checkbox("Show free models only", value=False)
+    if show_free_only:
+        all_models = {k: v for k, v in all_models.items() if v["is_free"]}
+
     if not all_models:
-        st.sidebar.warning("No chess-capable models available. Please add API keys.")
+        st.sidebar.warning("No chess-capable models available. Please add API keys or change filters.")
         return None, None
 
     model_options = list(all_models.keys())

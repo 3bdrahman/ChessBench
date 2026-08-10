@@ -18,8 +18,7 @@ from chess_fight.common.exceptions import (
     MoveExhaustedError,
     MoveValidationError,
     ProviderError,
-    RateLimitError,
-    TimeoutError,
+    is_retryable,
 )
 from chess_fight.models.evaluation import PositionEvaluator
 from chess_fight.prompts import prompt_registry
@@ -228,22 +227,23 @@ class ChessAI(ABC):
                 self.move_history.append(current_fen)
 
                 return validated_move
-            except (RateLimitError, TimeoutError) as exc:
-                network_attempts += 1
-                wait = getattr(exc, "retry_after", None) or (2.0 ** network_attempts)
-                wait = min(wait, 60.0)
-                _log.info(
-                    "get_move retry network_attempt=%d/%d fen=%s error=%s wait=%.1fs",
-                    network_attempts, max_network_retries, fen, type(exc).__name__, wait
-                )
-                await asyncio.sleep(wait)
-                errors.append(f"Network Attempt {network_attempts}: {type(exc).__name__}: {exc}")
+            except ProviderError as exc:
+                if is_retryable(exc):
+                    network_attempts += 1
+                    wait = getattr(exc, "retry_after", None) or (2.0 ** network_attempts)
+                    wait = min(wait, 60.0)
+                    _log.info(
+                        "get_move retry network_attempt=%d/%d fen=%s error=%s wait=%.1fs",
+                        network_attempts, max_network_retries, fen, type(exc).__name__, wait
+                    )
+                    await asyncio.sleep(wait)
+                    errors.append(f"Network Attempt {network_attempts}: {type(exc).__name__}: {exc}")
+                else:
+                    _log.error("get_move non-retryable error fen=%s error=%s", fen, exc)
+                    raise
             except MoveValidationError as exc:
                 validation_attempts += 1
                 errors.append(f"Validation Attempt {validation_attempts}: MoveValidationError: {exc}")
-            except ProviderError as exc:
-                _log.error("get_move non-retryable error fen=%s error=%s", fen, exc)
-                raise
             except ValueError as exc:
                 validation_attempts += 1
                 errors.append(f"Validation Attempt {validation_attempts}: {exc}")
@@ -287,22 +287,23 @@ class ChessAI(ABC):
                     latency_ms=0,
                     raw_response=None,
                 )
-            except (RateLimitError, TimeoutError) as exc:
-                network_attempts += 1
-                wait = getattr(exc, "retry_after", None) or (2.0 ** network_attempts)
-                wait = min(wait, 60.0)
-                _log.info(
-                    "get_move_with_result retry network_attempt=%d/%d fen=%s error=%s wait=%.1fs",
-                    network_attempts, max_network_retries, fen, type(exc).__name__, wait
-                )
-                await asyncio.sleep(wait)
-                errors.append(f"Network Attempt {network_attempts}: {type(exc).__name__}: {exc}")
+            except ProviderError as exc:
+                if is_retryable(exc):
+                    network_attempts += 1
+                    wait = getattr(exc, "retry_after", None) or (2.0 ** network_attempts)
+                    wait = min(wait, 60.0)
+                    _log.info(
+                        "get_move_with_result retry network_attempt=%d/%d fen=%s error=%s wait=%.1fs",
+                        network_attempts, max_network_retries, fen, type(exc).__name__, wait
+                    )
+                    await asyncio.sleep(wait)
+                    errors.append(f"Network Attempt {network_attempts}: {type(exc).__name__}: {exc}")
+                else:
+                    _log.error("get_move_with_result non-retryable error fen=%s error=%s", fen, exc)
+                    raise
             except MoveValidationError as exc:
                 validation_attempts += 1
                 errors.append(f"Validation Attempt {validation_attempts}: MoveValidationError: {exc}")
-            except ProviderError as exc:
-                _log.error("get_move_with_result non-retryable error fen=%s error=%s", fen, exc)
-                raise
             except ValueError as exc:
                 validation_attempts += 1
                 errors.append(f"Validation Attempt {validation_attempts}: {exc}")

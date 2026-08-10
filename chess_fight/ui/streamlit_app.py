@@ -92,8 +92,9 @@ def _draw_metrics(stats_placeholder, state: GameState, start_time: float | None 
             elapsed = 0
         st.metric("Time Elapsed", f"{elapsed}s")
     with cols[4]:
-        if state.current_player:
-            st.metric("Current Turn", state.current_player)
+        if not state.is_game_over:
+            turn_color = "White ♔" if state.board.turn else "Black ♚"
+            st.metric("Current Turn", turn_color)
 
 
 def _draw_moves(moves_placeholder, moves: list) -> None:
@@ -390,6 +391,17 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
         colors=colors,
     )
 
+    # Immersive Theater Mode: Hide the sidebar during the game
+    st.markdown(
+        """
+        <style>
+            [data-testid="stSidebar"] { display: none !important; }
+            [data-testid="collapsedControl"] { display: none !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     progress_placeholder = st.empty()
     board_placeholder = st.empty()
     stats_placeholder = st.empty()
@@ -451,6 +463,9 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
     run = load_run(runner.run_dir)
     if run is not None:
         render_run_summary(run, expanded=True)
+
+    if st.button("🔙 Return to Main Menu", type="primary", use_container_width=True):
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------

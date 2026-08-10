@@ -123,6 +123,8 @@ def is_chess_capable(model: ModelInfo) -> bool:
 
 def is_free_tier(model: ModelInfo) -> bool:
     """Return True if a model is marked as free-tier."""
+    if model.provider in ("groq", "nim", "ollama", "stockfish"):
+        return True
     if model.pricing_tier == "free":
         return True
     return bool(_FREE_TIER_PATTERN.search(f"{model.id} {model.name}"))

@@ -236,10 +236,6 @@ def render_provider_keys_section():
         if provider is None:
             continue
 
-        if provider_name == "stockfish":
-            render_stockfish_section(provider, available_providers)  # type: ignore[arg-type]
-            continue
-
         if not provider.requires_api_key:
             with st.sidebar.expander(f"🖥️ {provider_name.capitalize()} (local)", expanded=False):
                 st.caption(f"Local server — no API key required. Run `{provider_name} serve` first.")
@@ -271,26 +267,6 @@ def render_provider_keys_section():
                     st.error("✗ Invalid key format")
 
     return available_providers
-
-
-def render_stockfish_section(provider: object, available_providers: list) -> None:
-    """Honest Stockfish enrollment — never offer it if the binary is absent."""
-    with st.sidebar.expander("🤖 Stockfish (local)", expanded=False):
-        binary = provider.find_binary()
-        if binary is None:
-            st.warning(
-                "No Stockfish binary found on PATH. Install it from "
-                "[stockfishchess.org/download](https://stockfishchess.org/download/) "
-                "and either add it to PATH or set the `STOCKFISH_PATH` environment "
-                "variable. This provider is a *real* local engine — no API key, "
-                "no mock fallback."
-            )
-            return
-        st.success(f"✓ Found Stockfish at `{binary}`")
-        depth = st.slider("Search depth", 1, 20, 8, key="stockfish_depth")
-        think = st.slider("Think time per move (s)", 0.1, 5.0, 1.0, 0.1, key="stockfish_think")
-        if st.button("🔌 Enable Stockfish", key="enable_stockfish", use_container_width=True):
-            available_providers.append(("stockfish", ""))
 
 
 def render_model_selectors(available_providers: list):

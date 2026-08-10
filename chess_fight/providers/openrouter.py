@@ -46,39 +46,57 @@ class OpenRouterProvider(ModelProvider):
         return "sk-or-"
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
-        client = AsyncOpenAI(api_key=api_key, base_url=self.base_url, timeout=DEFAULT_HTTP_TIMEOUT)
+        import httpx
+        from chess_fight.common.common_types import _NON_CHAT_TOKENS, _WEAK_FOR_CHESS_TOKENS
+
         try:
-            models = await client.models.list()
+            async with httpx.AsyncClient(timeout=DEFAULT_HTTP_TIMEOUT) as client:
+                response = await client.get(
+                    f"{self.base_url}/models",
+                    headers={"Authorization": f"Bearer {api_key}"}
+                )
+                response.raise_for_status()
+                data = response.json()
         except Exception as exc:
             _log.warning("OpenRouter list_models failed: %s", exc)
             return []
 
         chat_models: list[ModelInfo] = []
-        for model in models.data:
-            model_id = model.id
+        for model in data.get("data", []):
+            model_id = model["id"]
             mid = model_id.lower()
-            # OpenRouter mixes image, audio and embedding models into the same
-            # /models endpoint — drop anything that obviously isn't chat.
-            if any(tok in mid for tok in (
-                "embed", "whisper", "tts", "dall-e", "dalle",
-                "moderation", "clip", "rerank", "imagen",
-                "sdxl", "flux", "sd-", "vision-image", "image-gen",
-                "guard", "asr",
-            )):
+
+            # First check token filters
+            if any(tok in mid for tok in _NON_CHAT_TOKENS):
+                continue
+            
+            # Check architecture to ensure it's a text-output model
+            arch = model.get("architecture") or {}
+            out_mods = arch.get("output_modalities") or []
+            in_mods = arch.get("input_modalities") or []
+            
+            # Must be capable of taking text and outputting text
+            if "text" not in out_mods or "text" not in in_mods:
                 continue
 
+            capabilities = []
+            if not any(tok in mid for tok in _WEAK_FOR_CHESS_TOKENS):
+                capabilities.append(CAP_CHESS)
+            
             is_free = ":free" in mid or mid.endswith(":free")
             name = model_id
             if is_free:
                 name = f"{model_id} ★free"
+                
+            ctx = model.get("context_length") or DEFAULT_CONTEXT_WINDOW
 
             chat_models.append(ModelInfo(
                 id=model_id,
                 name=name,
                 provider="openrouter",
-                context_window=DEFAULT_CONTEXT_WINDOW,
+                context_window=ctx,
                 pricing_tier="free" if is_free else "paid",
-                capabilities=[CAP_CHESS],
+                capabilities=capabilities,
             ))
         return chat_models
 

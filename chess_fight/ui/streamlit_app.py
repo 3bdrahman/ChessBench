@@ -291,8 +291,6 @@ def render_stockfish_section(provider: object, available_providers: list) -> Non
         think = st.slider("Think time per move (s)", 0.1, 5.0, 1.0, 0.1, key="stockfish_think")
         if st.button("🔌 Enable Stockfish", key="enable_stockfish", use_container_width=True):
             available_providers.append(("stockfish", ""))
-            st.session_state["stockfish_depth"] = depth
-            st.session_state["stockfish_think"] = think
 
 
 def render_model_selectors(available_providers: list):

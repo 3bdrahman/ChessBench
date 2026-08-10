@@ -334,11 +334,6 @@ def render_model_selectors(available_providers: list):
         return None, None
 
     model_options = list(all_models.keys())
-    
-    if "white_model" in st.session_state and st.session_state["white_model"] not in model_options:
-        del st.session_state["white_model"]
-    if "black_model" in st.session_state and st.session_state["black_model"] not in model_options:
-        del st.session_state["black_model"]
 
     col1, col2 = st.sidebar.columns(2)
     with col1:
@@ -346,7 +341,7 @@ def render_model_selectors(available_providers: list):
         white_model = st.selectbox(
             "Select Model",
             options=model_options,
-            key="white_model",
+            key="player_white_model",
             index=0 if model_options else None,
         )
     with col2:
@@ -354,7 +349,7 @@ def render_model_selectors(available_providers: list):
         black_model = st.selectbox(
             "Select Model",
             options=model_options,
-            key="black_model",
+            key="player_black_model",
             index=1 if len(model_options) > 1 else 0,
         )
 

@@ -38,7 +38,7 @@ class ProviderChessAI(ChessAI):
 
         self.name = f"{provider_name}:{model_id}"
 
-    async def _get_move_from_model(self, fen: str, validation_attempt: int = 0) -> str:
+    async def _get_move_from_model(self, fen: str, validation_attempt: int = 0, network_attempts: int = 0) -> str:
         prompt = self._create_prompt(fen)
         if validation_attempt > 0:
             prompt += (
@@ -52,7 +52,6 @@ class ProviderChessAI(ChessAI):
         params = dict(self.params)
         params["fen"] = fen
 
-        retry_count = 0
         while True:
             try:
                 result = await self.provider.complete(
@@ -63,7 +62,6 @@ class ProviderChessAI(ChessAI):
                 )
                 break
             except (RateLimitError, TimeoutError) as exc:
-                retry_count += 1
                 # Populate last_completion_result with error info before re-raising
                 self.last_completion_result = CompletionResult(
                     text=str(exc),
@@ -71,7 +69,7 @@ class ProviderChessAI(ChessAI):
                     error_type=type(exc).__name__,
                     raw_response=getattr(exc, "raw_response", None),
                     latency_ms=getattr(exc, "latency_ms", 0),
-                    retry_count=retry_count,
+                    retry_count=network_attempts + 1,
                 )
                 raise
             except ProviderError as exc:
@@ -81,7 +79,7 @@ class ProviderChessAI(ChessAI):
                     error_type=type(exc).__name__,
                     raw_response=getattr(exc, "raw_response", None),
                     latency_ms=getattr(exc, "latency_ms", 0),
-                    retry_count=retry_count,
+                    retry_count=network_attempts + 1,
                 )
                 raise
 
@@ -90,7 +88,7 @@ class ProviderChessAI(ChessAI):
 
         self.last_completion_result = result
         if self.last_completion_result:
-            self.last_completion_result.retry_count = retry_count
+            self.last_completion_result.retry_count = network_attempts
         board = chess.Board(fen)
         from chess_fight.move_parser import parse_move
         parsed = parse_move(result.text, board)

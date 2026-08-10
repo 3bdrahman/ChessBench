@@ -100,8 +100,16 @@ def render_error(st: Any, exc: BaseException) -> None:
         return
 
     if isinstance(exc, QuotaExceededError):
-        st.error(f"**Quota exceeded for {exc.provider}**: {exc.detail}")
-        st.caption("Top up your account or switch providers.")
+        st.error(f"**Insufficient Credits for {exc.provider.capitalize()}**")
+        st.caption(
+            "Your account is out of credits! You can either select one of the **★free** "
+            "models from the dropdown to continue playing for free, or add credits to "
+            "your account to use advanced models."
+        )
+        if exc.provider == "openrouter":
+            st.markdown("[Add credits on OpenRouter](https://openrouter.ai/credits)")
+        else:
+            st.markdown(f"[Open {exc.provider.capitalize()} dashboard]({_dashboard_url(exc.provider)})")
         return
 
     if isinstance(exc, GameExecutionError):

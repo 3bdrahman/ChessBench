@@ -111,6 +111,10 @@ class OpenRouterProvider(ModelProvider):
             api_key=api_key,
             base_url=self.base_url,
             timeout=params.get("timeout", DEFAULT_HTTP_TIMEOUT),
+            default_headers={
+                "HTTP-Referer": "https://github.com/3bdrahman/chess_fight",
+                "X-Title": "Chess Fight",
+            }
         )
 
         openai_messages: list[dict[str, str]] = [
@@ -128,6 +132,7 @@ class OpenRouterProvider(ModelProvider):
                 messages=openai_messages,  # type: ignore[arg-type]
                 temperature=temperature,
                 max_tokens=max_tokens,
+                extra_body={"include_reasoning": True},
             )
         except Exception as exc:
             latency_ms = int((time.time() - start) * 1000)
@@ -135,8 +140,20 @@ class OpenRouterProvider(ModelProvider):
 
         latency_ms = int((time.time() - start) * 1000)
 
+        msg = response.choices[0].message
+        content = msg.content or ""
+        
+        # If it's a reasoning model, append the reasoning to the content so our parser can log it
+        # and extract moves from it if the model put the move inside the reasoning block.
+        reasoning = getattr(msg, "reasoning", None)
+        if reasoning is None and getattr(msg, "model_extra", None):
+            reasoning = msg.model_extra.get("reasoning")
+            
+        if reasoning:
+            content = f"<reasoning>\n{reasoning}\n</reasoning>\n{content}"
+
         return CompletionResult(
-            text=response.choices[0].message.content or "",
+            text=content,
             tokens_in=response.usage.prompt_tokens if response.usage else None,
             tokens_out=response.usage.completion_tokens if response.usage else None,
             latency_ms=latency_ms,
@@ -216,6 +233,13 @@ def _classify_and_raise(exc: Exception, provider: str, model: str, latency_ms: i
         ) from exc
 
     status_code = getattr(exc, "status_code", None)
+    if status_code == 402:
+        from chess_fight.common.exceptions import QuotaExceededError
+        raise QuotaExceededError(
+            provider=provider,
+            detail=str(exc),
+        ) from exc
+
     if status_code and 500 <= status_code < 600:
         raise ProviderAPIError(
             provider=provider,

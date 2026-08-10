@@ -129,8 +129,11 @@ def _draw_completion_result(expander_placeholder, state: GameState) -> None:
             st.metric("Tokens in", cr.tokens_in if cr.tokens_in is not None else "—")
         with col_c:
             st.metric("Tokens out", cr.tokens_out if cr.tokens_out is not None else "—")
-        st.caption("Raw model response:")
-        st.code(cr.text or "")
+        if cr.error:
+            st.error(f"**{cr.error_type or 'Error'}** (Retry #{cr.retry_count}): {cr.error}")
+        else:
+            st.caption("Raw model response:")
+            st.code(cr.text or "")
 
 
 class ChessUI:

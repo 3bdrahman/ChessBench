@@ -10,6 +10,7 @@ from typing import Any
 import chess
 
 from chess_fight.common.common_types import CompletionResult
+from chess_fight.common.exceptions import MoveExhaustedError
 from chess_fight.game.clock import GameClock
 from chess_fight.models import ChessAI, GameMove, GameStats
 
@@ -106,8 +107,8 @@ class AsyncChessGame:
                 else:
                     move_str, completion_result = await current_player.get_move_with_result(fen_before)
             except TimeoutError:
-                # Move timeout - count as loss on time
-                self.stats.winner = "Time Loss"
+                opponent = self.player2 if is_white else self.player1
+                self.stats.winner = opponent.name
                 self.stats.game_duration = time.time() - self.start_time
                 final_state = GameState(
                     board=self.board.copy(),
@@ -115,7 +116,23 @@ class AsyncChessGame:
                     stats=self.stats,
                     current_player="",
                     is_game_over=True,
-                    winner="Time Loss",
+                    winner=f"{opponent.name} (Time Loss)",
+                    game_duration=self.stats.game_duration,
+                    clock_state=self.clock.get_state() if self.clock else None,
+                )
+                await ui_callback(final_state)
+                return self.stats
+            except MoveExhaustedError as exc:
+                opponent = self.player2 if is_white else self.player1
+                self.stats.winner = opponent.name
+                self.stats.game_duration = time.time() - self.start_time
+                final_state = GameState(
+                    board=self.board.copy(),
+                    moves=self.moves.copy(),
+                    stats=self.stats,
+                    current_player="",
+                    is_game_over=True,
+                    winner=f"{opponent.name} (Illegal Move Loss)",
                     game_duration=self.stats.game_duration,
                     clock_state=self.clock.get_state() if self.clock else None,
                 )
@@ -131,7 +148,8 @@ class AsyncChessGame:
 
                 # Check if time is up
                 if self.clock.is_time_up(is_white):
-                    self.stats.winner = "Time Loss"
+                    opponent = self.player2 if is_white else self.player1
+                    self.stats.winner = opponent.name
                     self.stats.game_duration = time.time() - self.start_time
                     final_state = GameState(
                         board=self.board.copy(),
@@ -139,7 +157,7 @@ class AsyncChessGame:
                         stats=self.stats,
                         current_player="",
                         is_game_over=True,
-                        winner="Time Loss",
+                        winner=f"{opponent.name} (Time Loss)",
                         game_duration=self.stats.game_duration,
                         clock_state=self.clock.get_state(),
                     )

@@ -22,9 +22,8 @@ PROMOTION_PIECES = {
 
 
 def _strip_thinking(text: str) -> str:
-    """Remove <thinking>...</thinking> and <reasoning>...</reasoning> blocks from text."""
-    text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    return re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    """Remove <thinking>...</thinking> blocks from text."""
+    return re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL | re.IGNORECASE)
 
 
 def _parse_promotion(text: str) -> tuple[str | None, str]:
@@ -92,7 +91,7 @@ def _parse_san(text: str, board: chess.Board) -> MoveParseResult | None:
     san_pattern = r'\b([KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?)\b'
     matches = re.findall(san_pattern, text)
 
-    for match in matches:
+    for match in reversed(matches):
         try:
             move = board.parse_san(match)
             if move in board.legal_moves:
@@ -117,7 +116,7 @@ def _parse_uci(text: str, board: chess.Board | None = None) -> MoveParseResult |
     uci_pattern = r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b'
     matches = re.findall(uci_pattern, text)
 
-    for match in matches:
+    for match in reversed(matches):
         try:
             move = chess.Move.from_uci(match)
             promotion_piece = None
@@ -186,7 +185,7 @@ def _parse_natural_language(text: str, board: chess.Board) -> MoveParseResult | 
 
     for pattern in patterns:
         matches = re.findall(pattern, text)
-        for match in matches:
+        for match in reversed(matches):
             if isinstance(match, tuple):
                 if len(match) == 2:
                     piece_name, target_square = match
@@ -355,7 +354,7 @@ def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
     # Fallback: try to find any UCI-like pattern
     uci_pattern = r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b'
     matches = re.findall(uci_pattern, text.lower())
-    for match in matches:
+    for match in reversed(matches):
         try:
             move = chess.Move.from_uci(match)
             promotion_piece = None

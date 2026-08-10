@@ -1,12 +1,35 @@
 """NVIDIA NIM provider implementation (OpenAI-compatible)."""
 
+import contextlib
+import logging
 import os
+import time
+from typing import Any
 
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionMessageParam
 
-from chess_fight.providers.base import ChatMessage, CompletionResult, ModelInfo, ModelProvider
+from chess_fight.common.common_types import (
+    CAP_CHESS,
+    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_TEMPERATURE,
+    ChatMessage,
+    CompletionResult,
+    ModelInfo,
+    ModelProvider,
+)
+from chess_fight.common.exceptions import (
+    AuthenticationError,
+    ConnectionError,
+    InvalidApiKeyError,
+    ModelNotFoundError,
+    ProviderAPIError,
+    RateLimitError,
+    TimeoutError,
+)
 from chess_fight.providers.registry import register_provider
+
+_log = logging.getLogger(__name__)
 
 
 @register_provider
@@ -14,47 +37,81 @@ class NIMProvider(ModelProvider):
     name = "nim"
     requires_api_key = True
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.base_url = os.getenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
 
     def validate_key(self, api_key: str) -> bool:
         return len(api_key) >= 10
 
-    async def list_models(self, api_key: str) -> list[ModelInfo]:
-        client = AsyncOpenAI(api_key=api_key, base_url=self.base_url)
-        models = await client.models.list()
+    def _key_prefix_hint(self) -> str:
+        return "NIM key"
 
-        chat_models = []
+    async def list_models(self, api_key: str) -> list[ModelInfo]:
+        client = AsyncOpenAI(api_key=api_key, base_url=self.base_url, timeout=DEFAULT_HTTP_TIMEOUT)
+        try:
+            models = await client.models.list()
+        except Exception as exc:
+            _log.warning("NIM list_models failed: %s", exc)
+            return []
+
+        chat_models: list[ModelInfo] = []
         for model in models.data:
             model_id = model.id
+            mid = model_id.lower()
+            # NIM publishes embedding, image, and asr models alongside chat.
+            if any(tok in mid for tok in (
+                "embed", "rerank", "asr", "tts", "sd-", "flux",
+                "clip", "vision-cnt", "cosmos", "vila",
+            )):
+                continue
+            if not any(tok in mid for tok in (
+                "llama", "qwen", "mistral", "mixtral", "deepseek",
+                "phi", "gemma", "nemotron", "starcoder", "codestral",
+                "meta/", "microsoft/", "google/",
+            )):
+                continue
+
             chat_models.append(ModelInfo(
                 id=model_id,
                 name=model_id,
                 provider="nim",
-                context_window=8192,  # Varies by model
+                context_window=DEFAULT_CONTEXT_WINDOW,
+                capabilities=[CAP_CHESS],
             ))
         return chat_models
 
-    async def complete(self, api_key: str, model: str, messages: list[ChatMessage], **params) -> CompletionResult:
-        client = AsyncOpenAI(api_key=api_key, base_url=self.base_url)
+    async def complete(
+        self,
+        api_key: str,
+        model: str,
+        messages: list[ChatMessage],
+        **params: Any,
+    ) -> CompletionResult:
+        client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=self.base_url,
+            timeout=params.get("timeout", DEFAULT_HTTP_TIMEOUT),
+        )
 
-        openai_messages: list[ChatCompletionMessageParam] = [
-            {"role": m.role, "content": m.content}  # type: ignore[misc]
+        openai_messages: list[dict[str, str]] = [
+            {"role": m.role, "content": m.content}
             for m in messages
         ]
 
-        temperature = params.get("temperature", 0.1)
+        temperature = params.get("temperature", DEFAULT_TEMPERATURE)
         max_tokens = params.get("max_tokens", 100)
 
-        import time
         start = time.time()
-
-        response = await client.chat.completions.create(
-            model=model,
-            messages=openai_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=openai_messages,  # type: ignore[arg-type]
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            latency_ms = int((time.time() - start) * 1000)
+            _classify_and_raise(exc, "nim", model, latency_ms, api_key)
 
         latency_ms = int((time.time() - start) * 1000)
 
@@ -63,5 +120,93 @@ class NIMProvider(ModelProvider):
             tokens_in=response.usage.prompt_tokens if response.usage else None,
             tokens_out=response.usage.completion_tokens if response.usage else None,
             latency_ms=latency_ms,
-            raw_response=response.model_dump() if hasattr(response, 'model_dump') else None
+            raw_response=response.model_dump() if hasattr(response, "model_dump") else None,
         )
+
+
+def _classify_and_raise(exc: Exception, provider: str, model: str, latency_ms: int, api_key: str = "") -> None:
+    """Map OpenAI SDK exceptions to typed ChessFightError and raise."""
+    from openai import (
+        APIConnectionError,
+        APITimeoutError,
+        InternalServerError,
+        NotFoundError,
+    )
+    from openai import (
+        AuthenticationError as OpenAIAuthError,
+    )
+    from openai import (
+        RateLimitError as OpenAIRateLimitError,
+    )
+
+    if isinstance(exc, OpenAIAuthError):
+        if getattr(exc, "status_code", 401) == 401:
+            raise InvalidApiKeyError(
+                provider=provider,
+                got_prefix=api_key[:8] + "…" if api_key else "",
+                expected_prefix="NIM key",
+                http_status=401,
+            ) from exc
+        raise AuthenticationError(
+            provider=provider,
+            detail=str(exc),
+            http_status=exc.status_code or 403,
+        ) from exc
+
+    if isinstance(exc, OpenAIRateLimitError):
+        retry_after = None
+        if hasattr(exc, "response") and exc.response is not None:
+            retry_after_hdr = exc.response.headers.get("retry-after")
+            if retry_after_hdr:
+                with contextlib.suppress(ValueError):
+                    retry_after = float(retry_after_hdr)
+        raise RateLimitError(
+            provider=provider,
+            retry_after=retry_after,
+            http_status=429,
+            raw_response={"error": str(exc), "provider": provider, "model": model},
+        ) from exc
+
+    if isinstance(exc, APITimeoutError):
+        raise TimeoutError(
+            provider=provider,
+            timeout_seconds=30.0,
+        ) from exc
+
+    if isinstance(exc, APIConnectionError):
+        raise ConnectionError(
+            provider=provider,
+            host="integrate.api.nvidia.com",
+            detail=str(exc),
+        ) from exc
+
+    if isinstance(exc, NotFoundError):
+        raise ModelNotFoundError(
+            provider=provider,
+            model_id=model,
+            available_models=None,
+        ) from exc
+
+    if isinstance(exc, InternalServerError):
+        raise ProviderAPIError(
+            provider=provider,
+            status_code=500,
+            detail=str(exc),
+            raw_response={"error": str(exc), "provider": provider, "model": model},
+        ) from exc
+
+    status_code = getattr(exc, "status_code", None)
+    if status_code and 500 <= status_code < 600:
+        raise ProviderAPIError(
+            provider=provider,
+            status_code=status_code,
+            detail=str(exc),
+            raw_response={"error": str(exc), "provider": provider, "model": model},
+        ) from exc
+
+    raise ProviderAPIError(
+        provider=provider,
+        status_code=status_code or 500,
+        detail=str(exc),
+        raw_response={"error": str(exc), "provider": provider, "model": model},
+    ) from exc

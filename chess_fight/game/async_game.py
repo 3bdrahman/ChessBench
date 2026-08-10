@@ -1,14 +1,19 @@
 """Async game loop for non-blocking chess games."""
 
 import asyncio
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 import chess
 
+from chess_fight.common.common_types import CompletionResult
+from chess_fight.game.clock import GameClock
 from chess_fight.models import ChessAI, GameMove, GameStats
-from chess_fight.providers.base import CompletionResult
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -23,12 +28,19 @@ class GameState:
     game_duration: float = 0
     last_completion_result: CompletionResult | None = None
     fen_before: str | None = None
+    clock_state: dict[str, Any] | None = None
 
 
 class AsyncChessGame:
     """Async chess game that yields control to UI between moves."""
 
-    def __init__(self, player1: ChessAI, player2: ChessAI, starting_fen: str | None = None):
+    def __init__(
+        self,
+        player1: ChessAI,
+        player2: ChessAI,
+        starting_fen: str | None = None,
+        clock: GameClock | None = None
+    ):
         self.board = chess.Board(starting_fen) if starting_fen else chess.Board()
         self.player1 = player1
         self.player2 = player2
@@ -36,23 +48,43 @@ class AsyncChessGame:
         self.stats = GameStats()
         self.start_time = time.time()
         self._cancelled = False
+        self.clock = clock
+        self._turn_start_time = 0.0
 
-    def cancel(self):
+    def cancel(self) -> None:
         """Cancel the game."""
         self._cancelled = True
 
     async def play_game(
         self,
         ui_callback: Callable[[GameState], Awaitable[None]],
-        delay: float = 0.1
+        delay: float = 0.1,
+        move_timeout_seconds: float | None = None,
     ) -> GameStats:
-        """Play a full game with async UI updates."""
+        """Play a full game with async UI updates.
+
+        Args:
+            ui_callback: Callback for UI updates
+            delay: Delay between moves for UI updates
+            move_timeout_seconds: Optional timeout for each move in seconds
+        """
+        is_white = True
+
+        # Start clock if provided
+        if self.clock:
+            self.clock.start_turn(True, 0)
 
         while not self.board.is_game_over() and not self._cancelled:
             current_player = self.player1 if len(self.moves) % 2 == 0 else self.player2
+            is_white = len(self.moves) % 2 == 0
             fen_before = self.board.fen()
 
-            # Update UI with current state
+            # Start the player's turn on the clock
+            if self.clock:
+                self.clock.start_turn(is_white, 0)
+                self._turn_start_time = time.time() * 1000
+
+            # Update UI with current state including clock
             state = GameState(
                 board=self.board.copy(),
                 moves=self.moves.copy(),
@@ -60,12 +92,89 @@ class AsyncChessGame:
                 current_player=current_player.name,
                 is_game_over=False,
                 fen_before=fen_before,
+                clock_state=self.clock.get_state() if self.clock else None,
             )
             await ui_callback(state)
 
             # Get move from player with completion result
-            move_str, completion_result = await current_player.get_move_with_result(fen_before)
+            try:
+                if move_timeout_seconds:
+                    move_str, completion_result = await asyncio.wait_for(
+                        current_player.get_move_with_result(fen_before),
+                        timeout=move_timeout_seconds
+                    )
+                else:
+                    move_str, completion_result = await current_player.get_move_with_result(fen_before)
+            except TimeoutError:
+                # Move timeout - count as loss on time
+                self.stats.winner = "Time Loss"
+                self.stats.game_duration = time.time() - self.start_time
+                final_state = GameState(
+                    board=self.board.copy(),
+                    moves=self.moves.copy(),
+                    stats=self.stats,
+                    current_player="",
+                    is_game_over=True,
+                    winner="Time Loss",
+                    game_duration=self.stats.game_duration,
+                    clock_state=self.clock.get_state() if self.clock else None,
+                )
+                await ui_callback(final_state)
+                return self.stats
+
             move = chess.Move.from_uci(move_str)
+
+            # End the player's turn on the clock
+            if self.clock:
+                elapsed_ms = int((time.time() - self._turn_start_time) * 1000)
+                self.clock.end_turn(is_white, elapsed_ms)
+
+                # Check if time is up
+                if self.clock.is_time_up(is_white):
+                    self.stats.winner = "Time Loss"
+                    self.stats.game_duration = time.time() - self.start_time
+                    final_state = GameState(
+                        board=self.board.copy(),
+                        moves=self.moves.copy(),
+                        stats=self.stats,
+                        current_player="",
+                        is_game_over=True,
+                        winner="Time Loss",
+                        game_duration=self.stats.game_duration,
+                        clock_state=self.clock.get_state(),
+                    )
+                    await ui_callback(final_state)
+                    return self.stats
+
+            # Handle illegal move defensively - retry once with fresh board state
+            if move not in self.board.legal_moves:
+                _log.warning(
+                    "Illegal move %s from %s (legal: %s), requesting new move",
+                    move_str, current_player.name,
+                    [m.uci() for m in self.board.legal_moves]
+                )
+                # Request a new move from the same player
+                try:
+                    if move_timeout_seconds:
+                        move_str, completion_result = await asyncio.wait_for(
+                            current_player.get_move_with_result(self.board.fen()),
+                            timeout=move_timeout_seconds
+                        )
+                    else:
+                        move_str, completion_result = await current_player.get_move_with_result(self.board.fen())
+                    move = chess.Move.from_uci(move_str)
+                except Exception as exc:
+                    _log.error("Failed to get legal move after retry: %s", exc)
+                    # Fall back to first legal move
+                    move = next(iter(self.board.legal_moves))
+                    move_str = move.uci()
+                    completion_result = CompletionResult(
+                        text=move_str,
+                        tokens_in=None,
+                        tokens_out=None,
+                        latency_ms=0,
+                        raw_response={"fallback": True, "error": str(exc)},
+                    )
 
             if move in self.board.legal_moves:
                 game_move = GameMove(
@@ -83,7 +192,7 @@ class AsyncChessGame:
                 # This shouldn't happen due to validation in get_move
                 raise ValueError(f"Illegal move {move_str}")
 
-            # Update UI with completion result
+            # Update UI with completion result and clock state
             state = GameState(
                 board=self.board.copy(),
                 moves=self.moves.copy(),
@@ -92,6 +201,7 @@ class AsyncChessGame:
                 is_game_over=False,
                 fen_before=fen_before,
                 last_completion_result=completion_result,
+                clock_state=self.clock.get_state() if self.clock else None,
             )
             await ui_callback(state)
 
@@ -113,6 +223,7 @@ class AsyncChessGame:
             is_game_over=True,
             winner=self.stats.winner,
             game_duration=self.stats.game_duration,
+            clock_state=self.clock.get_state() if self.clock else None,
         )
         await ui_callback(final_state)
 

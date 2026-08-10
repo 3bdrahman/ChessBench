@@ -19,8 +19,8 @@ dependencies = [
     "pandas>=2.0.0",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0",
-    "plotly>=5.0",
     "numpy>=1.24",
+    "altair>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -37,11 +37,25 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["chess_fight*"]
+include = ["chess_fight*", "demos*"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = [
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "dist",
+    "build",
+    "*.egg-info",
+    "runs",
+    ".streamlit",
+]
+
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -67,18 +81,6 @@ ignore = [
     "S113",  # request without timeout (we use reasonable defaults)
 ]
 per-file-ignores = { "tests/*" = ["S101", "S106", "S113"], "benchmark/*" = ["S101", "S106"] }
-exclude = [
-    ".git",
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    "dist",
-    "build",
-    "*.egg-info",
-    "runs",
-    ".streamlit",
-]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -107,7 +109,6 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "google.*",
-    "google_genai.*",
     "anthropic.*",
     "openai.*",
     "ollama.*",
@@ -127,10 +128,6 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--cov=chess_fight",
-    "--cov=benchmark",
-    "--cov=providers",
-    "--cov=game",
-    "--cov=ui",
     "--cov-report=term-missing",
     "--cov-report=html",
 ]
@@ -140,7 +137,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["chess_fight", "benchmark", "providers", "game", "ui"]
+source = ["chess_fight"]
 omit = ["tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]

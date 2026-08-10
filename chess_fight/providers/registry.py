@@ -1,7 +1,7 @@
 """Provider registry for managing model providers."""
 
 
-from .base import ModelProvider
+from chess_fight.common.common_types import ModelProvider
 
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {}
 

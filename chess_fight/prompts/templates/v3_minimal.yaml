@@ -1,0 +1,21 @@
+version: "v3_minimal"
+model_hints:
+  description: "Minimal prompt for fast models"
+max_tokens: 800
+sections:
+  - name: "role"
+    content_template: "You are {color}. Respond with UCI move only."
+    required: true
+    priority: 0
+  - name: "board"
+    content_template: "Position: {ascii_board}"
+    required: true
+    priority: 1
+  - name: "legal_moves"
+    content_template: "Legal: {forcing_moves}\n{developing_moves}\n{positional_moves}"
+    required: true
+    priority: 2
+  - name: "instructions"
+    content_template: "UCI move:"
+    required: true
+    priority: 0

@@ -1,0 +1,7 @@
+# System dependencies for Streamlit Cloud deployment
+# Stockfish chess engine
+stockfish
+
+# Additional useful packages
+curl
+wget

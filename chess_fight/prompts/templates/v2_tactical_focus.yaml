@@ -1,0 +1,42 @@
+version: "v2_tactical_focus"
+model_hints:
+  description: "Tactical emphasis, shorter context"
+max_tokens: 1500
+sections:
+  - name: "role"
+    content_template: "You are playing chess as {color}. Focus on tactical precision."
+    required: true
+    priority: 0
+  - name: "tactical_priority"
+    content_template: |
+      CRITICAL TACTICAL PRIORITIES:
+      1. CHECKMATE threats (immediate or forced)
+      2. WINNING MATERIAL sequences
+      3. FORCING moves (checks, captures, threats)
+      4. DEFEND against opponent's tactics
+    required: true
+    priority: 1
+  - name: "position_analysis"
+    content_template: |
+      Current position:
+      Stagnation: {stagnation_status} | Progress: {position_progress}
+      Tension: {material_tension} | Dynamism: {position_dynamism}
+    required: true
+    priority: 2
+  - name: "legal_moves"
+    content_template: |
+      Legal moves by priority:
+      1. WINNING CAPTURES/CHECKS (Must play if available):
+      {forcing_moves}
+
+      2. DEVELOPING MOVES (Play if no winning captures):
+      {developing_moves}
+
+      3. POSITIONAL MOVES (Last resort):
+      {positional_moves}
+    required: true
+    priority: 3
+  - name: "instructions"
+    content_template: "UCI move:"
+    required: true
+    priority: 0

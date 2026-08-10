@@ -237,7 +237,9 @@ PGN_SITE: str = "Local"
 # =============================================================================
 # UI / Streamlit
 # =============================================================================
-HOSTED_PROVIDERS: tuple[str, ...] = ("openrouter", "nim", "ollama", "stockfish")
+import os
+_env_providers = os.environ.get("CHESS_FIGHT_HOSTED_PROVIDERS")
+HOSTED_PROVIDERS: tuple[str, ...] | None = tuple(_env_providers.split(",")) if _env_providers else None
 DEFAULT_BOARD_SIZE: int = 600
 DEFAULT_MOVE_DELAY: float = 0.1
 DEFAULT_DEMO_DELAY: float = 0.5

@@ -102,25 +102,29 @@ class AsyncChessGame:
                 task = asyncio.create_task(current_player.get_move_with_result(fen_before))
                 start_wait = time.time()
                 
+                last_ui_update = 0
                 while not task.done():
-                    # We no longer cancel the task on move_timeout_seconds.
-                    # We want the LLM to play a full game even if rate limited.
-                    
-                    # Update UI while waiting
-                    self.stats.game_duration = time.time() - self.start_time
-                    state = GameState(
-                        board=self.board.copy(),
-                        moves=self.moves.copy(),
-                        stats=self.stats,
-                        current_player=current_player.name,
-                        is_game_over=False,
-                        fen_before=fen_before,
-                        game_duration=self.stats.game_duration,
-                        last_completion_result=current_player.last_completion_result,
-                        clock_state=self.clock.get_state() if self.clock else None,
-                    )
-                    await ui_callback(state)
-                    await asyncio.sleep(delay)
+                    now = time.time()
+                    if now - last_ui_update >= 1.0:
+                        self.stats.game_duration = now - self.start_time
+                        state = GameState(
+                            board=self.board.copy(),
+                            moves=self.moves.copy(),
+                            stats=self.stats,
+                            current_player=current_player.name,
+                            is_game_over=False,
+                            fen_before=fen_before,
+                            game_duration=self.stats.game_duration,
+                            last_completion_result=current_player.last_completion_result,
+                            clock_state=self.clock.get_state() if self.clock else None,
+                        )
+                        await ui_callback(state)
+                        last_ui_update = now
+
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=0.1)
+                    except asyncio.TimeoutError:
+                        pass
                     
                 move_str, completion_result = task.result()
             except MoveExhaustedError as exc:

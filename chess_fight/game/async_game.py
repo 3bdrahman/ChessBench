@@ -80,12 +80,6 @@ class AsyncChessGame:
             fen_before = self.board.fen()
 
             # Start the player's turn on the clock
-            if self.clock:
-                now_ms = int(time.time() * 1000)
-                self.clock.start_turn(is_white, now_ms)
-                self._turn_start_time = now_ms
-
-            # Update UI with current state including clock
             state = GameState(
                 board=self.board.copy(),
                 moves=self.moves.copy(),
@@ -96,6 +90,11 @@ class AsyncChessGame:
                 clock_state=self.clock.get_state() if self.clock else None,
             )
             await ui_callback(state)
+
+            if self.clock:
+                now_ms = int(time.time() * 1000)
+                self.clock.start_turn(is_white, now_ms)
+                self._turn_start_time = now_ms
 
             # Get move from player with completion result
             try:

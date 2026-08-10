@@ -36,7 +36,7 @@ from chess_fight.providers.ratelimit import ProviderRateLimiter
 
 _log = logging.getLogger(__name__)
 
-_THINKING_RE = re.compile(r"<thinking>(.*?)</thinking>", re.DOTALL | re.IGNORECASE)
+_THINKING_RE = re.compile(r"<(?:think|thinking)>(.*?)</(?:think|thinking)>", re.DOTALL | re.IGNORECASE)
 
 
 def _extract_thinking(raw: str | None) -> str | None:

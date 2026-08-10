@@ -109,7 +109,7 @@ def _draw_moves(moves_placeholder, moves: list) -> None:
                 "Time": datetime.fromtimestamp(move.timestamp).strftime("%H:%M:%S"),
                 "Capture": "✓" if move.is_capture else "",
                 "Check": "✓" if move.is_check else "",
-                "Reasoning": move.reasoning or "",
+                "Reasoning": (move.reasoning.replace("<", "&lt;").replace(">", "&gt;") if move.reasoning else ""),
             }
             for i, move in enumerate(moves)
         ]

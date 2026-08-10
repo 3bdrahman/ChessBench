@@ -22,8 +22,8 @@ PROMOTION_PIECES = {
 
 
 def _strip_thinking(text: str) -> str:
-    """Remove <thinking>...</thinking> blocks from text."""
-    return re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    """Remove <think>...</think> blocks from text."""
+    return re.sub(r'<(?:think|thinking)>.*?</(?:think|thinking)>', '', text, flags=re.DOTALL | re.IGNORECASE)
 
 
 def _parse_promotion(text: str) -> tuple[str | None, str]:
@@ -448,7 +448,17 @@ def extract_move(text: str, legal_moves: list[chess.Move] | None = None) -> str 
     Returns:
         UCI move string (e.g., "e2e4") or None if not found/ambiguous
     """
-    # Strip thinking blocks first
+    # STRICT EXTRACTION: Look for exact <move> tag
+    move_match = re.search(r'<move>\s*(.*?)\s*</move>', text, re.IGNORECASE | re.DOTALL)
+    if move_match:
+        # If they used the tag, strictly parse ONLY inside the tag
+        candidate = move_match.group(1).lower().strip()
+        candidate = re.sub(r'[^a-h1-8qrbn]', '', candidate)
+        if len(candidate) in (4, 5):
+            return candidate
+        return None
+
+    # Strip thinking blocks for fallback extraction
     text = _strip_thinking(text)
 
     legal_uci = {m.uci() for m in legal_moves} if legal_moves else None

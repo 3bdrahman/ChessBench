@@ -180,7 +180,9 @@ Tension: {material_tension} | Dynamism: {position_dynamism}""",
             ),
             PromptSection(
                 name="instructions",
-                content_template="UCI move:",
+                content_template="""Format:
+<think>reasoning</think>
+<move>uci_move</move>""",
                 required=True,
                 priority=0,
             ),
@@ -210,99 +212,34 @@ Tension: {material_tension} | Dynamism: {position_dynamism}""",
 DEFAULT_SECTIONS = [
     PromptSection(
         name="role",
-        content_template="You are playing chess as {color}.",
+        content_template="You are a professional chess engine playing as {color}.",
         required=True,
         priority=0,
     ),
     PromptSection(
-        name="move_history_analysis",
-        content_template="""MOVE HISTORY ANALYSIS:
-Previous Positions Repeated: {position_repetitions}
-Stagnation Warning: {stagnation_status}
-Position Progress Score: {position_progress}
-Material Tension: {material_tension}
-Position Dynamism: {position_dynamism}
-Development Score: {development_score}""",
+        name="board_state",
+        content_template="""[GAME STATE]
+FEN: {fen}
+Turn: {color}""",
         required=True,
         priority=1,
     ),
     PromptSection(
-        name="tactical_opportunities",
-        content_template="""TACTICAL OPPORTUNITIES (MUST CONSIDER FIRST):
-Winning Captures Available:
-{capture_analysis}""",
-        required=True,
-        priority=2,
-    ),
-    PromptSection(
-        name="defense",
-        content_template="""DEFENSE ANALYSIS:
-{defense_analysis}""",
-        required=True,
-        priority=3,
-    ),
-    PromptSection(
-        name="vulnerabilities",
-        content_template="""VULNERABILITY ANALYSIS:
-{vulnerability_analysis}""",
-        required=False,
-        priority=4,
-    ),
-    PromptSection(
-        name="material",
-        content_template="""Material Status:
-{material_count}
-Material Balance: {material_balance}""",
-        required=True,
-        priority=5,
-    ),
-    PromptSection(
-        name="position_evaluation",
-        content_template="""POSITION EVALUATION:
-Center Control: {center_control}
-Development Status: {development_status}
-King Safety: {king_safety}
-Undefended Pieces: {undefended_pieces}
-Exposed Pieces: {exposed_pieces}""",
-        required=True,
-        priority=6,
-    ),
-    PromptSection(
-        name="board",
-        content_template="Board: {ascii_board}",
-        required=True,
-        priority=7,
-    ),
-    PromptSection(
-        name="legal_moves",
-        content_template="""Legal moves by priority:
-1. WINNING CAPTURES/CHECKS (Must play if available):
-{forcing_moves}
-
-2. DEVELOPING MOVES (Play if no winning captures):
-{developing_moves}
-
-3. POSITIONAL MOVES (Last resort):
-{positional_moves}""",
-        required=True,
-        priority=8,
-    ),
-    PromptSection(
         name="instructions",
-        content_template="""CRITICAL: Select ONE move from the above categories.
-Respond ONLY with the UCI notation (e.g., 'e2e4').
+        content_template="""[INSTRUCTIONS]
+Analyze the position and select the best move. 
 
-Decision Priority:
-1. Capitalize on opponent's undefended pieces.
-2. Defend against immediate threats/mate threats.
-3. Execute winning captures/tactics.
-4. Protect your vulnerable pieces.
-5. Avoid repetitions and play to win
-6. When your pieces are captured, you must capture back.
+You must format your response EXACTLY like this:
+<think>
+(Your reasoning here)
+</think>
+<move>
+(Your chosen move in purely lower-case UCI notation, e.g. e2e4)
+</move>
 
-Best move given state of the game (UCI notation only):""",
+Failure to follow this exact format will result in disqualification.""",
         required=True,
-        priority=0,  # Keep instructions even when truncating
+        priority=0,
     ),
 ]
 

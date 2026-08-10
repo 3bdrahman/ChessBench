@@ -157,6 +157,7 @@ class ChessAI(ABC):
         position_analysis = self._analyze_position_repetition(board)
 
         context = {
+            "fen": fen,
             "color": "White" if board.turn == chess.WHITE else "Black",
             "position_repetitions": position_analysis["repetitions"],
             "stagnation_status": "STAGNATING - Force dynamic play!" if position_analysis["is_stagnating"] else "Normal",

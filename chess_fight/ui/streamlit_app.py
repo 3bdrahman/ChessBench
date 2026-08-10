@@ -124,7 +124,7 @@ def _draw_moves(moves_placeholder, moves: list) -> None:
         )
     }
     
-    moves_placeholder.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
+    moves_placeholder.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
 
 
 def _draw_completion_result(expander_placeholder, state: GameState) -> None:
@@ -442,16 +442,21 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
     progress_bar = progress_placeholder.progress(0.0, text=f"Game 0 / {total_games}")
 
     async def live_callback(state: GameState):
-        if state.is_game_over:
-            game_index["value"] += 1
-            frac = min(1.0, game_index["value"] / max(1, total_games))
-            progress_bar.progress(
-                frac, text=f"Game {game_index['value']} / {total_games} complete"
-            )
-        _draw_board(board_placeholder, state, runner.start_time if runner else None)
-        _draw_metrics(stats_placeholder, state, runner.start_time if runner else None)
-        _draw_moves(moves_placeholder, state.moves)
-        _draw_completion_result(completion_placeholder, state)
+        try:
+            if state.is_game_over:
+                game_index["value"] += 1
+                frac = min(1.0, game_index["value"] / max(1, total_games))
+                progress_bar.progress(
+                    frac, text=f"Game {game_index['value']} / {total_games} complete"
+                )
+            _draw_board(board_placeholder, state, runner.start_time if runner else None)
+            _draw_metrics(stats_placeholder, state, runner.start_time if runner else None)
+            _draw_moves(moves_placeholder, state.moves)
+            _draw_completion_result(completion_placeholder, state)
+        except Exception:
+            # UI render failures must NEVER kill the game loop.
+            # The game data is already being persisted to disk by the runner logger.
+            pass
 
     async def run_benchmark():
         await runner.run_benchmark_with_callback(live_callback)

@@ -250,100 +250,96 @@ class BenchmarkRunner:
         board = chess.Board(opening['fen'])
 
         # Start Stockfish evaluator for this game
-        evaluator = StockfishEvaluator()
-        await evaluator.start()
+        async with StockfishEvaluator() as evaluator:
 
-        self.logger.start_game(
-            white_player=white_spec,
-            black_player=black_spec,
-            white_provider=white_spec.split(':')[0],
-            black_provider=black_spec.split(':')[0],
-            opening_eco=opening['eco'],
-            opening_name=opening['name'],
-            opening_fen=opening['fen']
-        )
+            self.logger.start_game(
+                white_player=white_spec,
+                black_player=black_spec,
+                white_provider=white_spec.split(':')[0],
+                black_provider=black_spec.split(':')[0],
+                opening_eco=opening['eco'],
+                opening_name=opening['name'],
+                opening_fen=opening['fen']
+            )
 
-        # Track moves for logging
-        move_logs: list[GameLogEntry] = []
+            # Track moves for logging
+            move_logs: list[GameLogEntry] = []
 
-        async def ui_callback(state: GameState) -> None:
-            if state.moves and len(state.moves) > len(move_logs):
-                last_move = state.moves[-1]
-                fen_before = state.fen_before or state.board.fen()
-                cr = state.last_completion_result
+            async def ui_callback(state: GameState) -> None:
+                if state.moves and len(state.moves) > len(move_logs):
+                    last_move = state.moves[-1]
+                    fen_before = state.fen_before or state.board.fen()
+                    cr = state.last_completion_result
 
-                # Evaluate position before the move with Stockfish
-                board_before = chess.Board(fen_before)
-                eval_result = await evaluator.evaluate(board_before)
+                    # Evaluate position before the move with Stockfish
+                    board_before = chess.Board(fen_before)
+                    eval_result = await evaluator.evaluate(board_before)
 
-                self.logger.log_move(
-                    move_number=len(state.moves),
-                    player=last_move.player,
-                    color="white" if last_move.player == white_spec else "black",
-                    fen_before=fen_before,
-                    move_uci=last_move.move,
-                    move_san=_uci_to_san(fen_before, last_move.move),
-                    llm_latency_ms=cr.latency_ms if cr and cr.latency_ms else 0,
-                    llm_tokens_in=cr.tokens_in if cr else None,
-                    llm_tokens_out=cr.tokens_out if cr else None,
-                    llm_raw_response=cr.text if cr else "",
-                    thinking_trace=_extract_thinking(cr.text if cr else None),
-                    prompt_hash=_prompt_hash(fen_before),
-                    validation_retries=0,
-                    eval_cp_score=eval_result.cp_score if eval_result else None,
-                    eval_mate_in=eval_result.mate_in if eval_result else None,
-                    eval_best_move_uci=eval_result.best_move_uci if eval_result else None,
-                    eval_best_move_cp=eval_result.best_move_cp if eval_result else None,
-                    eval_top3_moves=eval_result.top3_moves if eval_result else None,
-                    eval_depth=eval_result.depth if eval_result else None,
-                    eval_time_ms=eval_result.time_ms if eval_result else None,
-                )
-                move_logs.append(last_move)
-            if user_callback is not None:
-                await user_callback(state)
+                    self.logger.log_move(
+                        move_number=len(state.moves),
+                        player=last_move.player,
+                        color="white" if last_move.player == white_spec else "black",
+                        fen_before=fen_before,
+                        move_uci=last_move.move,
+                        move_san=_uci_to_san(fen_before, last_move.move),
+                        llm_latency_ms=cr.latency_ms if cr and cr.latency_ms else 0,
+                        llm_tokens_in=cr.tokens_in if cr else None,
+                        llm_tokens_out=cr.tokens_out if cr else None,
+                        llm_raw_response=cr.text if cr else "",
+                        thinking_trace=_extract_thinking(cr.text if cr else None),
+                        prompt_hash=_prompt_hash(fen_before),
+                        validation_retries=0,
+                        eval_cp_score=eval_result.cp_score if eval_result else None,
+                        eval_mate_in=eval_result.mate_in if eval_result else None,
+                        eval_best_move_uci=eval_result.best_move_uci if eval_result else None,
+                        eval_best_move_cp=eval_result.best_move_cp if eval_result else None,
+                        eval_top3_moves=eval_result.top3_moves if eval_result else None,
+                        eval_depth=eval_result.depth if eval_result else None,
+                        eval_time_ms=eval_result.time_ms if eval_result else None,
+                    )
+                    move_logs.append(last_move)
+                if user_callback is not None:
+                    await user_callback(state)
 
-        # Create game with custom starting position
-        # Create clock with time control
-        clock = GameClock.from_seconds(
-            self.config.time_control_seconds_per_move,
-            0  # No increment for now, could be added to config later
-        )
-        game = AsyncChessGame(white_ai, black_ai, clock=clock)
-        game.board = board.copy()
+            # Create game with custom starting position
+            # Create clock with time control
+            clock = GameClock.from_seconds(
+                self.config.time_control_seconds_per_move,
+                0  # No increment for now, could be added to config later
+            )
+            game = AsyncChessGame(white_ai, black_ai, clock=clock)
+            game.board = board.copy()
 
-        # Play the game with move timeout
-        stats = await game.play_game(
-            ui_callback,
-            delay=0.01,
-            move_timeout_seconds=self.config.move_timeout_seconds
-        )
+            # Play the game with move timeout
+            stats = await game.play_game(
+                ui_callback,
+                delay=0.01,
+                move_timeout_seconds=self.config.move_timeout_seconds
+            )
 
-        # Stop evaluator after game
-        await evaluator.stop()
+            # Determine result
+            if stats.winner == white_spec:
+                result = "1-0"
+                result_numeric = 1.0
+            elif stats.winner == black_spec:
+                result = "0-1"
+                result_numeric = 0.0
+            else:
+                result = "1/2-1/2"
+                result_numeric = 0.5
 
-        # Determine result
-        if stats.winner == white_spec:
-            result = "1-0"
-            result_numeric = 1.0
-        elif stats.winner == black_spec:
-            result = "0-1"
-            result_numeric = 0.0
-        else:
-            result = "1/2-1/2"
-            result_numeric = 0.5
+            # End game logging
+            self.logger.end_game(
+                result=result,
+                result_numeric=result_numeric,
+                total_moves=stats.total_moves,
+                game_duration_sec=stats.game_duration
+            )
 
-        # End game logging
-        self.logger.end_game(
-            result=result,
-            result_numeric=result_numeric,
-            total_moves=stats.total_moves,
-            game_duration_sec=stats.game_duration
-        )
+            # Update ELO
+            self.elo.add_game(white_spec, black_spec, result_numeric, opening['eco'])
 
-        # Update ELO
-        self.elo.add_game(white_spec, black_spec, result_numeric, opening['eco'])
-
-        return self.logger.games_completed[-1]
+            return self.logger.games_completed[-1]
 
     async def run_benchmark(self) -> Path:
         """Run the full benchmark."""

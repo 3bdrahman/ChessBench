@@ -480,8 +480,8 @@ def render_benchmark_history() -> None:
         if not runs:
             st.info(
                 "No benchmark runs found under "
-                f"`{RUNS_ROOT}`. Pin two models in the sidebar and click "
-                "**Run Quick Benchmark** to generate a real run."
+                f"`{RUNS_ROOT}`. Select two models in the sidebar and click "
+                "**▶️ Start Match** to generate a real run."
             )
             return
 
@@ -602,62 +602,19 @@ def main():
     available_providers = render_provider_keys_section()
     white_config, black_config = render_model_selectors(available_providers)
 
-    # Pin & Benchmark section
     st.sidebar.markdown("---")
-    st.sidebar.header("📌 Pin & Benchmark")
-    st.sidebar.caption("Run a real in-process benchmark")
-
-    if "pinned_white" not in st.session_state:
-        st.session_state.pinned_white = None
-    if "pinned_black" not in st.session_state:
-        st.session_state.pinned_black = None
-
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        if st.button("📌 Pin White", disabled=white_config is None, use_container_width=True):
-            st.session_state.pinned_white = white_config
-            st.sidebar.success(
-                f"Pinned: {white_config['provider']}:{white_config['model_id']}"
-            )
-    with col2:
-        if st.button("📌 Pin Black", disabled=black_config is None, use_container_width=True):
-            st.session_state.pinned_black = black_config
-            st.sidebar.success(
-                f"Pinned: {black_config['provider']}:{black_config['model_id']}"
-            )
-
-    if st.session_state.pinned_white:
-        st.sidebar.info(
-            f"♔ White: {st.session_state.pinned_white['provider']}:"
-            f"{st.session_state.pinned_white['model_id']}"
-        )
-    if st.session_state.pinned_black:
-        st.sidebar.info(
-            f"♚ Black: {st.session_state.pinned_black['provider']}:"
-            f"{st.session_state.pinned_black['model_id']}"
-        )
-
-    if st.session_state.pinned_white and st.session_state.pinned_black:
-        games = st.sidebar.number_input(
-            "Games per pairing", min_value=1, max_value=20, value=3, step=1, key="qb_games"
-        )
-        if st.sidebar.button(
-            f"🏁 Run Quick Benchmark ({games} games)",
-            type="secondary",
-            use_container_width=True,
-        ):
-            run_in_process_benchmark(
-                st.session_state.pinned_white,
-                st.session_state.pinned_black,
-                games=int(games),
-            )
-
-    # Live game controls
     st.sidebar.header("🎮 Game Controls")
-
-    if st.sidebar.button("▶️ Start New Game", type="primary", use_container_width=True):
+    
+    games = st.sidebar.number_input(
+        "Games to play", min_value=1, max_value=20, value=1, step=1, key="game_count"
+    )
+    
+    # If more than 1 game, alternate colors to keep it fair.
+    colors_mode = "alternating" if games > 1 else "fixed"
+    
+    if st.sidebar.button("▶️ Start Match", type="primary", use_container_width=True):
         if not white_config or not black_config:
-            st.error("Please select models for both players.")
+            st.sidebar.error("Please select models for both players.")
             return
 
         st.session_state.game_running = True
@@ -665,8 +622,8 @@ def main():
             run_in_process_benchmark(
                 white_config,
                 black_config,
-                games=1,
-                colors="fixed"
+                games=int(games),
+                colors=colors_mode
             )
         finally:
             st.session_state.game_running = False

@@ -216,6 +216,18 @@ class BenchmarkRunner:
                 'ply': 0
             }]
 
+    def _create_player(self, player_spec: str) -> ProviderChessAI:
+        """Create a fresh AI instance for a game."""
+        provider_name, model_id = player_spec.split(':', 1)
+        api_key = self.config.api_keys.get(provider_name, '')
+        return ProviderChessAI(
+            provider_name=provider_name,
+            model_id=model_id,
+            api_key=api_key,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens
+        )
+
     async def run_pairing(
         self,
         white_spec: str,
@@ -230,8 +242,9 @@ class BenchmarkRunner:
         has written the JSONL record — so a UI consumer sees the same state
         the on-disk logs reflect.
         """
-        white_ai = self.players[white_spec]
-        black_ai = self.players[black_spec]
+        # Create fresh AI instances for every game to isolate state (move history, etc.)
+        white_ai = self._create_player(white_spec)
+        black_ai = self._create_player(black_spec)
 
         # Set up opening position
         board = chess.Board(opening['fen'])

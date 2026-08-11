@@ -310,12 +310,25 @@ class BenchmarkRunner:
             game = AsyncChessGame(white_ai, black_ai, clock=clock)
             game.board = board.copy()
 
+<<<<<<< HEAD
             # Play the game with move timeout
+=======
+        # Play the game with move timeout
+        stats = None
+        try:
+>>>>>>> main
             stats = await game.play_game(
                 ui_callback,
                 delay=0.01,
                 move_timeout_seconds=self.config.move_timeout_seconds
             )
+<<<<<<< HEAD
+=======
+        finally:
+            if stats is None:
+                stats = game.stats
+                stats.winner = "Timeout/Error"
+                stats.game_duration = time.time() - game.start_time
 
             # Determine result
             if stats.winner == white_spec:
@@ -338,8 +351,35 @@ class BenchmarkRunner:
 
             # Update ELO
             self.elo.add_game(white_spec, black_spec, result_numeric, opening['eco'])
+>>>>>>> main
+
+            # Determine result
+            if stats.winner == white_spec:
+                result = "1-0"
+                result_numeric = 1.0
+            elif stats.winner == black_spec:
+                result = "0-1"
+                result_numeric = 0.0
+            else:
+                result = "1/2-1/2"
+                result_numeric = 0.5
+
+<<<<<<< HEAD
+            # End game logging
+            self.logger.end_game(
+                result=result,
+                result_numeric=result_numeric,
+                total_moves=stats.total_moves,
+                game_duration_sec=stats.game_duration
+            )
+
+            # Update ELO
+            self.elo.add_game(white_spec, black_spec, result_numeric, opening['eco'])
 
             return self.logger.games_completed[-1]
+=======
+        return self.logger.games_completed[-1]
+>>>>>>> main
 
     async def run_benchmark(self) -> Path:
         """Run the full benchmark."""

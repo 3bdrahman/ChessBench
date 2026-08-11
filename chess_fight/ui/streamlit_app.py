@@ -11,12 +11,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import time
 from datetime import datetime
+from typing import Any
 
+import altair as alt
+import chess
 import chess.svg
 import pandas as pd
 import streamlit as st
+from streamlit.runtime.scriptrunner import add_script_run_ctx
 
 from chess_fight.benchmark.results_view import (
     aggregate_leaderboard,
@@ -371,12 +376,7 @@ def create_provider_ai(white_config: dict, black_config: dict):
 
 
 def run_in_process_benchmark(white_config: dict, black_config: dict, games: int = 3, colors: str = "alternating"):
-    """Run the benchmark runner in-process and render live results.
-
-    Replaces the subprocess stub. Uses BenchmarkRunner directly so
-    progress, ELO, and per-game logs are surfaced in real time — no
-    stdout scraping, no fabricated leaderboard numbers.
-    """
+    """Run the benchmark runner in-process and render live results."""
     white_spec = f"{white_config['provider']}:{white_config['model_id']}"
     black_spec = f"{black_config['provider']}:{black_config['model_id']}"
 
@@ -422,11 +422,6 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
     completion_placeholder = st.empty()
     status_placeholder = st.empty()
 
-    progress_placeholder.info(
-        f"Running in-process benchmark: {white_spec} vs {black_spec} ({games} games)..."
-    )
-
-    runner: BenchmarkRunner | None = None
     try:
         runner = BenchmarkRunner(config)
     except (NoProvidersConfiguredError, SetupError, InvalidApiKeyError) as exc:
@@ -436,11 +431,10 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
         st.error(f"Benchmark setup failed: {exc}")
         return
 
-    game_index = {"value": 0}
     num_pairings = 1 if colors == "fixed" else (len(runner.players) * (len(runner.players) - 1))
     total_games = num_pairings * games
-    progress_bar = progress_placeholder.progress(0.0, text=f"Game 0 / {total_games}")
 
+<<<<<<< HEAD
     async def live_callback(state: GameState):
         try:
             if state.is_game_over:
@@ -457,28 +451,83 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
             # UI render failures must NEVER kill the game loop.
             # The game data is already being persisted to disk by the runner logger.
             pass
+=======
+    def start_benchmark():
+        st.session_state.benchmark_state = None
+        st.session_state.benchmark_error = None
+        st.session_state.benchmark_done = False
+        st.session_state.benchmark_game_index = 0
+        st.session_state.benchmark_start_time = time.time()
+        st.session_state.benchmark_run_dir = None
 
-    async def run_benchmark():
-        await runner.run_benchmark_with_callback(live_callback)
+        def ui_callback_sync(state: GameState):
+            st.session_state.benchmark_state = state
+            if state.is_game_over:
+                st.session_state.benchmark_game_index += 1
 
-    try:
-        asyncio.run(run_benchmark())
-    except GameExecutionError as exc:
-        render_error(st, exc)
-        return
-    except (NoProvidersConfiguredError, SetupError, InvalidApiKeyError) as exc:
-        render_error(st, exc)
-        return
-    except Exception as exc:
-        st.error(f"Benchmark failed: {exc}")
-        return
-    finally:
-        progress_placeholder.empty()
+        async def live_callback(state: GameState):
+            ui_callback_sync(state)
 
+        def thread_func():
+            try:
+                asyncio.run(runner.run_benchmark_with_callback(live_callback))
+            except Exception as e:
+                st.session_state.benchmark_error = e
+            finally:
+                st.session_state.benchmark_done = True
+                st.session_state.benchmark_run_dir = runner.run_dir
+
+        t = threading.Thread(target=thread_func)
+        add_script_run_ctx(t)
+        st.session_state.benchmark_thread = t
+        t.start()
+
+    if "benchmark_thread" not in st.session_state or (not st.session_state.benchmark_thread.is_alive() and not st.session_state.get("benchmark_done", False)):
+        if not st.session_state.get("benchmark_done", False):
+            start_benchmark()
+
+    # Draw UI based on current state
+    if st.session_state.get("benchmark_state"):
+        state = st.session_state.benchmark_state
+        game_idx = st.session_state.benchmark_game_index
+        frac = min(1.0, game_idx / max(1, total_games))
+        progress_placeholder.progress(
+            frac, text=f"Game {game_idx} / {total_games} complete"
+        )
+        
+        start_time = st.session_state.benchmark_start_time
+        _draw_board(board_placeholder, state, start_time)
+        _draw_metrics(stats_placeholder, state, start_time)
+        _draw_moves(moves_placeholder, state.moves)
+        _draw_completion_result(completion_placeholder, state)
+    else:
+        progress_placeholder.info(
+            f"Starting in-process benchmark: {white_spec} vs {black_spec} ({games} games)..."
+        )
+>>>>>>> main
+
+    if st.session_state.get("benchmark_error"):
+        exc = st.session_state.benchmark_error
+        if isinstance(exc, GameExecutionError):
+            render_error(st, exc)
+        elif isinstance(exc, (NoProvidersConfiguredError, SetupError, InvalidApiKeyError)):
+            render_error(st, exc)
+        else:
+            st.error(f"Benchmark failed: {exc}")
+        return
+
+    if not st.session_state.get("benchmark_done", False):
+        time.sleep(1.0)
+        st.rerun()
+
+    progress_placeholder.empty()
     status_placeholder.success("Benchmark complete!")
 
     # Show real ELO leaderboard + per-pairing results from the run we just did.
-    run = load_run(runner.run_dir)
+    run = None
+    if st.session_state.get("benchmark_run_dir"):
+        run = load_run(st.session_state.benchmark_run_dir)
+    
     if run is not None:
         render_run_summary(run, expanded=True)
 

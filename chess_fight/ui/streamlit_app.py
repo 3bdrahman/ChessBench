@@ -295,11 +295,16 @@ def render_model_selectors(available_providers: list):
     all_models: dict[str, dict] = {}
     filtered_count = 0
     for provider_name, api_key in available_providers:
-        cache_key = f"models_{provider_name}"
-        if cache_key not in st.session_state:
+        # Cache key depends on the API key so changing the key forces a refresh
+        import hashlib
+        key_hash = hashlib.md5(api_key.encode()).hexdigest()[:8]
+        cache_key = f"models_{provider_name}_{key_hash}"
+        
+        if cache_key not in st.session_state or not st.session_state[cache_key]:
             with st.spinner(f"Fetching {provider_name} models..."):
                 models = asyncio.run(fetch_models_for_provider(provider_name, api_key))
-                st.session_state[cache_key] = models
+                if models:  # Only cache if we actually got models
+                    st.session_state[cache_key] = models
         else:
             models = st.session_state[cache_key]
 
@@ -434,24 +439,6 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
     num_pairings = 1 if colors == "fixed" else (len(runner.players) * (len(runner.players) - 1))
     total_games = num_pairings * games
 
-<<<<<<< HEAD
-    async def live_callback(state: GameState):
-        try:
-            if state.is_game_over:
-                game_index["value"] += 1
-                frac = min(1.0, game_index["value"] / max(1, total_games))
-                progress_bar.progress(
-                    frac, text=f"Game {game_index['value']} / {total_games} complete"
-                )
-            _draw_board(board_placeholder, state, runner.start_time if runner else None)
-            _draw_metrics(stats_placeholder, state, runner.start_time if runner else None)
-            _draw_moves(moves_placeholder, state.moves)
-            _draw_completion_result(completion_placeholder, state)
-        except Exception:
-            # UI render failures must NEVER kill the game loop.
-            # The game data is already being persisted to disk by the runner logger.
-            pass
-=======
     def start_benchmark():
         st.session_state.benchmark_state = None
         st.session_state.benchmark_error = None
@@ -504,7 +491,6 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
         progress_placeholder.info(
             f"Starting in-process benchmark: {white_spec} vs {black_spec} ({games} games)..."
         )
->>>>>>> main
 
     if st.session_state.get("benchmark_error"):
         exc = st.session_state.benchmark_error

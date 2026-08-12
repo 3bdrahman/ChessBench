@@ -542,23 +542,24 @@ def run_in_process_benchmark(
             start_benchmark()
 
     # Draw UI based on current state
-    if st.session_state.get("benchmark_state"):
-        state = st.session_state.benchmark_state
-        game_idx = st.session_state.benchmark_game_index
-        frac = min(1.0, game_idx / max(1, total_games))
-        progress_placeholder.progress(
-            frac, text=f"Game {game_idx} / {total_games} complete"
-        )
-        
-        start_time = st.session_state.benchmark_start_time
-        _draw_board(board_placeholder, state, start_time)
-        _draw_metrics(stats_placeholder, state, start_time)
-        _draw_moves(moves_placeholder, state.moves)
-        _draw_completion_result(completion_placeholder, state)
-    else:
-        progress_placeholder.info(
-            f"Starting in-process benchmark: {white_spec} vs {black_spec} ({games} games)..."
-        )
+    def _draw_live_ui():
+        if st.session_state.get("benchmark_state"):
+            state = st.session_state.benchmark_state
+            game_idx = st.session_state.benchmark_game_index
+            frac = min(1.0, game_idx / max(1, total_games))
+            progress_placeholder.progress(
+                frac, text=f"Game {game_idx} / {total_games} complete"
+            )
+            
+            start_time = st.session_state.benchmark_start_time
+            _draw_board(board_placeholder, state, start_time)
+            _draw_metrics(stats_placeholder, state, start_time)
+            _draw_moves(moves_placeholder, state.moves)
+            _draw_completion_result(completion_placeholder, state)
+        else:
+            progress_placeholder.info(
+                f"Starting in-process benchmark: {white_spec} vs {black_spec} ({games} games)..."
+            )
 
     if st.session_state.get("benchmark_error"):
         exc = st.session_state.benchmark_error
@@ -574,8 +575,18 @@ def run_in_process_benchmark(
         return
 
     if not st.session_state.get("benchmark_done", False):
-        time.sleep(1.0)
-        st.rerun()
+        if hasattr(st, "fragment"):
+            @st.fragment(run_every=2.0)
+            def _live_fragment():
+                if st.session_state.get("benchmark_done", False):
+                    st.rerun()
+                _draw_live_ui()
+            _live_fragment()
+            return
+        else:
+            _draw_live_ui()
+            time.sleep(2.0)
+            st.rerun()
 
     progress_placeholder.empty()
     status_placeholder.success("Benchmark complete!")

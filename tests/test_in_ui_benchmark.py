@@ -205,3 +205,43 @@ class TestInProcessBenchmark:
             assert cr.latency_ms is not None
             assert cr.latency_ms >= 0
             assert cr.raw_response["provider"] == "stockfish"
+
+    @pytest.mark.asyncio
+    async def test_same_model_self_play_benchmark(self, tmp_path, patched_provider):
+        """Self-play with identical player specs works without UnboundLocalError."""
+        config = BenchmarkConfig(
+            players=["stockfish:depth-4", "stockfish:depth-4"],
+            games_per_pairing=1,
+            max_parallel_games=1,
+            opening_book="startpos",
+            temperature=0.0,
+            max_tokens=100,
+            api_keys={"stockfish": ""},
+            output_dir=str(tmp_path / "runs"),
+            colors="fixed",
+        )
+
+        runner = BenchmarkRunner(config)
+        runner.players = {
+            "stockfish:depth-4": _make_ai("stockfish:depth-4"),
+        }
+
+        run_dir = await runner.run_benchmark_with_callback(None)
+        assert run_dir.exists()
+
+        run = load_run(run_dir)
+        assert run is not None
+        assert run.total_games == 1
+
+    def test_single_player_raises_setup_error(self, tmp_path):
+        """Passing fewer than 2 players raises SetupError during initialization."""
+        from chess_fight.common.exceptions import SetupError
+
+        config = BenchmarkConfig(
+            players=["stockfish:depth-4"],
+            games_per_pairing=1,
+            api_keys={"stockfish": ""},
+            output_dir=str(tmp_path / "runs"),
+        )
+        with pytest.raises(SetupError, match="At least 2 players are required"):
+            BenchmarkRunner(config)

@@ -149,6 +149,12 @@ class BenchmarkRunner:
                 "list in benchmark.yaml."
             )
 
+        if len(self.config.players) < 2:
+            raise SetupError(
+                "At least 2 players are required to run a benchmark match. "
+                "Specify two or more players (or pass the same player twice for self-play)."
+            )
+
         players: dict[str, ProviderChessAI] = {}
         for player_spec in self.config.players:
             try:
@@ -381,7 +387,7 @@ class BenchmarkRunner:
 
         # Generate pairings
         pairings: list[tuple[str, str]] = []
-        players = list(self.players.keys())
+        players = list(self.config.players)
         if self.config.colors == "fixed" and len(players) >= 2:
             pairings.append((players[0], players[1]))
         else:
@@ -389,6 +395,8 @@ class BenchmarkRunner:
                 for j, black in enumerate(players):
                     if i != j:
                         pairings.append((white, black))
+
+        fatal_exception: Exception | None = None
 
         # Run games pairing by pairing (for proper Glicko-2 rating periods)
         for pairing_idx, (white, black) in enumerate(pairings):
@@ -472,7 +480,6 @@ class BenchmarkRunner:
             )
 
             # Classify exceptions for this pairing
-            fatal_exception: Exception | None = None
             pairing_game_failures: list[tuple[int, str, str, Exception]] = []
 
             for i, result in enumerate(pairing_results):

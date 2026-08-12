@@ -103,14 +103,15 @@ class GoogleProvider(ModelProvider):
                 contents.append(types.Content(role="model", parts=[types.Part(text=m.content)]))
 
         temperature = params.get("temperature", DEFAULT_TEMPERATURE)
-        max_tokens = params.get("max_tokens", 100)
+        max_tokens = params.get("max_tokens")
 
         start = time.time()
         try:
             config_kwargs: dict[str, object] = {
                 "temperature": temperature,
-                "max_output_tokens": max_tokens,
             }
+            if max_tokens is not None:
+                config_kwargs["max_output_tokens"] = max_tokens
             if system_prompt:
                 config_kwargs["system_instruction"] = system_prompt
 

@@ -69,7 +69,7 @@ class BenchmarkConfig:
 
     # Model params (benchmark mode)
     temperature: float = constants.DEFAULT_BENCHMARK_TEMPERATURE
-    max_tokens: int = constants.DEFAULT_MAX_TOKENS_BENCHMARK
+    max_tokens: int | None = constants.DEFAULT_MAX_TOKENS_BENCHMARK
     seed: int | None = constants.DEFAULT_SEED
 
     # Concurrency

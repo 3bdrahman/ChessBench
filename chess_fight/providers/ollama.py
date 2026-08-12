@@ -84,7 +84,11 @@ class OllamaProvider(ModelProvider):
     ) -> CompletionResult:
         prompt = "\n".join(f"{m.role}: {m.content}" for m in messages)
         temperature = params.get("temperature", DEFAULT_TEMPERATURE)
-        max_tokens = params.get("max_tokens", 100)
+        max_tokens = params.get("max_tokens")
+
+        options: dict[str, Any] = {"temperature": temperature}
+        if max_tokens is not None:
+            options["num_predict"] = max_tokens
 
         start = time.time()
         try:
@@ -95,10 +99,7 @@ class OllamaProvider(ModelProvider):
                         "model": model,
                         "prompt": prompt,
                         "stream": False,
-                        "options": {
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
+                        "options": options,
                     },
                 )
                 response.raise_for_status()

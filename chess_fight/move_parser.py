@@ -22,39 +22,38 @@ PROMOTION_PIECES = {
 
 
 def _strip_thinking(text: str) -> str:
-    """Remove <think>...</think> blocks from text."""
-    return re.sub(r'<(?:think|thinking)>.*?</(?:think|thinking)>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    """Remove <think>...</think> blocks from text, including unclosed think tags."""
+    text = re.sub(r'<(?:think|thinking)>.*?</(?:think|thinking)>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<(?:think|thinking)>.*?(?=<move>)', '', text, flags=re.DOTALL | re.IGNORECASE)
+    return text
 
 
-def _parse_promotion(text: str) -> tuple[str | None, str]:
-    """
-    Extract promotion piece from text.
-    Returns (promotion_piece, remaining_text).
-    """
-    # Match patterns like "=Q", "=q", "promoting to queen", "promote to queen"
-    promo_patterns = [
-        r'=([QRBNqrbn])\b',
-        r'promot(?:e|ing)\s+to\s+(queen|rook|bishop|knight)\b',
-        r'promot(?:e|ing)\s+(queen|rook|bishop|knight)\b',
-    ]
+def _parse_move_candidate(candidate: str, board: chess.Board | None = None) -> MoveParseResult | None:
+    """Parse a single move candidate string as UCI or SAN."""
+    if not candidate:
+        return None
 
-    for pattern in promo_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            piece_str = match.group(1).lower()
-            if piece_str in PROMOTION_PIECES:
-                return piece_str, text[:match.start()] + text[match.end():]
-            # Handle word forms
-            word_to_piece = {
-                'queen': 'q',
-                'rook': 'r',
-                'bishop': 'b',
-                'knight': 'n',
-            }
-            if piece_str in word_to_piece:
-                return word_to_piece[piece_str], text[:match.start()] + text[match.end():]
+    clean = candidate.strip().strip("`'\"*.:;")
 
-    return None, text
+    if board:
+        # Try UCI
+        res = _parse_uci(clean, board)
+        if res and res.uci:
+            return res
+        # Try SAN
+        res = _parse_san(clean, board)
+        if res and res.uci:
+            return res
+        # Try natural language
+        res = _parse_natural_language(clean, board)
+        if res and res.uci:
+            return res
+    else:
+        uci_match = re.search(r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b', clean.lower())
+        if uci_match:
+            return MoveParseResult(uci=uci_match.group(1), san=None, confidence=1.0, ambiguous=False)
+
+    return None
 
 
 def _parse_san(text: str, board: chess.Board) -> MoveParseResult | None:
@@ -331,35 +330,77 @@ def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
     Returns:
         MoveParseResult with uci, san, confidence, ambiguous, promotion_piece
     """
-    # Strip thinking blocks
-    text = _strip_thinking(text)
+    if not text:
+        return MoveParseResult(uci=None, san=None, confidence=0.0, ambiguous=False)
 
-    # Try SAN first (most structured) - only if board is available
+    # 1. PRIORITY 1: Explicit <move>...</move> tag extraction
+    move_match = re.search(r'<move>\s*(.*?)\s*</move>', text, re.IGNORECASE | re.DOTALL)
+    if move_match:
+        tag_content = move_match.group(1)
+        res = _parse_move_candidate(tag_content, board)
+        if res and res.uci:
+            res.confidence = 1.0
+            return res
+
+    # 2. PRIORITY 2: Strip thinking blocks
+    clean_text = _strip_thinking(text)
+
+    # Strip untagged thinking headers like "Here's a thinking process:"
+    thinking_headers = [
+        r"(?:here's|here is)\s+a\s+thinking\s+process:?",
+        r"thinking\s+process:?",
+        r"analysis:?",
+        r"reasoning:?",
+    ]
+    for header in thinking_headers:
+        if re.search(header, clean_text, re.IGNORECASE):
+            parts = re.split(header, clean_text, flags=re.IGNORECASE)
+            if len(parts) > 1:
+                clean_text = parts[-1]
+
+    # 3. PRIORITY 3: Explicit Move Headers (e.g. "**Move:** e4", "Selected move: Nf3", "Play: Nf3")
+    move_header_patterns = [
+        r'(?:final\s+)?move\s*:\s*([^\n]+)',
+        r'(?:play|choose|select)\s+([^\n]+)',
+    ]
+    for pattern in move_header_patterns:
+        match = re.search(pattern, clean_text, re.IGNORECASE)
+        if match:
+            candidate = match.group(1)
+            res = _parse_move_candidate(candidate, board)
+            if res and res.uci:
+                res.confidence = 0.9
+                return res
+
+    # 4. PRIORITY 4: Check the LAST non-empty lines (where models summarize their decision)
+    lines = [line.strip() for line in clean_text.splitlines() if line.strip()]
+    if lines:
+        for line in reversed(lines[-3:]):
+            res = _parse_move_candidate(line, board)
+            if res and res.uci:
+                return res
+
+    # 5. PRIORITY 5: Full text SAN & UCI scan
     if board:
-        result = _parse_san(text, board)
+        result = _parse_san(clean_text, board)
         if result and result.uci:
             return result
 
-    # Try UCI
-    result = _parse_uci(text, board)
+    result = _parse_uci(clean_text, board)
     if result and result.uci:
         return result
 
-    # Try natural language - only if board is available
     if board:
-        result = _parse_natural_language(text, board)
+        result = _parse_natural_language(clean_text, board)
         if result and result.uci:
             return result
 
-    # Fallback: try to find any UCI-like pattern
+    # Fallback: search backwards for legal UCI
     uci_pattern = r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b'
-    matches = re.findall(uci_pattern, text.lower())
+    matches = re.findall(uci_pattern, clean_text.lower())
     for match in reversed(matches):
         try:
             move = chess.Move.from_uci(match)
-            promotion_piece = None
-            if move.promotion:
-                promotion_piece = chess.piece_name(move.promotion).lower()
             if board:
                 if move in board.legal_moves:
                     return MoveParseResult(
@@ -367,7 +408,6 @@ def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
                         san=board.san(move),
                         confidence=0.6,
                         ambiguous=False,
-                        promotion_piece=promotion_piece,
                     )
             else:
                 return MoveParseResult(
@@ -375,19 +415,11 @@ def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
                     san=None,
                     confidence=0.5,
                     ambiguous=False,
-                    promotion_piece=promotion_piece,
                 )
         except ValueError:
             continue
 
-    # No valid move found - return empty result (caller should handle)
-    return MoveParseResult(
-        uci=None,
-        san=None,
-        confidence=0.0,
-        ambiguous=False,
-        promotion_piece=None,
-    )
+    return MoveParseResult(uci=None, san=None, confidence=0.0, ambiguous=False)
 
 
 def validate_move(move_str: str, board: chess.Board) -> str:
@@ -448,38 +480,24 @@ def extract_move(text: str, legal_moves: list[chess.Move] | None = None) -> str 
     Returns:
         UCI move string (e.g., "e2e4") or None if not found/ambiguous
     """
-    # STRICT EXTRACTION: Look for exact <move> tag
-    move_match = re.search(r'<move>\s*(.*?)\s*</move>', text, re.IGNORECASE | re.DOTALL)
-    if move_match:
-        # If they used the tag, strictly parse ONLY inside the tag
-        candidate = move_match.group(1).lower().strip()
-        candidate = re.sub(r'[^a-h1-8qrbn]', '', candidate)
-        if len(candidate) in (4, 5):
-            return candidate
-        return None
+    board = None
+    if legal_moves:
+        # Construct board with legal moves if possible or check legal_moves set
+        legal_uci = {m.uci() for m in legal_moves}
+        move_match = re.search(r'<move>\s*(.*?)\s*</move>', text, re.IGNORECASE | re.DOTALL)
+        if move_match:
+            candidate = move_match.group(1).lower().strip()
+            clean_cand = re.sub(r'[^a-h1-8qrbn]', '', candidate)
+            if clean_cand in legal_uci:
+                return clean_cand
 
-    # Strip thinking blocks for fallback extraction
-    text = _strip_thinking(text)
-
-    legal_uci = {m.uci() for m in legal_moves} if legal_moves else None
-
-    # Try UCI pattern matching first (most reliable for backward compat)
-    uci_pattern = r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b'
-    matches = re.findall(uci_pattern, text.lower())
-    for match in matches:
-        if (legal_uci and match in legal_uci) or not legal_uci:
-            return str(match)
-
-    fallback_patterns = [
-        r'(?:play|move|choose|will play)\s+([a-h][1-8][a-h][1-8][qrbn]?)',
-        r'best move.{0,10}([a-h][1-8][a-h][1-8][qrbn]?)',
-    ]
-
-    for pattern in fallback_patterns:
-        match = re.search(pattern, text.lower())
-        if match:
-            candidate = match.group(1)
-            if (legal_uci and candidate in legal_uci) or not legal_uci:
-                return str(candidate)
+    parsed = parse_move(text, board)
+    if parsed and parsed.uci:
+        if legal_moves:
+            legal_uci = {m.uci() for m in legal_moves}
+            if parsed.uci in legal_uci:
+                return parsed.uci
+        else:
+            return parsed.uci
 
     return None

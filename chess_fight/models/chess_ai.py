@@ -27,7 +27,12 @@ _log = logging.getLogger(__name__)
 
 
 class ChessAI(ABC):
-    def __init__(self, name: str | None = None, prompt_version: str = "v1_baseline"):
+    def __init__(
+        self,
+        name: str | None = None,
+        prompt_version: str = "v1_baseline",
+        reasoning_level: str = "mid",
+    ):
         self.name = name or self.__class__.__name__
         self.move_history: list[str] = []
         self.position_history: set[str] = set()
@@ -35,6 +40,10 @@ class ChessAI(ABC):
 
         self.last_completion_result: CompletionResult | None = None
         self.prompt_version = prompt_version
+        
+        if reasoning_level not in ("low", "mid", "high"):
+            reasoning_level = "mid"
+        self.reasoning_level = reasoning_level
 
         # Initialize position evaluator
         self.evaluator = PositionEvaluator()
@@ -159,6 +168,7 @@ class ChessAI(ABC):
         context = {
             "fen": fen,
             "color": "White" if board.turn == chess.WHITE else "Black",
+            "reasoning_level": self.reasoning_level,
             "position_repetitions": position_analysis["repetitions"],
             "stagnation_status": "STAGNATING - Force dynamic play!" if position_analysis["is_stagnating"] else "Normal",
             "position_progress": f"{position_analysis['progress_score']:.2f}",
@@ -182,7 +192,24 @@ class ChessAI(ABC):
         }
 
         assert self.prompt_template is not None, "Prompt template should be initialized"
-        return self.prompt_template.render(context)
+        base_prompt = self.prompt_template.render(context)
+
+        reasoning_directives = {
+            "low": (
+                "\n\n[REASONING LEVEL: LOW]\n"
+                "Be extremely fast and concise. Keep reasoning under 30 words, or output the move directly in <move>uci_move</move> tags."
+            ),
+            "mid": (
+                "\n\n[REASONING LEVEL: MID]\n"
+                "Provide concise strategic and tactical reasoning (under 150 words) in <think> tags before your chosen move in <move>uci_move</move> tags."
+            ),
+            "high": (
+                "\n\n[REASONING LEVEL: HIGH]\n"
+                "Perform deep step-by-step tactical calculation, candidate move evaluation, and king safety analysis in <think> tags before your move in <move>uci_move</move> tags."
+            ),
+        }
+
+        return base_prompt + reasoning_directives.get(self.reasoning_level, reasoning_directives["mid"])
 
     def _validate_move(self, move_str: str, board: chess.Board) -> str:
         from chess_fight.move_parser import validate_move
@@ -206,10 +233,19 @@ class ChessAI(ABC):
             rank in '12345678'
         )
 
+    async def _invoke_get_move_from_model(self, fen: str, validation_attempt: int, network_attempts: int) -> str:
+        try:
+            return await self._get_move_from_model(fen, validation_attempt, network_attempts)
+        except TypeError:
+            try:
+                return await self._get_move_from_model(fen, validation_attempt)
+            except TypeError:
+                return await self._get_move_from_model(fen)
+
     async def get_move(self, fen: str) -> str:
         board = chess.Board(fen)
-        max_network_retries = 30
-        max_validation_retries = 10
+        max_network_retries = 3
+        max_validation_retries = 3
         network_attempts = 0
         validation_attempts = 0
         errors: list[str] = []
@@ -220,7 +256,7 @@ class ChessAI(ABC):
                 break
                 
             try:
-                move_str = await self._get_move_from_model(fen, validation_attempts, network_attempts)
+                move_str = await self._invoke_get_move_from_model(fen, validation_attempts, network_attempts)
                 attempted_moves.append(move_str)
                 validated_move = self._validate_move(move_str, board)
 
@@ -231,8 +267,8 @@ class ChessAI(ABC):
             except ProviderError as exc:
                 if is_retryable(exc):
                     network_attempts += 1
-                    wait = getattr(exc, "retry_after", None) or (2.0 ** min(network_attempts, 6))
-                    wait = min(wait, 60.0)
+                    wait = getattr(exc, "retry_after", None) or (2.0 ** min(network_attempts, 3))
+                    wait = min(wait, 15.0)
                     _log.info(
                         "get_move retry network_attempt=%d/%d fen=%s error=%s wait=%.1fs",
                         network_attempts, max_network_retries, fen, type(exc).__name__, wait
@@ -241,17 +277,21 @@ class ChessAI(ABC):
                     errors.append(f"Network Attempt {network_attempts}: {type(exc).__name__}: {exc}")
                 else:
                     _log.error("get_move non-retryable error fen=%s error=%s", fen, exc)
-                    raise
+                    raise exc
             except MoveValidationError as exc:
                 validation_attempts += 1
                 errors.append(f"Validation Attempt {validation_attempts}: MoveValidationError: {exc}")
             except Exception as exc:
-                network_attempts += 1
-                wait = 2.0 ** min(network_attempts, 6)
-                wait = min(wait, 60.0)
-                _log.warning("get_move unexpected error (treating as network error): %s", exc)
-                await asyncio.sleep(wait)
-                errors.append(f"Unexpected Error Attempt {network_attempts}: {exc}")
+                if is_retryable(exc):
+                    network_attempts += 1
+                    wait = 2.0 ** min(network_attempts, 3)
+                    wait = min(wait, 15.0)
+                    _log.warning("get_move unexpected retryable error: %s", exc)
+                    await asyncio.sleep(wait)
+                    errors.append(f"Unexpected Error Attempt {network_attempts}: {exc}")
+                else:
+                    _log.error("get_move non-retryable exception fen=%s error=%s", fen, exc)
+                    raise exc
 
         legal_moves = list(board.legal_moves)
         legal_moves_uci = [m.uci() for m in legal_moves]
@@ -266,8 +306,8 @@ class ChessAI(ABC):
 
     async def get_move_with_result(self, fen: str) -> tuple[str, "CompletionResult"]:
         board = chess.Board(fen)
-        max_network_retries = 30
-        max_validation_retries = 10
+        max_network_retries = 3
+        max_validation_retries = 3
         network_attempts = 0
         validation_attempts = 0
         errors: list[str] = []
@@ -279,7 +319,7 @@ class ChessAI(ABC):
                 
             try:
                 # We pass network_attempts so the provider can correctly populate the UI metric
-                move_str = await self._get_move_from_model(fen, validation_attempts, network_attempts)
+                move_str = await self._invoke_get_move_from_model(fen, validation_attempts, network_attempts)
                 attempted_moves.append(move_str)
                 validated_move = self._validate_move(move_str, board)
 
@@ -296,8 +336,8 @@ class ChessAI(ABC):
             except ProviderError as exc:
                 if is_retryable(exc):
                     network_attempts += 1
-                    wait = getattr(exc, "retry_after", None) or (2.0 ** min(network_attempts, 6))
-                    wait = min(wait, 60.0)
+                    wait = getattr(exc, "retry_after", None) or (2.0 ** min(network_attempts, 3))
+                    wait = min(wait, 15.0)
                     _log.info(
                         "get_move_with_result retry network_attempt=%d/%d fen=%s error=%s wait=%.1fs",
                         network_attempts, max_network_retries, fen, type(exc).__name__, wait
@@ -306,18 +346,21 @@ class ChessAI(ABC):
                     errors.append(f"Network Attempt {network_attempts}: {type(exc).__name__}: {exc}")
                 else:
                     _log.error("get_move_with_result non-retryable error fen=%s error=%s", fen, exc)
-                    raise
+                    raise exc
             except MoveValidationError as exc:
                 validation_attempts += 1
                 errors.append(f"Validation Attempt {validation_attempts}: MoveValidationError: {exc}")
             except Exception as exc:
-                # Catch unexpected exceptions (like JSON parse errors, generic Http errors) and treat as network failures
-                network_attempts += 1
-                wait = 2.0 ** min(network_attempts, 6)
-                wait = min(wait, 60.0)
-                _log.warning("get_move_with_result unexpected error (treating as network error): %s", exc)
-                await asyncio.sleep(wait)
-                errors.append(f"Unexpected Error Attempt {network_attempts}: {exc}")
+                if is_retryable(exc):
+                    network_attempts += 1
+                    wait = 2.0 ** min(network_attempts, 3)
+                    wait = min(wait, 15.0)
+                    _log.warning("get_move_with_result unexpected retryable error: %s", exc)
+                    await asyncio.sleep(wait)
+                    errors.append(f"Unexpected Error Attempt {network_attempts}: {exc}")
+                else:
+                    _log.error("get_move_with_result non-retryable exception fen=%s error=%s", fen, exc)
+                    raise exc
 
         legal_moves = list(board.legal_moves)
         legal_moves_uci = [m.uci() for m in legal_moves]

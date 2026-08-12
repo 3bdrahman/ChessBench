@@ -21,11 +21,23 @@ from chess_fight.move_parser import extract_move
 from chess_fight.providers.registry import get_provider
 
 
+from chess_fight.constants import REASONING_MAX_TOKENS
+
+
 class ProviderChessAI(ChessAI):
     """ChessAI implementation using the provider abstraction layer."""
 
-    def __init__(self, provider_name: str, model_id: str, api_key: str, **params: Any) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        provider_name: str,
+        model_id: str,
+        api_key: str,
+        reasoning_level: str = "mid",
+        **params: Any,
+    ) -> None:
+        if "reasoning_level" in params:
+            reasoning_level = params.pop("reasoning_level")
+        super().__init__(reasoning_level=reasoning_level)
         self.provider_name = provider_name
         self.model_id = model_id
         self.api_key = api_key
@@ -51,6 +63,9 @@ class ProviderChessAI(ChessAI):
         # instead of trying to parse it from the full prompt.
         params = dict(self.params)
         params["fen"] = fen
+        params["reasoning_level"] = self.reasoning_level
+        if params.get("max_tokens") is None:
+            params["max_tokens"] = REASONING_MAX_TOKENS.get(self.reasoning_level, 1024)
 
         while True:
             try:

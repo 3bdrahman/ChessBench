@@ -70,6 +70,7 @@ class BenchmarkConfig:
     # Model params (benchmark mode)
     temperature: float = constants.DEFAULT_BENCHMARK_TEMPERATURE
     max_tokens: int | None = constants.DEFAULT_MAX_TOKENS_BENCHMARK
+    reasoning_level: str = constants.DEFAULT_REASONING_LEVEL
     seed: int | None = constants.DEFAULT_SEED
 
     # Concurrency
@@ -197,7 +198,8 @@ class BenchmarkRunner:
                 model_id=model_id,
                 api_key=api_key,
                 temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens
+                max_tokens=self.config.max_tokens,
+                reasoning_level=self.config.reasoning_level,
             )
             players[player_spec] = ai
 
@@ -231,7 +233,8 @@ class BenchmarkRunner:
             model_id=model_id,
             api_key=api_key,
             temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens
+            max_tokens=self.config.max_tokens,
+            reasoning_level=self.config.reasoning_level,
         )
 
     async def run_pairing(

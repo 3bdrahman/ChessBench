@@ -149,10 +149,10 @@ class OpenRouterProvider(ModelProvider):
         # If it's a reasoning model, append the reasoning to the content so our parser can log it
         # and extract moves from it if the model put the move inside the reasoning block.
         reasoning = getattr(msg, "reasoning", None)
-        if reasoning is None and getattr(msg, "model_extra", None):
+        if reasoning is None and getattr(msg, "model_extra", None) and isinstance(msg.model_extra, dict):
             reasoning = msg.model_extra.get("reasoning")
             
-        if reasoning:
+        if reasoning and isinstance(reasoning, str):
             content = f"<reasoning>\n{reasoning}\n</reasoning>\n{content}"
 
         return CompletionResult(

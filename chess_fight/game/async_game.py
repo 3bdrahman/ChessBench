@@ -127,7 +127,11 @@ class AsyncChessGame:
                     clock_state=self.clock.get_state() if self.clock else None,
                 )
                 await ui_callback(final_state)
-                raise exc
+                
+                if not is_chess_loss:
+                    raise exc
+                    
+                return self.stats
 
             move = chess.Move.from_uci(move_str)
 

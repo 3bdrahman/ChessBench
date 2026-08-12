@@ -380,11 +380,11 @@ class BenchmarkRunner:
             GameExecutionError: When a fatal error (auth, rate-limit, missing
                 providers) halts the run. The cause is attached for inspection.
         """
-        print(f"Starting benchmark: {self.run_id}")
-        print(f"Players: {list(self.players.keys())}")
-        print(f"Games per pairing: {self.config.games_per_pairing}")
-        print(f"Openings: {len(self.openings)}")
-        print(f"Max parallel games: {self.config.max_parallel_games}")
+        _log.info("Starting benchmark: %s", self.run_id)
+        _log.info("Players: %s", list(self.players.keys()))
+        _log.info("Games per pairing: %s", self.config.games_per_pairing)
+        _log.info("Openings: %s", len(self.openings))
+        _log.info("Max parallel games: %s", self.config.max_parallel_games)
 
         self.logger.start_run(self.config.to_dict())
 
@@ -403,7 +403,7 @@ class BenchmarkRunner:
 
         # Run games pairing by pairing (for proper Glicko-2 rating periods)
         for pairing_idx, (white, black) in enumerate(pairings):
-            print(f"\n=== Pairing {pairing_idx + 1}/{len(pairings)}: {white} vs {black} ===")
+            _log.info("=== Pairing %d/%d: %s vs %s ===", pairing_idx + 1, len(pairings), white, black)
 
             # Create all game tasks for this pairing
             pairing_game_tasks: list[tuple[str, str, dict[str, Any], int]] = []

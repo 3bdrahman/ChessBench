@@ -37,18 +37,13 @@ class TestPromptTemplate:
         prompt = ai._create_prompt(board.fen())
 
         required_sections = [
-            "MOVE HISTORY ANALYSIS",
-            "TACTICAL OPPORTUNITIES",
-            "Material Status",
-            "POSITION EVALUATION",
-            "DEFENSE ANALYSIS",
-            "VULNERABILITY ANALYSIS",
-            "Legal moves by priority",
-            "WINNING CAPTURES/CHECKS",
-            "DEVELOPING MOVES",
-            "POSITIONAL MOVES",
-            "Decision Priority",
-            "Best move given state of the game",
+            "[GAME STATE]",
+            "[INSTRUCTIONS]",
+            "FEN:",
+            "Turn:",
+            "<think>",
+            "<move>",
+            "REASONING LEVEL:",
         ]
 
         for section in required_sections:
@@ -62,11 +57,7 @@ class TestPromptTemplate:
 
         # Should contain color
         assert "White" in prompt or "Black" in prompt
-
-        # Should contain move categories (using actual template text)
-        assert "WINNING CAPTURES" in prompt
-        assert "DEVELOPING MOVES" in prompt
-        assert "POSITIONAL MOVES" in prompt
+        assert "FEN:" in prompt
 
     def test_prompt_for_different_colors(self):
         """Test prompt generation for both colors."""
@@ -91,10 +82,8 @@ class TestPromptTemplate:
         prompt = ai._create_prompt(board.fen())
 
         assert isinstance(prompt, str)
-        assert len(prompt) > 1000  # Should be substantial
-
-        # Should mention captures
-        assert "capture" in prompt.lower() or "CAPTURE" in prompt
+        assert len(prompt) > 300  # Should be substantial
+        assert "FEN: rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2" in prompt
 
     def test_prompt_no_placeholder_leakage(self):
         """Test that no template placeholders remain unsubstituted."""

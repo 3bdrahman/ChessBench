@@ -94,6 +94,7 @@ class OpenAIProvider(ModelProvider):
 
         temperature = params.get("temperature", DEFAULT_TEMPERATURE)
         max_tokens = params.get("max_tokens")
+        reasoning_level = params.get("reasoning_level", "mid")
 
         completion_kwargs: dict[str, Any] = {
             "model": model,
@@ -102,6 +103,10 @@ class OpenAIProvider(ModelProvider):
         }
         if max_tokens is not None:
             completion_kwargs["max_tokens"] = max_tokens
+
+        reasoning_effort_map = {"low": "low", "mid": "medium", "high": "high"}
+        if model.lower().startswith(("o1", "o3", "o4")) or "reasoning" in model.lower():
+            completion_kwargs["reasoning_effort"] = reasoning_effort_map.get(reasoning_level, "medium")
 
         start = time.time()
         try:

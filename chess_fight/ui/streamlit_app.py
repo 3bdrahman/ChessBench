@@ -329,25 +329,52 @@ def render_model_selectors(available_providers: list):
         st.sidebar.warning("No chess-capable models available. Please add API keys.")
         return None, None
 
+    if len(all_models) < 2:
+        st.sidebar.warning("At least 2 distinct chess-capable models are required to start a match. Please enable another provider or API key.")
+        return None, None
+
     model_options = list(all_models.keys())
+
+    # Ensure initial session state picks 2 distinct models
+    sel_white = st.session_state.get("player_white_model")
+    sel_black = st.session_state.get("player_black_model")
+
+    if not sel_white or sel_white not in model_options:
+        sel_white = model_options[0]
+        st.session_state["player_white_model"] = sel_white
+
+    if not sel_black or sel_black not in model_options or sel_black == sel_white:
+        remaining = [m for m in model_options if m != sel_white]
+        sel_black = remaining[0] if remaining else model_options[0]
+        st.session_state["player_black_model"] = sel_black
+
+    # Filter options for White (exclude currently selected Black model)
+    cur_black = st.session_state.get("player_black_model")
+    white_options = [m for m in model_options if m != cur_black]
+    white_idx = white_options.index(sel_white) if sel_white in white_options else 0
 
     st.sidebar.subheader("White ♔")
     white_model = st.sidebar.selectbox(
         "Select Model",
-        options=model_options,
+        options=white_options,
+        index=white_idx,
         key="player_white_model",
-        index=0 if model_options else None,
     )
-    
+
+    # Filter options for Black (exclude currently selected White model)
+    black_options = [m for m in model_options if m != white_model]
+    cur_black_val = st.session_state.get("player_black_model")
+    black_idx = black_options.index(cur_black_val) if cur_black_val in black_options else 0
+
     st.sidebar.subheader("Black ♚")
     black_model = st.sidebar.selectbox(
         "Select Model",
-        options=model_options,
+        options=black_options,
+        index=black_idx,
         key="player_black_model",
-        index=1 if len(model_options) > 1 else 0,
     )
 
-    if white_model and black_model:
+    if white_model and black_model and white_model != black_model:
         return all_models[white_model], all_models[black_model]
     return None, None
 
@@ -396,7 +423,13 @@ def _reset_game_state() -> None:
         st.session_state.pop(k, None)
 
 
-def run_in_process_benchmark(white_config: dict, black_config: dict, games: int = 3, colors: str = "alternating"):
+def run_in_process_benchmark(
+    white_config: dict,
+    black_config: dict,
+    games: int = 3,
+    colors: str = "alternating",
+    reasoning_level: str = "mid",
+):
     """Run the benchmark runner in-process and render live results."""
     white_spec = f"{white_config['provider']}:{white_config['model_id']}"
     black_spec = f"{black_config['provider']}:{black_config['model_id']}"
@@ -421,6 +454,7 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
         opening_book="startpos",
         temperature=0.0,
         max_tokens=None,
+        reasoning_level=reasoning_level,
         api_keys=api_keys,
         colors=colors,
     )
@@ -473,9 +507,12 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
         st.session_state.benchmark_run_dir = None
 
         def ui_callback_sync(state: GameState):
-            st.session_state.benchmark_state = state
-            if state.is_game_over:
-                st.session_state.benchmark_game_index += 1
+            try:
+                st.session_state.benchmark_state = state
+                if state.is_game_over:
+                    st.session_state.benchmark_game_index += 1
+            except BaseException:
+                pass
 
         async def live_callback(state: GameState):
             ui_callback_sync(state)
@@ -484,10 +521,16 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
             try:
                 asyncio.run(runner.run_benchmark_with_callback(live_callback))
             except Exception as e:
-                st.session_state.benchmark_error = e
+                try:
+                    st.session_state.benchmark_error = e
+                except BaseException:
+                    pass
             finally:
-                st.session_state.benchmark_done = True
-                st.session_state.benchmark_run_dir = runner.run_dir
+                try:
+                    st.session_state.benchmark_done = True
+                    st.session_state.benchmark_run_dir = runner.run_dir
+                except BaseException:
+                    pass
 
         t = threading.Thread(target=thread_func)
         add_script_run_ctx(t)
@@ -677,13 +720,23 @@ def main():
     games = st.sidebar.number_input(
         "Games to play", min_value=1, max_value=20, value=1, step=1, key="game_count"
     )
+
+    reasoning_level = st.sidebar.selectbox(
+        "Reasoning Level",
+        options=["low", "mid", "high"],
+        index=1,
+        help="Low = fast minimal thinking (256 tokens), Mid = standard tactical focus (1024 tokens), High = deep positional thinking (4096 tokens).",
+        key="reasoning_level_select",
+    )
     
     # If more than 1 game, alternate colors to keep it fair.
     colors_mode = "alternating" if games > 1 else "fixed"
     
     if st.sidebar.button("▶️ Start Match", type="primary", width="stretch"):
         if not white_config or not black_config:
-            st.sidebar.error("Please select models for both players.")
+            st.sidebar.error("Please select two distinct models for the players.")
+        elif white_config["provider"] == black_config["provider"] and white_config["model_id"] == black_config["model_id"]:
+            st.sidebar.error("White and Black must be different models.")
         else:
             _reset_game_state()
             st.session_state.game_running = True
@@ -692,6 +745,7 @@ def main():
                 "black_config": black_config,
                 "games": int(games),
                 "colors": colors_mode,
+                "reasoning_level": reasoning_level,
             }
             st.rerun()
 
@@ -702,6 +756,7 @@ def main():
             match_cfg["black_config"],
             games=match_cfg["games"],
             colors=match_cfg["colors"],
+            reasoning_level=match_cfg.get("reasoning_level", "mid"),
         )
         return
 

@@ -62,6 +62,31 @@ class TestExtractMove:
         result = extract_move("I could play e2e4 or d2d4", legal_moves)
         assert result == "e2e4"
 
+    def test_extract_move_freeform_thinking(self):
+        """Test extraction when model uses untagged thinking process."""
+        board = chess.Board("Q1bqkbnr/p2p1pp1/8/4p3/4P2p/2P2N2/P1P2PPP/RNBQKB1R b KQk - 0 8")
+        text = (
+            "Here's a thinking process:\n"
+            "1. Analyze position:\n"
+            "   - FEN: Q1bqkbnr/p2p1pp1/8/4p3/4P2p/2P2N2/P1P2PPP/RNBQKB1R b KQk - 0 8\n"
+            "   - Turn: Black\n"
+            "   - White pieces: Q1bqkbnr\n"
+            "Candidate moves: d7d6, g8f6, f7f6\n"
+            "I will play d7d6\n"
+            "<move>d7d6</move>"
+        )
+        from chess_fight.move_parser import parse_move
+        parsed = parse_move(text, board)
+        assert parsed.uci == "d7d6"
+
+    def test_parse_move_san_in_tag(self):
+        """Test parsing SAN inside move tag."""
+        board = chess.Board("Q1bqkbnr/p2p1pp1/8/4p3/4P2p/2P2N2/P1P2PPP/RNBQKB1R b KQk - 0 8")
+        text = "Thinking about the game...\n<move>d6</move>"
+        from chess_fight.move_parser import parse_move
+        parsed = parse_move(text, board)
+        assert parsed.uci == "d7d6"
+
 
 class TestValidateMove:
     """Tests for validate_move function."""

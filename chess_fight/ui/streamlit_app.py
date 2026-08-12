@@ -706,6 +706,97 @@ def render_run_summary(run, *, expanded: bool) -> None:
             ]
             st.caption("Head-to-head pairings:")
             st.dataframe(pd.DataFrame(pair_rows), hide_index=True, width="stretch")
+            
+        # Interactive Game Viewer
+        if run.games:
+            render_game_viewer(run)
+
+
+def render_game_viewer(run) -> None:
+    """Interactive game viewer for stepping through moves of past games."""
+    if not run.games:
+        return
+        
+    st.markdown("### ♟️ Game Replay Viewer")
+    
+    # Select Game
+    game_options = {}
+    for i, g in enumerate(run.games):
+        label = f"Game {i+1}: {g.white_player} vs {g.black_player} ({g.result})"
+        game_options[label] = g
+        
+    selected_label = st.selectbox("Select Game to Replay", list(game_options.keys()), key=f"select_game_{run.run_id}")
+    if not selected_label:
+        return
+        
+    game = game_options[selected_label]
+    
+    if not game.moves:
+        st.info("No moves recorded for this game.")
+        return
+        
+    # Select Move
+    max_moves = len(game.moves)
+    
+    # We use columns for the player controls
+    st.markdown("#### Move Controls")
+    
+    # Calculate step state
+    move_idx = st.slider("Move Number", 0, max_moves, max_moves, key=f"slider_{run.run_id}_{game.game_id}")
+    
+    if move_idx == 0:
+        fen = game.opening_fen or chess.STARTING_FEN
+        last_move = None
+        move_info = None
+    else:
+        m = game.moves[move_idx - 1]
+        b = chess.Board(m.fen_before)
+        try:
+            b.push_uci(m.move_uci)
+            fen = b.fen()
+            last_move = chess.Move.from_uci(m.move_uci)
+        except Exception:
+            fen = m.fen_before
+            last_move = None
+        move_info = m
+        
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        b = chess.Board(fen)
+        king_square = b.king(b.turn)
+        check_square = king_square if b.is_check() and king_square is not None else None
+        
+        st.write(
+            chess.svg.board(
+                b,
+                size=400,
+                lastmove=last_move,
+                check=check_square,
+            ),
+            unsafe_allow_html=True,
+        )
+        
+    with col2:
+        if move_info:
+            player_name = game.white_player if move_info.color == "white" else game.black_player
+            st.markdown(f"**Move {move_info.move_number}** - {player_name} ({move_info.color.title()}) played `{move_info.move_san}`")
+            st.metric("Latency", f"{move_info.llm_latency_ms} ms")
+            if move_info.llm_tokens_out:
+                st.metric("Tokens Out", move_info.llm_tokens_out)
+            
+            with st.expander("Model Thinking Trace", expanded=True):
+                if move_info.thinking_trace:
+                    st.code(move_info.thinking_trace, language="text")
+                else:
+                    st.info("No thinking trace recorded.")
+                    
+            with st.expander("Raw Provider Response"):
+                if move_info.llm_raw_response:
+                    st.code(move_info.llm_raw_response, language="json")
+                else:
+                    st.info("No raw response recorded.")
+        else:
+            st.info("Starting Position")
 
 
 

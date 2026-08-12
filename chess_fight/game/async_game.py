@@ -100,17 +100,19 @@ class AsyncChessGame:
             # Get move from player with completion result
             try:
                 move_str, completion_result = await current_player.get_move_with_result(fen_before)
-            except MoveExhaustedError as exc:
+            except Exception as exc:
+                _log.error("Player %s move execution failed on turn %d: %s", current_player.name, len(self.moves), exc)
                 opponent = self.player2 if is_white else self.player1
                 self.stats.winner = opponent.name
                 self.stats.game_duration = time.time() - self.start_time
+                loss_reason = "Illegal Move" if isinstance(exc, MoveExhaustedError) else exc.__class__.__name__
                 final_state = GameState(
                     board=self.board.copy(),
                     moves=self.moves.copy(),
                     stats=self.stats,
                     current_player="",
                     is_game_over=True,
-                    winner=f"{opponent.name} (Illegal Move Loss)",
+                    winner=f"{opponent.name} ({loss_reason} Loss)",
                     game_duration=self.stats.game_duration,
                     clock_state=self.clock.get_state() if self.clock else None,
                 )

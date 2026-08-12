@@ -25,8 +25,8 @@ DEFAULT_MAX_BACKOFF: float = 60.0
 # =============================================================================
 DEFAULT_TEMPERATURE: float = 0.1
 DEFAULT_BENCHMARK_TEMPERATURE: float = 0.0
-DEFAULT_MAX_TOKENS: int = 100
-DEFAULT_MAX_TOKENS_BENCHMARK: int = 100
+DEFAULT_MAX_TOKENS: int = 4096
+DEFAULT_MAX_TOKENS_BENCHMARK: int = 4096
 DEFAULT_SEED: int | None = 42
 
 # Context windows (fallback when provider doesn't report)

@@ -99,16 +99,19 @@ class NIMProvider(ModelProvider):
         ]
 
         temperature = params.get("temperature", DEFAULT_TEMPERATURE)
-        max_tokens = params.get("max_tokens", 100)
+        max_tokens = params.get("max_tokens")
+
+        completion_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": openai_messages,  # type: ignore[arg-type]
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            completion_kwargs["max_tokens"] = max_tokens
 
         start = time.time()
         try:
-            response = await client.chat.completions.create(
-                model=model,
-                messages=openai_messages,  # type: ignore[arg-type]
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            response = await client.chat.completions.create(**completion_kwargs)
         except Exception as exc:
             latency_ms = int((time.time() - start) * 1000)
             _classify_and_raise(exc, "nim", model, latency_ms, api_key)

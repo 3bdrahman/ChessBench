@@ -17,7 +17,7 @@ sections:
   - name: "instructions"
     content_template: |
       [INSTRUCTIONS]
-      Analyze the position and select the best move. 
+      Analyze the position and select the best move. Keep your reasoning concise (under 200 words).
 
       You must format your response EXACTLY like this:
       <think>

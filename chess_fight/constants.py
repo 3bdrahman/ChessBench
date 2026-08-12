@@ -25,8 +25,8 @@ DEFAULT_MAX_BACKOFF: float = 60.0
 # =============================================================================
 DEFAULT_TEMPERATURE: float = 0.1
 DEFAULT_BENCHMARK_TEMPERATURE: float = 0.0
-DEFAULT_MAX_TOKENS: int = 100
-DEFAULT_MAX_TOKENS_BENCHMARK: int = 100
+DEFAULT_MAX_TOKENS: int | None = None
+DEFAULT_MAX_TOKENS_BENCHMARK: int | None = None
 DEFAULT_SEED: int | None = 42
 
 # Context windows (fallback when provider doesn't report)
@@ -279,7 +279,7 @@ class BenchmarkConfigDefaults:
     games_per_pairing: int = DEFAULT_GAMES_PER_PAIRING
     colors: str = DEFAULT_COLORS_MODE
     temperature: float = DEFAULT_BENCHMARK_TEMPERATURE
-    max_tokens: int = DEFAULT_MAX_TOKENS_BENCHMARK
+    max_tokens: int | None = DEFAULT_MAX_TOKENS_BENCHMARK
     seed: int | None = DEFAULT_SEED
     max_parallel_games: int = DEFAULT_MAX_PARALLEL_GAMES
     move_timeout_seconds: int = DEFAULT_MOVE_TIMEOUT_SECONDS

@@ -420,7 +420,7 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
         max_parallel_games=1,
         opening_book="startpos",
         temperature=0.0,
-        max_tokens=1500,
+        max_tokens=None,
         api_keys=api_keys,
         colors=colors,
     )

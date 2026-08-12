@@ -44,7 +44,7 @@ class ProviderChessAI(ChessAI):
             prompt += (
                 f"\n\n[SYSTEM WARNING]: Your previous attempt failed because you either reasoned "
                 f"for too long without outputting a move, or your move was invalid. "
-                f"You MUST output a legal UCI move enclosed in <move></move> tags immediately."
+                f"Do NOT output long reasoning. You MUST output a legal UCI move enclosed in <move></move> tags immediately."
             )
 
         # Pass FEN explicitly so providers like Stockfish can use it directly

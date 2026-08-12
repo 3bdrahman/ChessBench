@@ -122,7 +122,7 @@ class AnthropicProvider(ModelProvider):
                 user_messages.append({"role": m.role, "content": m.content})
 
         temperature = params.get("temperature", DEFAULT_TEMPERATURE)
-        max_tokens = params.get("max_tokens", 100)
+        max_tokens = params.get("max_tokens") or 8192
 
         start = time.time()
         try:

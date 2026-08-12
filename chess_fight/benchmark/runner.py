@@ -330,8 +330,10 @@ class BenchmarkRunner:
             finally:
                 if stats is None:
                     stats = game.stats
-                    stats.winner = "Timeout/Error"
-                    stats.game_duration = time.time() - game.start_time
+                    if not stats.winner:
+                        stats.winner = "Timeout/Error"
+                    if not stats.game_duration:
+                        stats.game_duration = time.time() - game.start_time
 
                 # Determine result
                 if stats.winner == white_spec:
@@ -340,20 +342,24 @@ class BenchmarkRunner:
                 elif stats.winner == black_spec:
                     result = "0-1"
                     result_numeric = 0.0
-                else:
+                elif stats.winner in ("1/2-1/2", "Draw", None):
                     result = "1/2-1/2"
                     result_numeric = 0.5
+                else:
+                    result = "Error"
+                    result_numeric = None
 
                 # End game logging
                 self.logger.end_game(
                     result=result,
-                    result_numeric=result_numeric,
+                    result_numeric=result_numeric if result_numeric is not None else 0.0,
                     total_moves=stats.total_moves,
                     game_duration_sec=stats.game_duration
                 )
 
                 # Update ELO
-                self.elo.add_game(white_spec, black_spec, result_numeric, opening['eco'])
+                if result_numeric is not None:
+                    self.elo.add_game(white_spec, black_spec, result_numeric, opening['eco'])
 
             # Stop evaluator after game
             await evaluator.stop()

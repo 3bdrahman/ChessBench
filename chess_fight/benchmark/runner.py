@@ -497,8 +497,8 @@ class BenchmarkRunner:
                     white_spec, black_spec = task[0], task[1]
                     game_idx = task[3]
 
-                    # Fatal: auth failure or rate limit halts the entire run
-                    if isinstance(result, (InvalidApiKeyError, RateLimitError)):
+                    # Fatal: auth failure, rate limit, or timeouts halt the entire run
+                    if isinstance(result, (InvalidApiKeyError, RateLimitError, GameExecutionError)):
                         _log.error(
                             "Fatal error at game %d (%s vs %s): %s",
                             game_idx + 1, white_spec, black_spec, result,

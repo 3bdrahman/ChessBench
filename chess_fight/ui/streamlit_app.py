@@ -470,13 +470,6 @@ def run_in_process_benchmark(
         unsafe_allow_html=True,
     )
 
-    progress_placeholder = st.empty()
-    board_placeholder = st.empty()
-    stats_placeholder = st.empty()
-    moves_placeholder = st.empty()
-    completion_placeholder = st.empty()
-    status_placeholder = st.empty()
-
     if "benchmark_runner" not in st.session_state or st.session_state.benchmark_runner is None:
         try:
             st.session_state.benchmark_runner = BenchmarkRunner(config)
@@ -541,23 +534,28 @@ def run_in_process_benchmark(
         if not st.session_state.get("benchmark_done", False):
             start_benchmark()
 
-    # Draw UI based on current state
     def _draw_live_ui():
+        progress_ph = st.empty()
+        board_ph = st.empty()
+        stats_ph = st.empty()
+        moves_ph = st.empty()
+        completion_ph = st.empty()
+
         if st.session_state.get("benchmark_state"):
             state = st.session_state.benchmark_state
             game_idx = st.session_state.benchmark_game_index
             frac = min(1.0, game_idx / max(1, total_games))
-            progress_placeholder.progress(
+            progress_ph.progress(
                 frac, text=f"Game {game_idx} / {total_games} complete"
             )
             
             start_time = st.session_state.benchmark_start_time
-            _draw_board(board_placeholder, state, start_time)
-            _draw_metrics(stats_placeholder, state, start_time)
-            _draw_moves(moves_placeholder, state.moves)
-            _draw_completion_result(completion_placeholder, state)
+            _draw_board(board_ph, state, start_time)
+            _draw_metrics(stats_ph, state, start_time)
+            _draw_moves(moves_ph, state.moves)
+            _draw_completion_result(completion_ph, state)
         else:
-            progress_placeholder.info(
+            progress_ph.info(
                 f"Starting in-process benchmark: {white_spec} vs {black_spec} ({games} games)..."
             )
 
@@ -588,8 +586,7 @@ def run_in_process_benchmark(
             time.sleep(2.0)
             st.rerun()
 
-    progress_placeholder.empty()
-    status_placeholder.success("Benchmark complete!")
+    st.success("Benchmark complete!")
 
     # Show real ELO leaderboard + per-pairing results from the run we just did.
     run = None

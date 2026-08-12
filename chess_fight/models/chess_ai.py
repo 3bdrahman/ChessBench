@@ -214,7 +214,16 @@ class ChessAI(ABC):
     def _validate_move(self, move_str: str, board: chess.Board) -> str:
         from chess_fight.move_parser import validate_move
 
-        result = validate_move(move_str, board)
+        try:
+            result = validate_move(move_str, board)
+        except ValueError as exc:
+            raise MoveValidationError(
+                str(exc),
+                fen=board.fen(),
+                legal_moves=[m.uci() for m in board.legal_moves],
+                raw_text=move_str,
+            ) from exc
+
         if result is None:
             raise MoveValidationError(
                 f"Invalid move: {move_str}",

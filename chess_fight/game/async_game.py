@@ -103,21 +103,31 @@ class AsyncChessGame:
             except Exception as exc:
                 _log.error("Player %s move execution failed on turn %d: %s", current_player.name, len(self.moves), exc)
                 opponent = self.player2 if is_white else self.player1
-                self.stats.winner = opponent.name
                 self.stats.game_duration = time.time() - self.start_time
-                loss_reason = "Illegal Move" if isinstance(exc, MoveExhaustedError) else exc.__class__.__name__
+
+                is_chess_loss = isinstance(exc, MoveExhaustedError)
+
+                if is_chess_loss:
+                    self.stats.winner = opponent.name
+                    loss_reason = "Illegal Move"
+                    winner_str = f"{opponent.name} ({loss_reason} Loss)"
+                else:
+                    self.stats.winner = "Aborted"
+                    loss_reason = exc.__class__.__name__
+                    winner_str = f"Aborted ({loss_reason})"
+
                 final_state = GameState(
                     board=self.board.copy(),
                     moves=self.moves.copy(),
                     stats=self.stats,
                     current_player="",
                     is_game_over=True,
-                    winner=f"{opponent.name} ({loss_reason} Loss)",
+                    winner=winner_str,
                     game_duration=self.stats.game_duration,
                     clock_state=self.clock.get_state() if self.clock else None,
                 )
                 await ui_callback(final_state)
-                return self.stats
+                raise exc
 
             move = chess.Move.from_uci(move_str)
 

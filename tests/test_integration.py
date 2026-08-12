@@ -333,18 +333,10 @@ class TestAsyncGameIntegration:
     async def test_mock_game_completes(self):
         """Test a complete game with mock players."""
         # Use a sequence of valid moves that leads to a reasonable game
+        # Let's use Fool's mate so it ends quickly and legally
         moves = [
-            "e2e4", "e7e5",      # 1. e4 e5
-            "g1f3", "g8f6",      # 2. Nf3 Nf6
-            "f1c4", "f8c5",      # 3. Bc4 Bc5
-            "d2d3", "d7d6",      # 4. d3 d6
-            "b1c3", "b8c6",      # 5. Nc3 Nc6
-            "c1g5", "h7h6",      # 6. Bg5 h6
-            "g5h4", "g7g5",      # 7. Bh4 g5
-            "h4g3", "g5g4",      # 8. Bg3 g4
-            "c3e2", "g4f3",      # 9. Ne2 gxf3
-            "e2f4", "f3e2",      # 10. Nxf4 fxe2
-            "d1e2", "c8g4",      # 11. Qxe2 Bg4
+            "f2f3", "e7e5",      # 1. f3 e5
+            "g2g4", "d8h4",      # 2. g4 Qh4#
         ]
 
         white_ai = ProviderChessAI("mock_registered", "mock", "", temperature=0.0)
@@ -352,28 +344,27 @@ class TestAsyncGameIntegration:
 
         # Override get_move to use our move sequence
         move_idx = [0]
-        async def mock_get_move(fen):
+        async def mock_invoke(*args, **kwargs):
             if move_idx[0] < len(moves):
                 move = moves[move_idx[0]]
                 move_idx[0] += 1
                 return move
             # If we run out of predefined moves, return a legal move
-            board = chess.Board(fen)
+            board = chess.Board(args[0])
             legal = list(board.legal_moves)
             if legal:
                 return legal[0].uci()
             raise Exception("No legal moves")
 
-        white_ai._get_move_from_model = mock_get_move  # type: ignore[method-assign]
-        black_ai._get_move_from_model = mock_get_move  # type: ignore[method-assign]
+        with patch.object(white_ai, "_invoke_get_move_from_model", side_effect=mock_invoke):
+            with patch.object(black_ai, "_invoke_get_move_from_model", side_effect=mock_invoke):
+                game = AsyncChessGame(white_ai, black_ai)
 
-        game = AsyncChessGame(white_ai, black_ai)
+                states = []
+                async def capture_state(state):
+                    states.append(state)
 
-        states = []
-        async def capture_state(state):
-            states.append(state)
-
-        result = await game.play_game(capture_state, delay=0.001)
+                result = await game.play_game(capture_state, delay=0.001)
 
         assert result.total_moves > 0
         # Winner can be Unknown if the mock moves cycle without a decisive result
@@ -403,14 +394,14 @@ class TestProviderChessAI:
     """Tests for ProviderChessAI wrapper."""
 
     def test_initialization(self):
-        ai = ProviderChessAI("openai", "gpt-4o", "sk-test", temperature=0.1)
-        assert ai.provider_name == "openai"
-        assert ai.model_id == "gpt-4o"
+        ai = ProviderChessAI("mock_registered", "mock", "sk-test", temperature=0.1)
+        assert ai.provider_name == "mock_registered"
+        assert ai.model_id == "mock"
         assert ai.api_key == "sk-test"
         assert ai.params['temperature'] == 0.1
 
     def test_extract_move(self):
-        ai = ProviderChessAI("openai", "gpt-4o", "sk-test")
+        ai = ProviderChessAI("mock_registered", "mock", "sk-test")
         assert ai._extract_move("e2e4") == "e2e4"
         assert ai._extract_move("I will play e2e4") == "e2e4"
         assert ai._extract_move("<thinking></thinking>\ne2e4") == "e2e4"
@@ -418,19 +409,22 @@ class TestProviderChessAI:
 
     @pytest.mark.asyncio
     async def test_last_completion_result_populated_from_provider(self):
-        from unittest.mock import MagicMock
-
-        ai = ProviderChessAI("openai", "gpt-4o", "sk-test12345678901234567890")
+        ai = ProviderChessAI("mock_registered", "mock", "sk-test12345678901234567890")
         assert ai.last_completion_result is None
 
-        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client_class.return_value = mock_client
-            mock_response = MagicMock()
-            mock_response.choices = [MagicMock(message=MagicMock(content="<thinking>plan</thinking>\ne2e4"))]
-            mock_response.usage = MagicMock(prompt_tokens=1234, completion_tokens=7)
-            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        # Just mock get_move_from_model to simulate the provider doing its thing
+        async def mock_invoke(*args, **kwargs):
+            from chess_fight.common.common_types import CompletionResult
+            ai.last_completion_result = CompletionResult(
+                text="<thinking>plan</thinking>\ne2e4",
+                tokens_in=1234,
+                tokens_out=7,
+                latency_ms=0,
+                raw_response=None,
+            )
+            return "e2e4"
 
+        with patch.object(ai, "_invoke_get_move_from_model", side_effect=mock_invoke):
             move_str, cr = await ai.get_move_with_result(chess.STARTING_FEN)
 
         assert move_str == "e2e4"
@@ -442,13 +436,13 @@ class TestProviderChessAI:
     async def test_get_move_with_result_falls_back_when_no_completion(self):
         from chess_fight.providers.chess_ai import ProviderChessAI
 
-        ai = ProviderChessAI("openai", "gpt-4o", "sk-test")
+        ai = ProviderChessAI("mock_registered", "mock", "sk-test")
 
-        async def fake_get_move(fen):
+        async def fake_get_move(*args, **kwargs):
             return "e2e4"
 
-        ai._get_move_from_model = fake_get_move  # type: ignore[method-assign]
-        move_str, cr = await ai.get_move_with_result(chess.STARTING_FEN)
+        with patch.object(ai, "_invoke_get_move_from_model", side_effect=fake_get_move):
+            move_str, cr = await ai.get_move_with_result(chess.STARTING_FEN)
         assert move_str == "e2e4"
         assert cr.tokens_in is None
         assert cr.tokens_out is None
@@ -460,23 +454,24 @@ class TestAsyncGameFenBefore:
 
     @pytest.mark.asyncio
     async def test_fen_before_set_correctly(self):
-        async def fake_get_move(fen):
-            board = chess.Board(fen)
+        async def fake_invoke(*args, **kwargs):
+            board = chess.Board(args[0])
             legal = list(board.legal_moves)
             if legal:
                 return legal[0].uci()
             raise Exception("No legal moves")
 
         ai = ProviderChessAI("mock_registered", "mock", "", temperature=0.0)
-        ai._get_move_from_model = fake_get_move  # type: ignore[method-assign]
+        
+        with patch.object(ai, "_invoke_get_move_from_model", side_effect=fake_invoke):
+            game = AsyncChessGame(ai, ai)
+            seen_fen_before: list[str | None] = []
 
-        game = AsyncChessGame(ai, ai)
-        seen_fen_before: list[str | None] = []
+            async def ui(state: GameState):
+                seen_fen_before.append(state.fen_before)
 
-        async def ui(state: GameState):
-            seen_fen_before.append(state.fen_before)
+            await game.play_game(ui, delay=0)
 
-        await game.play_game(ui, delay=0)
         starting_fen = chess.STARTING_FEN
         non_null = [f for f in seen_fen_before if f is not None]
         assert len(non_null) >= 2

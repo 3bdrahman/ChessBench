@@ -99,7 +99,13 @@ class AsyncChessGame:
 
             # Get move from player with completion result
             try:
-                move_str, completion_result = await current_player.get_move_with_result(fen_before)
+                if move_timeout_seconds is not None:
+                    move_str, completion_result = await asyncio.wait_for(
+                        current_player.get_move_with_result(fen_before),
+                        timeout=move_timeout_seconds
+                    )
+                else:
+                    move_str, completion_result = await current_player.get_move_with_result(fen_before)
             except Exception as exc:
                 _log.error("Player %s move execution failed on turn %d: %s", current_player.name, len(self.moves), exc)
                 opponent = self.player2 if is_white else self.player1

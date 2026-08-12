@@ -12,6 +12,17 @@ sections:
       [GAME STATE]
       FEN: {fen}
       Turn: {color}
+
+      [BOARD]
+      {ascii_board}
+
+      [LEGAL MOVES]
+      Forcing:
+      {forcing_moves}
+      Developing:
+      {developing_moves}
+      Positional:
+      {positional_moves}
     required: true
     priority: 1
   - name: "instructions"

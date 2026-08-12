@@ -87,6 +87,43 @@ class TestExtractMove:
         parsed = parse_move(text, board)
         assert parsed.uci == "d7d6"
 
+    def test_parse_move_prefer_first_legal_uci(self):
+        """First legal UCI mention wins over later alternatives mentioned."""
+        board = chess.Board()
+        from chess_fight.move_parser import parse_move
+        result = parse_move("I think the best move would be e2e4, but I could also play d2d4", board)
+        assert result.uci == "e2e4"
+
+    def test_parse_move_rejects_alternative_clause_in_header(self):
+        """The 'could also play X' clause must not steal the move-header slot."""
+        board = chess.Board()
+        from chess_fight.move_parser import parse_move
+        text = "I'm confident in e2e4 but I could also play d2d4 as an alternative."
+        result = parse_move(text, board)
+        assert result.uci == "e2e4"
+
+    def test_parse_move_keeps_inner_text_when_move_tag_unparseable(self):
+        """A <move> tag whose contents cannot be parsed directly lets the
+        fallback scanners run on the inner text so the model's stated move is
+        still extracted."""
+        board = chess.Board()
+        board.push_uci("e2e4")  # Black to move
+        from chess_fight.move_parser import parse_move
+        text = "<thinking> analysis </thinking><move>final answer: e7e5</move>"
+        result = parse_move(text, board)
+        assert result.uci == "e7e5"
+
+    def test_parse_move_castle_queenside_not_kingside(self):
+        r"""`O-O-O` (queenside) and `O-O` (kingside) must produce the right
+        castling UCI. The kingside regex `\bO[-\s]?O\b` matches inside `O-O-O`,
+        so checking queenside first is required."""
+        from chess_fight.move_parser import parse_move
+        board = chess.Board('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1')  # both castles available
+        result = parse_move('O-O-O', board)
+        assert result.uci == 'e1c1'
+        result = parse_move('O-O', board)
+        assert result.uci == 'e1g1'
+
 
 class TestValidateMove:
     """Tests for validate_move function."""

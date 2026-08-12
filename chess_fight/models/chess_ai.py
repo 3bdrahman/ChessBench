@@ -116,9 +116,9 @@ class ChessAI(ABC):
     def _categorize_moves(self, board: chess.Board) -> dict[str, str]:
         moves_dict = self.evaluator.categorize_moves(board)
         return {
-            'forcing_moves': str(moves_dict['forcing_moves']),
-            'developing_moves': str(moves_dict['developing_moves']),
-            'positional_moves': str(moves_dict['positional_moves']),
+            'forcing_moves': "\n".join(moves_dict['forcing_moves'].pv) if moves_dict['forcing_moves'].pv else "None",
+            'developing_moves': "\n".join(moves_dict['developing_moves'].pv) if moves_dict['developing_moves'].pv else "None",
+            'positional_moves': "\n".join(moves_dict['positional_moves'].pv) if moves_dict['positional_moves'].pv else "None",
         }
 
     def _analyze_defense(self, board: chess.Board) -> str:

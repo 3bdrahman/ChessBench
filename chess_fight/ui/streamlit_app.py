@@ -380,6 +380,22 @@ def create_provider_ai(white_config: dict, black_config: dict):
 
 
 
+def _reset_game_state() -> None:
+    st.session_state.game_running = False
+    st.session_state.active_match_config = None
+    for k in [
+        "benchmark_thread",
+        "benchmark_state",
+        "benchmark_error",
+        "benchmark_done",
+        "benchmark_game_index",
+        "benchmark_start_time",
+        "benchmark_run_dir",
+        "benchmark_runner",
+    ]:
+        st.session_state.pop(k, None)
+
+
 def run_in_process_benchmark(white_config: dict, black_config: dict, games: int = 3, colors: str = "alternating"):
     """Run the benchmark runner in-process and render live results."""
     white_spec = f"{white_config['provider']}:{white_config['model_id']}"
@@ -427,14 +443,23 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
     completion_placeholder = st.empty()
     status_placeholder = st.empty()
 
-    try:
-        runner = BenchmarkRunner(config)
-    except (NoProvidersConfiguredError, SetupError, InvalidApiKeyError) as exc:
-        render_error(st, exc)
-        return
-    except ValueError as exc:
-        st.error(f"Benchmark setup failed: {exc}")
-        return
+    if "benchmark_runner" not in st.session_state or st.session_state.benchmark_runner is None:
+        try:
+            st.session_state.benchmark_runner = BenchmarkRunner(config)
+        except (NoProvidersConfiguredError, SetupError, InvalidApiKeyError) as exc:
+            render_error(st, exc)
+            if st.button("🔙 Return to Main Menu", type="primary", width="stretch", key="err_setup_return"):
+                _reset_game_state()
+                st.rerun()
+            return
+        except ValueError as exc:
+            st.error(f"Benchmark setup failed: {exc}")
+            if st.button("🔙 Return to Main Menu", type="primary", width="stretch", key="err_val_return"):
+                _reset_game_state()
+                st.rerun()
+            return
+
+    runner = st.session_state.benchmark_runner
 
     num_pairings = 1 if colors == "fixed" else (len(runner.players) * (len(runner.players) - 1))
     total_games = num_pairings * games
@@ -500,6 +525,9 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
             render_error(st, exc)
         else:
             st.error(f"Benchmark failed: {exc}")
+        if st.button("🔙 Return to Main Menu", type="primary", width="stretch", key="err_bm_return"):
+            _reset_game_state()
+            st.rerun()
         return
 
     if not st.session_state.get("benchmark_done", False):
@@ -517,7 +545,8 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
     if run is not None:
         render_run_summary(run, expanded=True)
 
-    if st.button("🔙 Return to Main Menu", type="primary", width="stretch"):
+    if st.button("🔙 Return to Main Menu", type="primary", width="stretch", key="done_bm_return"):
+        _reset_game_state()
         st.rerun()
 
 
@@ -638,19 +667,6 @@ def main():
     if "game_ui" not in st.session_state:
         st.session_state.game_ui = ChessUI()
 
-    st.title("🤖 AI Chess Battle")
-    st.write("Watch AI models compete in chess! Select models from any provider.")
-
-    # Hero: demo games + benchmark history — both real, no API key needed.
-    if "game_running" not in st.session_state or not st.session_state.game_running:
-        st.markdown("### 🎮 Get Started")
-        st.markdown(
-            "**Have API keys?** Add them in the sidebar under **🔑 API Keys**, "
-            "pick two models under **♟️ Model Selection**, then click **▶️ Start New Game**."
-        )
-
-    render_benchmark_history()
-
     # Sidebar: API Keys and Model Selection
     available_providers = render_provider_keys_section()
     white_config, black_config = render_model_selectors(available_providers)
@@ -668,18 +684,38 @@ def main():
     if st.sidebar.button("▶️ Start Match", type="primary", width="stretch"):
         if not white_config or not black_config:
             st.sidebar.error("Please select models for both players.")
-            return
+        else:
+            _reset_game_state()
+            st.session_state.game_running = True
+            st.session_state.active_match_config = {
+                "white_config": white_config,
+                "black_config": black_config,
+                "games": int(games),
+                "colors": colors_mode,
+            }
+            st.rerun()
 
-        st.session_state.game_running = True
-        try:
-            run_in_process_benchmark(
-                white_config,
-                black_config,
-                games=int(games),
-                colors=colors_mode
-            )
-        finally:
-            st.session_state.game_running = False
+    if st.session_state.get("game_running", False) and st.session_state.get("active_match_config"):
+        match_cfg = st.session_state.active_match_config
+        run_in_process_benchmark(
+            match_cfg["white_config"],
+            match_cfg["black_config"],
+            games=match_cfg["games"],
+            colors=match_cfg["colors"],
+        )
+        return
+
+    st.title("🤖 AI Chess Battle")
+    st.write("Watch AI models compete in chess! Select models from any provider.")
+
+    # Hero: demo games + benchmark history — both real, no API key needed.
+    st.markdown("### 🎮 Get Started")
+    st.markdown(
+        "**Have API keys?** Add them in the sidebar under **🔑 API Keys**, "
+        "pick two models under **♟️ Model Selection**, then click **▶️ Start Match**."
+    )
+
+    render_benchmark_history()
 
     # Analytical Dashboard
     st.sidebar.markdown("---")

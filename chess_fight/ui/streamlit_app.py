@@ -461,7 +461,7 @@ def run_in_process_benchmark(white_config: dict, black_config: dict, games: int 
 
     runner = st.session_state.benchmark_runner
 
-    num_pairings = 1 if colors == "fixed" else (len(runner.players) * (len(runner.players) - 1))
+    num_pairings = 1 if colors == "fixed" else (len(runner.config.players) * (len(runner.config.players) - 1))
     total_games = num_pairings * games
 
     def start_benchmark():

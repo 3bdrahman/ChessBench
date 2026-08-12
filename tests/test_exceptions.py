@@ -248,8 +248,12 @@ class TestIsRetryable:
         assert is_retryable(exc) is False
 
     def test_provider_api_error_is_not_retryable(self):
-        exc = ProviderAPIError(provider="openai", status_code=500, detail="x")
+        exc = ProviderAPIError(provider="openai", status_code=400, detail="x")
         assert is_retryable(exc) is False
+
+    def test_provider_api_error_500_is_retryable(self):
+        exc = ProviderAPIError(provider="openai", status_code=500, detail="x")
+        assert is_retryable(exc) is True
 
 
 class TestChessFightErrorLog:

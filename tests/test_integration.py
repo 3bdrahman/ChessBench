@@ -356,20 +356,58 @@ class TestAsyncGameIntegration:
                 return legal[0].uci()
             raise Exception("No legal moves")
 
-        with patch.object(white_ai, "_invoke_get_move_from_model", side_effect=mock_invoke):
-            with patch.object(black_ai, "_invoke_get_move_from_model", side_effect=mock_invoke):
-                game = AsyncChessGame(white_ai, black_ai)
+        with patch.object(white_ai, "_invoke_get_move_from_model", side_effect=mock_invoke), \
+             patch.object(black_ai, "_invoke_get_move_from_model", side_effect=mock_invoke):
+            game = AsyncChessGame(white_ai, black_ai)
 
-                states = []
-                async def capture_state(state):
-                    states.append(state)
+            states = []
+            async def capture_state(state):
+                states.append(state)
 
-                result = await game.play_game(capture_state, delay=0.001)
+            result = await game.play_game(capture_state, delay=0.001)
 
         assert result.total_moves > 0
         # Winner can be Unknown if the mock moves cycle without a decisive result
         assert result.winner in ["Draw", white_ai.name, black_ai.name, "Unknown"]
         assert len(states) > 0
+
+    @pytest.mark.asyncio
+    async def test_player_recovers_after_move_parser_retry(self):
+        """Regression for the 'concludes after one move' bug: a model that
+        returns a malformed <move> tag once but recovers on retry must not
+        forfeit the game via MoveExhaustedError."""
+        white_ai = ProviderChessAI("mock_registered", "mock", "", temperature=0.0)
+        black_ai = ProviderChessAI("mock_registered", "mock", "", temperature=0.0)
+
+        async def white_invoke(*args, **kwargs):
+            board = chess.Board(args[0])
+            return next(iter(board.legal_moves)).uci()
+
+        black_calls = {"n": 0}
+        async def black_invoke(*args, **kwargs):
+            black_calls["n"] += 1
+            if black_calls["n"] == 1:
+                return "<move>pass</move>"
+            board = chess.Board(args[0])
+            for move in board.legal_moves:
+                if board.piece_at(move.from_square) and board.piece_at(move.from_square).piece_type == chess.PAWN:
+                    return move.uci()
+            return next(iter(board.legal_moves)).uci()
+
+        with patch.object(white_ai, "_invoke_get_move_from_model", side_effect=white_invoke), \
+             patch.object(black_ai, "_invoke_get_move_from_model", side_effect=black_invoke):
+            game = AsyncChessGame(white_ai, black_ai)
+            states: list[GameState] = []
+
+            async def capture(state: GameState) -> None:
+                states.append(state)
+
+            result = await game.play_game(capture, delay=0)
+
+        assert result.total_moves > 10, (
+            f"Early termination still occurs: {result.total_moves} moves played, winner={result.winner}"
+        )
+        assert result.winner not in ("Aborted", "Timeout/Error")
 
 
 class TestProviderRegistry:
@@ -462,7 +500,7 @@ class TestAsyncGameFenBefore:
             raise Exception("No legal moves")
 
         ai = ProviderChessAI("mock_registered", "mock", "", temperature=0.0)
-        
+
         with patch.object(ai, "_invoke_get_move_from_model", side_effect=fake_invoke):
             game = AsyncChessGame(ai, ai)
             seen_fen_before: list[str | None] = []

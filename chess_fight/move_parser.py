@@ -64,21 +64,23 @@ def _parse_san(text: str, board: chess.Board) -> MoveParseResult | None:
     # Clean up text
     text = text.strip()
 
-    # Castle patterns
-    if re.search(r'\bO[-\s]?O\b', text, re.IGNORECASE):
-        # Kingside castle
+    # Castle patterns: O-O-O (queenside) MUST be checked before O-O (kingside)
+    # because the kingside regex `\bO[-\s]?O\b` matches the O-O inside O-O-O
+    # — checking queenside first avoids mis-firing.
+    if re.search(r'\bO[-\s]?O[-\s]?O\b', text, re.IGNORECASE):
+        # Queenside castle
         for move in board.legal_moves:
-            if board.is_castling(move) and move.to_square > move.from_square:
+            if board.is_castling(move) and move.to_square < move.from_square:
                 return MoveParseResult(
                     uci=move.uci(),
                     san=board.san(move),
                     confidence=0.9,
                     ambiguous=False,
                 )
-    if re.search(r'\bO[-\s]?O[-\s]?O\b', text, re.IGNORECASE):
-        # Queenside castle
+    if re.search(r'\bO[-\s]?O\b', text, re.IGNORECASE):
+        # Kingside castle
         for move in board.legal_moves:
-            if board.is_castling(move) and move.to_square < move.from_square:
+            if board.is_castling(move) and move.to_square > move.from_square:
                 return MoveParseResult(
                     uci=move.uci(),
                     san=board.san(move),
@@ -90,7 +92,7 @@ def _parse_san(text: str, board: chess.Board) -> MoveParseResult | None:
     san_pattern = r'\b([KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?)\b'
     matches = re.findall(san_pattern, text)
 
-    for match in reversed(matches):
+    for match in matches:
         try:
             move = board.parse_san(match)
             if move in board.legal_moves:
@@ -115,7 +117,7 @@ def _parse_uci(text: str, board: chess.Board | None = None) -> MoveParseResult |
     uci_pattern = r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b'
     matches = re.findall(uci_pattern, text)
 
-    for match in reversed(matches):
+    for match in matches:
         try:
             move = chess.Move.from_uci(match)
             promotion_piece = None
@@ -342,8 +344,12 @@ def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
             res.confidence = 1.0
             return res
 
-    # 2. PRIORITY 2: Strip thinking blocks
+    # 2. PRIORITY 2: Strip thinking blocks.
+    # When the move tag was present but unparseable, also strip the <move> wrapper
+    # so the inner text continues into the later fallback scanners.
     clean_text = _strip_thinking(text)
+    if move_match:
+        clean_text = re.sub(r'</?move>', '', clean_text, flags=re.IGNORECASE)
 
     # Strip untagged thinking headers like "Here's a thinking process:"
     thinking_headers = [
@@ -363,12 +369,23 @@ def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
         r'(?:final\s+)?move\s*:\s*([^\n]+)',
         r'(?:play|choose|select)\s+([^\n]+)',
     ]
+    uci_pattern_full = r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b'
+    first_uci_in_text = re.search(uci_pattern_full, clean_text.lower())
+    first_uci_str = first_uci_in_text.group(1) if first_uci_in_text else None
+    first_uci_legal = False
+    if first_uci_str and board is not None:
+        try:
+            first_uci_legal = chess.Move.from_uci(first_uci_str) in board.legal_moves
+        except ValueError:
+            first_uci_legal = False
     for pattern in move_header_patterns:
         match = re.search(pattern, clean_text, re.IGNORECASE)
         if match:
             candidate = match.group(1)
             res = _parse_move_candidate(candidate, board)
             if res and res.uci:
+                if first_uci_str and res.uci != first_uci_str and (first_uci_legal or board is None):
+                    continue
                 res.confidence = 0.9
                 return res
 
@@ -395,10 +412,10 @@ def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
         if result and result.uci:
             return result
 
-    # Fallback: search backwards for legal UCI
+    # Fallback: forward search for legal UCI
     uci_pattern = r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b'
     matches = re.findall(uci_pattern, clean_text.lower())
-    for match in reversed(matches):
+    for match in matches:
         try:
             move = chess.Move.from_uci(match)
             if board:

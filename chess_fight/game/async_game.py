@@ -75,7 +75,7 @@ class AsyncChessGame:
         if self.clock:
             self.clock.start_turn(True, 0)
 
-        while not self.board.is_game_over() and not self._cancelled:
+        while not self.board.is_game_over(claim_draw=True) and not self._cancelled:
             current_player = self.player1 if len(self.moves) % 2 == 0 else self.player2
             is_white = len(self.moves) % 2 == 0
             fen_before = self.board.fen()
@@ -184,7 +184,7 @@ class AsyncChessGame:
 
         # Final state
         self.stats.game_duration = time.time() - self.start_time
-        if self._cancelled and not self.board.is_game_over():
+        if self._cancelled and not self.board.is_game_over(claim_draw=True):
             self.stats.winner = "Cancelled"
         else:
             self.stats.winner = self._determine_winner()

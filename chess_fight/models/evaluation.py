@@ -444,19 +444,22 @@ class PositionEvaluator:
                 components={
                     "count": float(len(forcing_moves)),
                     "best_score": float(forcing_moves[0][0]) if forcing_moves else 0.0,
-                }
+                },
+                pv=[x[1] for x in forcing_moves]
             ),
             'developing_moves': PositionEval(
                 components={
                     "count": float(len(developing_moves)),
                     "best_score": float(developing_moves[0][0]) if developing_moves else 0.0,
-                }
+                },
+                pv=[x[1] for x in developing_moves]
             ),
             'positional_moves': PositionEval(
                 components={
                     "count": float(len(positional_moves)),
                     "best_score": float(positional_moves[0][0]) if positional_moves else 0.0,
-                }
+                },
+                pv=[x[1] for x in positional_moves]
             )
         }
 

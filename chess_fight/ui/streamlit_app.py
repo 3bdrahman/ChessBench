@@ -10,6 +10,7 @@ writes to ``runs/<run_id>/``.
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import threading
 import time
@@ -98,8 +99,11 @@ def _draw_metrics(stats_placeholder, state: GameState, start_time: float | None 
         st.metric("Time Elapsed", f"{elapsed}s")
     with cols[4]:
         if not state.is_game_over:
-            turn_color = "White ♔" if state.board.turn else "Black ♚"
+            turn_color = "White ��" if state.board.turn else "Black ��"
             st.metric("Current Turn", turn_color)
+        else:
+            term_reason = getattr(state.stats, 'termination_reason', 'unknown')
+            st.metric("Termination", term_reason.replace('_', ' ').title())
 
 
 def _draw_moves(moves_placeholder, moves: list) -> None:
@@ -498,12 +502,20 @@ def run_in_process_benchmark(
         st.session_state.benchmark_game_index = 0
         st.session_state.benchmark_start_time = time.time()
         st.session_state.benchmark_run_dir = None
+        st.session_state.benchmark_completed_games = []  # Store completed game states
+        st.session_state.benchmark_selected_game = None  # Which completed game to view (None = live)
 
         def ui_callback_sync(state: GameState):
             try:
-                st.session_state.benchmark_state = state
                 if state.is_game_over:
+                    # Store a copy of the completed game state
+                    import copy
+                    completed_game = copy.deepcopy(state)
+                    st.session_state.benchmark_completed_games.append(completed_game)
                     st.session_state.benchmark_game_index += 1
+                    # Don't update benchmark_state for completed games - keep it for live game
+                else:
+                    st.session_state.benchmark_state = state
             except BaseException:
                 pass
 
@@ -541,23 +553,64 @@ def run_in_process_benchmark(
         moves_ph = st.empty()
         completion_ph = st.empty()
 
-        if st.session_state.get("benchmark_state"):
+        # Game navigation: show dropdown if there are completed games
+        completed_games = st.session_state.get("benchmark_completed_games", [])
+        selected_game_idx = st.session_state.get("benchmark_selected_game")
+
+        # Navigation UI
+        if completed_games:
+            nav_col1, nav_col2 = st.columns([3, 1])
+            with nav_col1:
+                game_options = ["🔴 Live Game"] + [
+                    f"Game {i+1}: {g.winner if g.winner else 'In Progress'}" 
+                    for i, g in enumerate(completed_games)
+                ]
+                current_selection = 0 if selected_game_idx is None else selected_game_idx + 1
+                new_selection = st.selectbox(
+                    "Navigate Games",
+                    options=range(len(game_options)),
+                    format_func=lambda i: game_options[i],
+                    index=current_selection,
+                    key="benchmark_game_nav",
+                    width="stretch",
+                )
+                if new_selection != current_selection:
+                    st.session_state.benchmark_selected_game = None if new_selection == 0 else new_selection - 1
+                    st.rerun()
+            with nav_col2:
+                if selected_game_idx is not None:
+                    if st.button("↩️ Back to Live", width="stretch"):
+                        st.session_state.benchmark_selected_game = None
+                        st.rerun()
+
+        # Determine which game state to display
+        if selected_game_idx is not None and selected_game_idx < len(completed_games):
+            # Show completed game
+            state = completed_games[selected_game_idx]
+            game_idx = selected_game_idx + 1
+            frac = min(1.0, len(completed_games) / max(1, total_games))
+            progress_ph.progress(
+                frac, text=f"Reviewing Game {game_idx} / {total_games} (completed)"
+            )
+        elif st.session_state.get("benchmark_state"):
+            # Show live game
             state = st.session_state.benchmark_state
             game_idx = st.session_state.benchmark_game_index
             frac = min(1.0, game_idx / max(1, total_games))
             progress_ph.progress(
                 frac, text=f"Game {game_idx} / {total_games} complete"
             )
-            
-            start_time = st.session_state.benchmark_start_time
-            _draw_board(board_ph, state, start_time)
-            _draw_metrics(stats_ph, state, start_time)
-            _draw_moves(moves_ph, state.moves)
-            _draw_completion_result(completion_ph, state)
         else:
             progress_ph.info(
                 f"Starting in-process benchmark: {white_spec} vs {black_spec} ({games} games)..."
             )
+            return
+
+        start_time = st.session_state.benchmark_start_time
+        _draw_board(board_ph, state, start_time)
+        _draw_metrics(stats_ph, state, start_time)
+        _draw_moves(moves_ph, state.moves)
+        _draw_completion_result(completion_ph, state)
 
     if st.session_state.get("benchmark_error"):
         exc = st.session_state.benchmark_error
@@ -720,7 +773,8 @@ def render_game_viewer(run) -> None:
     st.markdown("### ♟️ Game Replays & Logs")
     
     for i, game in enumerate(run.games):
-        st.markdown(f"#### Game {i+1}: {game.white_player} vs {game.black_player} ({game.result})")
+        term_reason = getattr(game, 'termination_reason', 'unknown')
+        st.markdown(f"#### Game {i+1}: {game.white_player} vs {game.black_player} ({game.result}) — *{term_reason.replace('_', ' ').title()}*")
         
         if not game.moves:
             st.info("No moves recorded for this game.")

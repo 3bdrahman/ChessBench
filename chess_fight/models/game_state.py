@@ -21,6 +21,7 @@ class GameStats:
     check_moves: int = 0
     game_duration: float = 0
     winner: str | None = None
+    termination_reason: str = "unknown"
 
 
 @dataclass
@@ -40,6 +41,7 @@ class GameSummary:
     game_duration_sec: float = 0.0
     timestamp_utc: str = ""
     moves: list[Any] = field(default_factory=list)
+    termination_reason: str = "unknown"
 
 
 @dataclass

@@ -20,8 +20,10 @@ from chess_fight.benchmark.evaluator import StockfishEvaluator
 from chess_fight.benchmark.logging import BenchmarkLogger, GameLogEntry
 from chess_fight.benchmark.openings import OpeningBook
 from chess_fight.common.exceptions import (
-    GameExecutionError,
+    FatalBenchmarkError,
+    GameTimeoutError,
     InvalidApiKeyError,
+    LimiterExhaustedError,
     MoveExhaustedError,
     NoProvidersConfiguredError,
     ProviderError,
@@ -354,7 +356,8 @@ class BenchmarkRunner:
                     result=result,
                     result_numeric=result_numeric if result_numeric is not None else 0.0,
                     total_moves=stats.total_moves,
-                    game_duration_sec=stats.game_duration
+                    game_duration_sec=stats.game_duration,
+                    termination_reason=getattr(stats, 'termination_reason', 'unknown')
                 )
 
                 # Update ELO
@@ -445,8 +448,8 @@ class BenchmarkRunner:
                     # Acquire permits for both providers
                     wait_time = await self.rate_limiter.acquire(white_provider, tokens=1)
                     if wait_time is None:
-                        raise GameExecutionError(
-                            f"Rate limit exceeded for {white_provider}, max queue time exceeded",
+                        raise LimiterExhaustedError(
+                            provider=white_provider,
                             game_index=game_idx,
                             white=white_spec,
                             black=black_spec,
@@ -455,8 +458,8 @@ class BenchmarkRunner:
                     wait_time = await self.rate_limiter.acquire(black_provider, tokens=1)
                     if wait_time is None:
                         self.rate_limiter.release(white_provider)
-                        raise GameExecutionError(
-                            f"Rate limit exceeded for {black_provider}, max queue time exceeded",
+                        raise LimiterExhaustedError(
+                            provider=black_provider,
                             game_index=game_idx,
                             white=white_spec,
                             black=black_spec,
@@ -472,8 +475,8 @@ class BenchmarkRunner:
                             "Game %d (%s vs %s) timed out after %d seconds",
                             game_idx + 1, white_spec, black_spec, self.config.game_timeout_seconds
                         )
-                        raise GameExecutionError(
-                            f"Game timed out after {self.config.game_timeout_seconds} seconds",
+                        raise GameTimeoutError(
+                            timeout_seconds=self.config.game_timeout_seconds,
                             game_index=game_idx,
                             white=white_spec,
                             black=black_spec,
@@ -497,8 +500,9 @@ class BenchmarkRunner:
                     white_spec, black_spec = task[0], task[1]
                     game_idx = task[3]
 
-                    # Fatal: auth failure, rate limit, or timeouts halt the entire run
-                    if isinstance(result, (InvalidApiKeyError, RateLimitError, GameExecutionError)):
+                    # Fatal: limiter permanently saturated → continuing just queues
+                    # every subsequent game behind the same stall.
+                    if isinstance(result, LimiterExhaustedError):
                         _log.error(
                             "Fatal error at game %d (%s vs %s): %s",
                             game_idx + 1, white_spec, black_spec, result,
@@ -506,7 +510,16 @@ class BenchmarkRunner:
                         if fatal_exception is None:
                             fatal_exception = result
                         break
-                    # Other ProviderErrors are also fatal (no point continuing)
+                    # Fatal: auth failure or upstream rate-limit → the whole run is broken.
+                    if isinstance(result, (InvalidApiKeyError, RateLimitError)):
+                        _log.error(
+                            "Fatal error at game %d (%s vs %s): %s",
+                            game_idx + 1, white_spec, black_spec, result,
+                        )
+                        if fatal_exception is None:
+                            fatal_exception = result
+                        break
+                    # Fatal: other ProviderErrors (network, quota, API) — no point continuing.
                     if isinstance(result, ProviderError) and not isinstance(result, RateLimitError):
                         _log.error(
                             "Fatal provider error at game %d (%s vs %s): %s",
@@ -515,7 +528,29 @@ class BenchmarkRunner:
                         if fatal_exception is None:
                             fatal_exception = result
                         break
-                    # Per-game failure (move validation, etc.) — log and continue
+                    # Per-game timeout: chess self-terminates normally; a wall-clock
+                    # failsafe trip means a pathological game that should be skipped, not
+                    # a signal to abort the whole tournament.
+                    if isinstance(result, GameTimeoutError):
+                        _log.warning(
+                            "Game %d (%s vs %s) timed out after %g seconds: %s",
+                            game_idx + 1, white_spec, black_spec,
+                            result.timeout_seconds, result,
+                        )
+                        self.logger.log_error(
+                            game_index=game_idx + 1,
+                            white=white_spec,
+                            black=black_spec,
+                            error=f"game_timeout: {result}",
+                        )
+                        pairing_game_failures.append((game_idx, white_spec, black_spec, result))
+                        _log.warning(
+                            "Game %d (%s vs %s) failed: %s",
+                            game_idx + 1, white_spec, black_spec, result,
+                        )
+                        print(f"  Game {game_idx + 1} ({white_spec} vs {black_spec}) failed: {result}")
+                        continue
+                    # Per-game move-exhaustion — log and continue.
                     if isinstance(result, MoveExhaustedError):
                         _log.warning(
                             "Game %d (%s vs %s) exhausted move retries: %s",
@@ -527,6 +562,16 @@ class BenchmarkRunner:
                             black=black_spec,
                             error=f"move_exhausted: {result}",
                         )
+                        pairing_game_failures.append((game_idx, white_spec, black_spec, result))
+                        _log.warning(
+                            "Game %d (%s vs %s) failed: %s",
+                            game_idx + 1, white_spec, black_spec, result,
+                        )
+                        print(f"  Game {game_idx + 1} ({white_spec} vs {black_spec}) failed: {result}")
+                        continue
+                    # Residual per-game failure (evaluator crash, other GameExecutionError,
+                    # unexpected Exception). Log and continue so one bad game doesn't abort
+                    # the whole tournament.
                     pairing_game_failures.append((game_idx, white_spec, black_spec, result))
                     self.logger.log_error(
                         game_index=game_idx + 1,
@@ -550,11 +595,8 @@ class BenchmarkRunner:
                 print(f"\n{len(pairing_game_failures)} game(s) failed in pairing {white} vs {black}.")
 
         if fatal_exception is not None:
-            raise GameExecutionError(
+            raise FatalBenchmarkError(
                 f"Benchmark aborted due to fatal error: {fatal_exception}",
-                game_index=-1,
-                white="",
-                black="",
                 cause=fatal_exception,
             ) from fatal_exception
 
@@ -580,6 +622,16 @@ async def main() -> None:
     parser.add_argument("--players", nargs="+", help="Player specs (provider:model)")
     parser.add_argument("--games", type=int, help="Games per pairing")
     parser.add_argument("--parallel", type=int, help="Max parallel games")
+    parser.add_argument(
+        "--move-timeout",
+        type=int,
+        help="Per-move timeout in seconds (overrides config)",
+    )
+    parser.add_argument(
+        "--game-timeout",
+        type=int,
+        help="Per-game wall-clock failsafe in seconds (overrides config)",
+    )
 
     args = parser.parse_args()
 
@@ -596,6 +648,10 @@ async def main() -> None:
         config.games_per_pairing = args.games
     if args.parallel:
         config.max_parallel_games = args.parallel
+    if args.move_timeout is not None:
+        config.move_timeout_seconds = args.move_timeout
+    if args.game_timeout is not None:
+        config.game_timeout_seconds = args.game_timeout
     config.output_dir = args.output
 
     # Load API keys from environment

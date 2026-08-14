@@ -81,6 +81,7 @@ class GameLogEntry:
     game_duration_sec: float
     timestamp_utc: str
     config: dict[str, Any]
+    termination_reason: str = "unknown"
 
 
 class BenchmarkLogger:
@@ -233,7 +234,8 @@ class BenchmarkLogger:
             f.write(json.dumps(asdict(entry)) + '\n')
 
     def end_game(self, result: str, result_numeric: float,
-                 total_moves: int, game_duration_sec: float) -> None:
+                 total_moves: int, game_duration_sec: float,
+                 termination_reason: str = "unknown") -> None:
         """End current game and write complete game log."""
         game_entry = GameLogEntry(
             game_id=self.current_game_id,
@@ -250,7 +252,8 @@ class BenchmarkLogger:
             total_moves=total_moves,
             game_duration_sec=game_duration_sec,
             timestamp_utc=datetime.now(UTC).isoformat() + 'Z',
-            config=self.run_config
+            config=self.run_config,
+            termination_reason=termination_reason
         )
 
         self.games_completed.append(game_entry)

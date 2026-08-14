@@ -11,7 +11,9 @@ from typing import Any
 from chess_fight.common.exceptions import (
     AuthenticationError,
     ConnectionError,
+    FatalBenchmarkError,
     GameExecutionError,
+    GameTimeoutError,
     InvalidApiKeyError,
     ModelNotFoundError,
     MoveValidationError,
@@ -112,11 +114,30 @@ def render_error(st: Any, exc: BaseException) -> None:
             st.markdown(f"[Open {exc.provider.capitalize()} dashboard]({_dashboard_url(exc.provider)})")
         return
 
-    if isinstance(exc, GameExecutionError):
+    if isinstance(exc, GameTimeoutError):
+        st.warning(
+            f"**Game {exc.game_index + 1} timed out** "
+            f"({exc.timeout_seconds:g}s wall-clock failsafe). "
+            f"The benchmark continues with the remaining games."
+        )
+        st.caption(
+            "Chess self-terminates (50-move rule, repetition, mate, stalemate), so "
+            "this trip usually indicates a pathological game rather than a stuck "
+            "benchmark. Raise `game_timeout_seconds` in benchmark.yaml or pass "
+            "`--game-timeout` if legitimate long games are being cut."
+        )
+        return
+
+    if isinstance(exc, FatalBenchmarkError):
         st.error(f"**Benchmark aborted**: {exc}")
         if exc.cause is not None:
             with st.expander("Show underlying error"):
                 st.code(str(exc.cause))
+        return
+
+    if isinstance(exc, GameExecutionError):
+        st.warning(f"**Game {exc.game_index + 1} failed**: {exc}")
+        st.caption("Logged and skipped. The benchmark continues with the remaining games.")
         return
 
     if isinstance(exc, SetupError):

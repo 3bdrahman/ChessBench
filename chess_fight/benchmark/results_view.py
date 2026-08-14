@@ -126,6 +126,7 @@ class GameRecord:
     game_duration_sec: float
     timestamp_utc: str
     moves: list[MoveRecord] = field(default_factory=list)
+    termination_reason: str = "unknown"
 
     @property
     def winner_spec(self) -> str | None:
@@ -302,6 +303,7 @@ def _build_games(
             total_moves=int(raw.get("total_moves", 0) or 0),
             game_duration_sec=float(raw.get("game_duration_sec", 0.0) or 0.0),
             timestamp_utc=str(raw.get("timestamp_utc", "")),
+            termination_reason=str(raw.get("termination_reason", "unknown")),
             moves=[MoveRecord.from_dict(m) for m in moves_raw],
         )
         if record.game_id:
@@ -334,6 +336,7 @@ def _build_games(
             total_moves=len(moves),
             game_duration_sec=0.0,
             timestamp_utc=last.timestamp_utc,
+            termination_reason="unknown",
             moves=moves,
         )
 

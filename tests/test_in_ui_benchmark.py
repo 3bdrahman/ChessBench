@@ -245,3 +245,65 @@ class TestInProcessBenchmark:
         )
         with pytest.raises(SetupError, match="At least 2 players are required"):
             BenchmarkRunner(config)
+
+
+class TestPerGameTimeoutNonFatal:
+    """A single per-game timeout must NOT abort the whole benchmark.
+
+    Regression test for the bug where one slow game triggered
+    "Benchmark aborted due to fatal error: Game timed out after 1800 seconds".
+    """
+
+    @pytest.mark.asyncio
+    async def test_one_game_timeout_does_not_abort_benchmark(
+        self, tmp_path, patched_provider
+    ):
+        from chess_fight.common.exceptions import GameTimeoutError
+
+        config = BenchmarkConfig(
+            players=["stockfish:depth-4", "stockfish:depth-8"],
+            games_per_pairing=2,
+            max_parallel_games=1,
+            opening_book="startpos",
+            temperature=0.0,
+            max_tokens=100,
+            api_keys={"stockfish": ""},
+            output_dir=str(tmp_path / "runs"),
+        )
+
+        runner = BenchmarkRunner(config)
+        runner.players = {
+            "stockfish:depth-4": _make_ai("stockfish:depth-4"),
+            "stockfish:depth-8": _make_ai("stockfish:depth-8"),
+        }
+
+        # Wrap run_pairing so the FIRST call raises GameTimeoutError; subsequent
+        # calls delegate to the real implementation via super().
+        original_run_pairing = runner.run_pairing
+        call_count = {"n": 0}
+
+        async def flaky_run_pairing(white_spec, black_spec, opening, game_idx, user_callback=None):
+            if call_count["n"] == 0:
+                call_count["n"] += 1
+                raise GameTimeoutError(
+                    timeout_seconds=float(config.game_timeout_seconds),
+                    game_index=game_idx,
+                    white=white_spec,
+                    black=black_spec,
+                )
+            call_count["n"] += 1
+            return await original_run_pairing(white_spec, black_spec, opening, game_idx, user_callback)
+
+        runner.run_pairing = flaky_run_pairing  # type: ignore[method-assign]
+
+        # Must NOT raise — a single per-game timeout is recoverable now.
+        run_dir = await runner.run_benchmark_with_callback(None)
+        assert run_dir.exists()
+
+        run = load_run(run_dir)
+        assert run is not None
+        # Pairing has 2 games; one timed out, the other completed.
+        # 2 pairings x 2 games = 4 scheduled games; only the timed-out one is missing
+        # from completed results. So completed-game count < scheduled count.
+        assert run.total_games < 4
+        assert run.total_games >= 1  # at least one game actually finished

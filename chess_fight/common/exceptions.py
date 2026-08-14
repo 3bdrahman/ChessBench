@@ -237,7 +237,13 @@ class SetupError(BenchmarkError):
 
 
 class GameExecutionError(BenchmarkError):
-    """Raised when a game fails during benchmark execution."""
+    """Raised when a single game fails during benchmark execution.
+
+    Per-game failures (timeout, evaluator crash, etc.) are recoverable: the
+    benchmark runner logs the failure and continues with the remaining games.
+    The legacy behavior of treating any ``GameExecutionError`` as fatal was
+    overly aggressive and is corrected in the runner's classification.
+    """
 
     def __init__(
         self,
@@ -254,13 +260,77 @@ class GameExecutionError(BenchmarkError):
         self.cause = cause
 
 
+class GameTimeoutError(GameExecutionError):
+    """Raised when a single game exceeds its wall-clock budget.
+
+    A per-game timeout is recoverable: the benchmark continues with the
+    remaining games. Distinct from the HTTP-level :class:`TimeoutError` and
+    from the old behavior where any ``GameExecutionError`` aborted the run.
+    """
+
+    def __init__(
+        self,
+        timeout_seconds: float,
+        game_index: int,
+        white: str,
+        black: str,
+    ) -> None:
+        super().__init__(
+            f"Game timed out after {timeout_seconds:g} seconds",
+            game_index=game_index,
+            white=white,
+            black=black,
+        )
+        self.timeout_seconds = timeout_seconds
+
+
+class LimiterExhaustedError(GameExecutionError):
+    """Raised when the outbound rate limiter's queue-wait budget is exceeded.
+
+    Indicates the limiter for a provider is permanently saturated: continuing
+    to dispatch games to that provider would just queue them all behind the
+    same stall, so the runner treats this as a fatal benchmark-wide signal.
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        game_index: int,
+        white: str,
+        black: str,
+    ) -> None:
+        super().__init__(
+            f"Rate limit exceeded for {provider}, max queue time exceeded",
+            game_index=game_index,
+            white=white,
+            black=black,
+        )
+        self.provider = provider
+
+
+class FatalBenchmarkError(BenchmarkError):
+    """Raised by the runner when it aborts the entire benchmark.
+
+    Carries the unrecoverable cause (auth failure, rate limit, limiter
+    saturation, etc.). Replaces the legacy pattern of overloading
+    :class:`GameExecutionError` as the abort wrapper, so the UI can
+    distinguish "the whole run was aborted" from "one game failed".
+    """
+
+    def __init__(self, message: str, cause: Exception | None = None) -> None:
+        super().__init__(message)
+        self.cause = cause
+
+
 def is_retryable(exc: Exception) -> bool:
     """Return True if ``exc`` is a transient error worth retrying."""
-    if isinstance(exc, (RateLimitError, TimeoutError, ConnectionError, NetworkError)):
-        return True
-    if isinstance(exc, ProviderAPIError) and getattr(exc, "status_code", 0) >= 500:
-        return True
-    return False
+    return (
+        isinstance(exc, (RateLimitError, TimeoutError, ConnectionError, NetworkError))
+        or (
+            isinstance(exc, ProviderAPIError)
+            and getattr(exc, "status_code", 0) >= 500
+        )
+    )
 
 
 __all__ = [
@@ -269,8 +339,11 @@ __all__ = [
     "BenchmarkError",
     "ChessFightError",
     "ConnectionError",
+    "FatalBenchmarkError",
     "GameExecutionError",
+    "GameTimeoutError",
     "InvalidApiKeyError",
+    "LimiterExhaustedError",
     "ModelNotFoundError",
     "MoveExhaustedError",
     "MoveValidationError",

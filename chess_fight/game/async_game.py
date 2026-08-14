@@ -40,7 +40,8 @@ class AsyncChessGame:
         player1: ChessAI,
         player2: ChessAI,
         starting_fen: str | None = None,
-        clock: GameClock | None = None
+        clock: GameClock | None = None,
+        max_moves: int = 512,
     ):
         self.board = chess.Board(starting_fen) if starting_fen else chess.Board()
         self.player1 = player1
@@ -51,6 +52,7 @@ class AsyncChessGame:
         self._cancelled = False
         self.clock = clock
         self._turn_start_time = 0.0
+        self.max_moves = max_moves
 
     def cancel(self) -> None:
         """Cancel the game."""
@@ -75,7 +77,9 @@ class AsyncChessGame:
         if self.clock:
             self.clock.start_turn(True, 0)
 
-        while not self.board.is_game_over(claim_draw=True) and not self._cancelled:
+        while (not self.board.is_game_over(claim_draw=True) 
+               and not self._cancelled 
+               and len(self.moves) < self.max_moves):
             current_player = self.player1 if len(self.moves) % 2 == 0 else self.player2
             is_white = len(self.moves) % 2 == 0
             fen_before = self.board.fen()
@@ -112,15 +116,23 @@ class AsyncChessGame:
                 self.stats.game_duration = time.time() - self.start_time
 
                 is_chess_loss = isinstance(exc, MoveExhaustedError)
+                is_timeout = isinstance(exc, asyncio.TimeoutError)
 
                 if is_chess_loss:
                     self.stats.winner = opponent.name
                     loss_reason = "Illegal Move"
                     winner_str = f"{opponent.name} ({loss_reason} Loss)"
+                    self.stats.termination_reason = "illegal_move"
+                elif is_timeout:
+                    self.stats.winner = "Aborted"
+                    loss_reason = "Timeout"
+                    winner_str = f"Aborted ({loss_reason})"
+                    self.stats.termination_reason = "timeout"
                 else:
                     self.stats.winner = "Aborted"
                     loss_reason = exc.__class__.__name__
                     winner_str = f"Aborted ({loss_reason})"
+                    self.stats.termination_reason = f"error:{loss_reason}"
 
                 final_state = GameState(
                     board=self.board.copy(),
@@ -186,8 +198,39 @@ class AsyncChessGame:
         self.stats.game_duration = time.time() - self.start_time
         if self._cancelled and not self.board.is_game_over(claim_draw=True):
             self.stats.winner = "Cancelled"
+            self.stats.termination_reason = "cancelled"
+        elif len(self.moves) >= self.max_moves:
+            self.stats.winner = "Draw (max moves reached)"
+            self.stats.termination_reason = "max_moves"
         else:
             self.stats.winner = self._determine_winner()
+            # Determine clean chess termination reason
+            outcome = self.board.outcome(claim_draw=True)
+            if outcome is not None:
+                if outcome.termination == chess.Termination.CHECKMATE:
+                    self.stats.termination_reason = "checkmate"
+                elif outcome.termination == chess.Termination.STALEMATE:
+                    self.stats.termination_reason = "stalemate"
+                elif outcome.termination == chess.Termination.INSUFFICIENT_MATERIAL:
+                    self.stats.termination_reason = "insufficient_material"
+                elif outcome.termination == chess.Termination.FIFTY_MOVES:
+                    self.stats.termination_reason = "fifty_moves"
+                elif outcome.termination == chess.Termination.THREEFOLD_REPETITION:
+                    self.stats.termination_reason = "threefold_repetition"
+                elif outcome.termination == chess.Termination.SEVENTYFIVE_MOVES:
+                    self.stats.termination_reason = "seventyfive_moves"
+                elif outcome.termination == chess.Termination.FIVEFOLD_REPETITION:
+                    self.stats.termination_reason = "fivefold_repetition"
+                elif outcome.termination == chess.Termination.VARIANT_WIN:
+                    self.stats.termination_reason = "variant_win"
+                elif outcome.termination == chess.Termination.VARIANT_LOSS:
+                    self.stats.termination_reason = "variant_loss"
+                elif outcome.termination == chess.Termination.VARIANT_DRAW:
+                    self.stats.termination_reason = "variant_draw"
+                else:
+                    self.stats.termination_reason = "draw"
+            else:
+                self.stats.termination_reason = "unknown"
 
         final_state = GameState(
             board=self.board.copy(),
@@ -226,8 +269,9 @@ async def run_game_async(
     white_ai: ChessAI,
     black_ai: ChessAI,
     ui_callback: Callable[[GameState], Awaitable[None]],
-    delay: float = 0.1
+    delay: float = 0.1,
+    max_moves: int = 512,
 ) -> GameStats:
     """Convenience function to run a game."""
-    game = AsyncChessGame(white_ai, black_ai)
+    game = AsyncChessGame(white_ai, black_ai, max_moves=max_moves)
     return await game.play_game(ui_callback, delay)

@@ -7,10 +7,9 @@ where needed.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
-from typing import Any
-
 
 # =============================================================================
 # HTTP / Network
@@ -71,7 +70,12 @@ DEFAULT_GAMES_PER_PAIRING: int = 10
 DEFAULT_COLORS_MODE: str = "alternating"
 DEFAULT_MAX_PARALLEL_GAMES: int = 4
 DEFAULT_MOVE_TIMEOUT_SECONDS: int = 120
-DEFAULT_GAME_TIMEOUT_SECONDS: int = 1800
+# Failsafe only: chess self-terminates (50-move rule, repetition, mate, stalemate)
+# and the per-move timeout (DEFAULT_MOVE_TIMEOUT_SECONDS) bounds individual moves.
+# This guard exists purely for pathological cases (e.g. a model that always returns
+# a legal move but the engine somehow never declares a result). A normal game never
+# approaches it. Non-fatal when it fires.
+DEFAULT_GAME_TIMEOUT_SECONDS: int = 7200
 DEFAULT_OUTPUT_DIR: str = "runs"
 
 # =============================================================================
@@ -248,7 +252,7 @@ PGN_SITE: str = "Local"
 # =============================================================================
 # UI / Streamlit
 # =============================================================================
-import os
+
 _env_providers = os.environ.get("CHESS_FIGHT_HOSTED_PROVIDERS")
 HOSTED_PROVIDERS: tuple[str, ...] | None = tuple(_env_providers.split(",")) if _env_providers else ("openrouter", "nim")
 DEFAULT_BOARD_SIZE: int = 600

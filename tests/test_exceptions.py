@@ -8,8 +8,11 @@ from chess_fight.common.exceptions import (
     BenchmarkError,
     ChessFightError,
     ConnectionError,
+    FatalBenchmarkError,
     GameExecutionError,
+    GameTimeoutError,
     InvalidApiKeyError,
+    LimiterExhaustedError,
     ModelNotFoundError,
     MoveValidationError,
     NetworkError,
@@ -45,6 +48,9 @@ class TestExceptionHierarchy:
             BenchmarkError,
             SetupError,
             GameExecutionError,
+            GameTimeoutError,
+            LimiterExhaustedError,
+            FatalBenchmarkError,
         ):
             assert issubclass(cls, ChessFightError), f"{cls.__name__} must subclass ChessFightError"
 
@@ -74,8 +80,12 @@ class TestExceptionHierarchy:
             assert issubclass(cls, NetworkError), f"{cls.__name__} must subclass NetworkError"
 
     def test_benchmark_errors_inherit_from_benchmark_error(self):
-        for cls in (SetupError, GameExecutionError):
+        for cls in (SetupError, GameExecutionError, GameTimeoutError, LimiterExhaustedError, FatalBenchmarkError):
             assert issubclass(cls, BenchmarkError), f"{cls.__name__} must subclass BenchmarkError"
+
+    def test_game_execution_subclasses_inherit_from_game_execution_error(self):
+        for cls in (GameTimeoutError, LimiterExhaustedError):
+            assert issubclass(cls, GameExecutionError), f"{cls.__name__} must subclass GameExecutionError"
 
 
 class TestInvalidApiKeyError:
@@ -203,6 +213,60 @@ class TestGameExecutionError:
         assert exc.black == "anthropic:claude-3-5-sonnet"
         assert exc.cause is cause
         assert "Benchmark aborted" in str(exc)
+
+
+class TestGameTimeoutError:
+    def test_fields_and_message(self):
+        exc = GameTimeoutError(
+            timeout_seconds=1800.0,
+            game_index=2,
+            white="openai:gpt-4o",
+            black="anthropic:claude-3-5-sonnet",
+        )
+        assert exc.timeout_seconds == 1800.0
+        assert exc.game_index == 2
+        assert exc.white == "openai:gpt-4o"
+        assert exc.black == "anthropic:claude-3-5-sonnet"
+        assert "1800 seconds" in str(exc)
+        # Subclass relations
+        assert isinstance(exc, GameExecutionError)
+        assert isinstance(exc, BenchmarkError)
+        assert isinstance(exc, ChessFightError)
+        # Inherits game fields, not a cause (no upstream cause for a wall-clock trip)
+        assert exc.cause is None
+
+
+class TestLimiterExhaustedError:
+    def test_fields_and_message(self):
+        exc = LimiterExhaustedError(
+            provider="openai",
+            game_index=7,
+            white="openai:gpt-4o",
+            black="openrouter:anthropic/claude-3.5-sonnet",
+        )
+        assert exc.provider == "openai"
+        assert exc.game_index == 7
+        assert "openai" in str(exc)
+        assert "max queue time" in str(exc)
+        assert isinstance(exc, GameExecutionError)
+        assert isinstance(exc, BenchmarkError)
+
+
+class TestFatalBenchmarkError:
+    def test_fields_and_message(self):
+        cause = RateLimitError(provider="openai")
+        exc = FatalBenchmarkError("Benchmark aborted due to fatal error", cause=cause)
+        assert exc.cause is cause
+        assert "Benchmark aborted" in str(exc)
+        assert isinstance(exc, BenchmarkError)
+        assert isinstance(exc, ChessFightError)
+        # Must NOT be a GameExecutionError — that's the whole point of the split.
+        assert not isinstance(exc, GameExecutionError)
+
+    def test_cause_optional(self):
+        exc = FatalBenchmarkError("No providers configured")
+        assert exc.cause is None
+        assert "No providers configured" in str(exc)
 
 
 class TestMoveValidationError:

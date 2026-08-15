@@ -17,12 +17,10 @@ sections:
       {ascii_board}
 
       [LEGAL MOVES]
-      Forcing:
-      {forcing_moves}
-      Developing:
-      {developing_moves}
-      Positional:
-      {positional_moves}
+      All legal moves (UCI): {legal_moves_uci}
+      Forcing: {forcing_uci}
+      Developing: {developing_uci}
+      Positional: {positional_uci}
     required: true
     priority: 1
   - name: "instructions"
@@ -39,5 +37,6 @@ sections:
       </move>
 
       Failure to follow this exact format will result in disqualification.
+      IMPORTANT: Your move MUST be one of the legal UCI moves listed above.
     required: true
     priority: 0

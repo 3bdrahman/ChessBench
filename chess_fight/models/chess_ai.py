@@ -162,8 +162,24 @@ class ChessAI(ABC):
 
     def _create_prompt(self, fen: str) -> str:
         board = chess.Board(fen)
-        moves = self._categorize_moves(board)
+        moves = self.evaluator.categorize_moves(board)
         position_analysis = self._analyze_position_repetition(board)
+
+        # Extract clean UCI move lists for the prompt
+        def extract_uci_moves(pos_eval: PositionEval) -> list[str]:
+            uci_moves = []
+            for desc in pos_eval.pv or []:
+                # UCI move is in brackets at the end: "... [e2e4]"
+                if '[' in desc and ']' in desc:
+                    uci = desc[desc.rfind('[')+1:desc.rfind(']')]
+                    if len(uci) == 4 or len(uci) == 5:  # UCI format (e.g., e2e4, e7e8q)
+                        uci_moves.append(uci)
+            return uci_moves
+
+        forcing_uci = extract_uci_moves(moves['forcing_moves'])
+        developing_uci = extract_uci_moves(moves['developing_moves'])
+        positional_uci = extract_uci_moves(moves['positional_moves'])
+        all_legal_uci = forcing_uci + developing_uci + positional_uci
 
         context = {
             "fen": fen,
@@ -189,6 +205,10 @@ class ChessAI(ABC):
             "forcing_moves": moves['forcing_moves'],
             "developing_moves": moves['developing_moves'],
             "positional_moves": moves['positional_moves'],
+            "legal_moves_uci": " ".join(all_legal_uci),
+            "forcing_uci": " ".join(forcing_uci),
+            "developing_uci": " ".join(developing_uci),
+            "positional_uci": " ".join(positional_uci),
         }
 
         assert self.prompt_template is not None, "Prompt template should be initialized"

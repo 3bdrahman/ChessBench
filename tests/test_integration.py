@@ -607,7 +607,8 @@ class TestBenchmarkRunnerOllamaNoKey:
         summary_path = runner.run_dir / "summary.json"
         import json
         summary = json.loads(summary_path.read_text())
-        assert summary["total_games"] == 2  # Both colors
+        # With 2 players and alternating colors: 1 pairing × 1 game = 1 game total
+        assert summary["total_games"] == 1
 
 
 class TestDeadCodeRemoval:

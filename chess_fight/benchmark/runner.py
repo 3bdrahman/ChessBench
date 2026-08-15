@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import re
+import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
@@ -32,6 +33,7 @@ from chess_fight.common.exceptions import (
 )
 from chess_fight.game.async_game import AsyncChessGame, GameState
 from chess_fight.game.clock import GameClock
+from chess_fight.models import GameStats
 from chess_fight.providers import get_provider, list_providers
 from chess_fight.providers.chess_ai import ProviderChessAI
 from chess_fight.providers.ratelimit import ProviderRateLimiter
@@ -39,6 +41,27 @@ from chess_fight.providers.ratelimit import ProviderRateLimiter
 _log = logging.getLogger(__name__)
 
 _THINKING_RE = re.compile(r"<(?:think|thinking)>(.*?)</(?:think|thinking)>", re.DOTALL | re.IGNORECASE)
+
+# Termination reasons that represent a *clean* chess conclusion — the board
+# reached a real terminal position (or its automatic draw variants). Games that
+# end with one of these reasons count as finished: they are logged via
+# ``end_game`` and contribute to ELO. Anything else (cancelled, error,
+# timeout, max_moves) is a *problem*: the game did NOT reach a natural chess
+# outcome and must NOT be counted as concluded — it is logged via ``log_error``
+# and the benchmark pauses for the user instead of starting the next game.
+_CLEAN_TERMINATIONS: frozenset[str] = frozenset({
+    "checkmate",
+    "stalemate",
+    "insufficient_material",
+    "fifty_moves",
+    "threefold_repetition",
+    "seventyfive_moves",
+    "fivefold_repetition",
+    "variant_win",
+    "variant_loss",
+    "variant_draw",
+    "draw",
+})
 
 
 def _extract_thinking(raw: str | None) -> str | None:
@@ -132,6 +155,17 @@ class BenchmarkRunner:
 
         # Results
         self.results: list[GameLogEntry] = []
+
+        # Benchmark-level pause. On a *problem* game (cancelled/error/timeout/
+        # max_moves), the runner notifies the UI via ui_callback with a paused
+        # GameState, then blocks on this threading.Event until the UI signals
+        # continue/abort. threading.Event is intentional: the UI sets it from
+        # the Streamlit thread; the runner awaits it via asyncio.to_thread.
+        self._continue_after_problem_event: threading.Event = threading.Event()
+        self._abort_requested: bool = False
+        # Failed game's state snapshot — populated by the runner before
+        # signalling the UI so the UI can render the paused board/error.
+        self.problem_state: GameState | None = None
 
     def _initialize_players(self) -> dict[str, ProviderChessAI]:
         """Initialize player AIs from config.
@@ -239,6 +273,16 @@ class BenchmarkRunner:
             reasoning_level=self.config.reasoning_level,
         )
 
+    def request_continue_after_problem(self) -> None:
+        """UI thread: dismiss the problem pause and proceed to the next game."""
+        self._abort_requested = False
+        self._continue_after_problem_event.set()
+
+    def request_abort_after_problem(self) -> None:
+        """UI thread: dismiss the problem pause and abort the benchmark."""
+        self._abort_requested = True
+        self._continue_after_problem_event.set()
+
     async def run_pairing(
         self,
         white_spec: str,
@@ -246,8 +290,17 @@ class BenchmarkRunner:
         opening: dict[str, Any],
         game_idx: int,
         user_callback: Callable[[GameState], Awaitable[None]] | None = None,
-    ) -> GameLogEntry:
+        alternating: bool = False,
+        on_game_start: Callable[[AsyncChessGame], None] | None = None,
+    ) -> GameLogEntry | None:
         """Run a single game between two players.
+
+        Returns a ``GameLogEntry`` when the game reached a clean chess terminal
+        (checkmate, stalemate, automatic draws); returns ``None`` when the game
+        had a problem (cancelled, move timeout, max-moves failsafe, or runtime
+        exception). Problem games are recorded via ``log_error`` and do not
+        contribute to ELO, so the leaderboard is not polluted by games that
+        never reached a real chess outcome.
 
         ``user_callback`` (if provided) is invoked after the per-move logger
         has written the JSONL record — so a UI consumer sees the same state
@@ -321,6 +374,10 @@ class BenchmarkRunner:
             game = AsyncChessGame(white_ai, black_ai, clock=clock)
             game.board = board.copy()
 
+            # Notify UI that a new game has started
+            if on_game_start:
+                on_game_start(game)
+
             # Play the game with move timeout
             stats = None
             try:
@@ -329,49 +386,129 @@ class BenchmarkRunner:
                     delay=0.01,
                     move_timeout_seconds=self.config.move_timeout_seconds
                 )
+            except Exception as exc:
+                run_exc: Exception | None = exc
+                _log.warning(
+                    "Game %d (%s vs %s) play_game raised: %s",
+                    game_idx + 1, white_spec, black_spec, exc,
+                )
+            else:
+                run_exc = None
             finally:
                 if stats is None:
                     stats = game.stats
-                    if not stats.winner:
-                        stats.winner = "Timeout/Error"
-                    if not stats.game_duration:
-                        stats.game_duration = time.time() - game.start_time
+                if not stats.game_duration:
+                    stats.game_duration = time.time() - game.start_time
 
-                # Determine result
-                if stats.winner == white_spec:
-                    result = "1-0"
-                    result_numeric = 1.0
-                elif stats.winner == black_spec:
-                    result = "0-1"
-                    result_numeric = 0.0
-                elif stats.winner in ("1/2-1/2", "Draw", None):
-                    result = "1/2-1/2"
-                    result_numeric = 0.5
-                else:
-                    result = "Error"
-                    result_numeric = None
+                termination = getattr(stats, 'termination_reason', 'unknown')
+                is_clean = termination in _CLEAN_TERMINATIONS
 
-                # End game logging
-                self.logger.end_game(
-                    result=result,
-                    result_numeric=result_numeric if result_numeric is not None else 0.0,
-                    total_moves=stats.total_moves,
-                    game_duration_sec=stats.game_duration,
-                    termination_reason=getattr(stats, 'termination_reason', 'unknown')
-                )
+                if is_clean and run_exc is None:
+                    result_numeric: float | None
+                    if stats.winner == white_spec:
+                        result = "1-0"
+                        result_numeric = 1.0
+                    elif stats.winner == black_spec:
+                        result = "0-1"
+                        result_numeric = 0.0
+                    elif stats.winner in ("1/2-1/2", "Draw", None):
+                        result = "1/2-1/2"
+                        result_numeric = 0.5
+                    else:
+                        result = "Error"
+                        result_numeric = None
 
-                # Update ELO
-                if result_numeric is not None:
-                    self.elo.add_game(white_spec, black_spec, result_numeric, opening['eco'])
+                    if result_numeric is None:
+                        is_clean = False
+                    else:
+                        self.logger.end_game(
+                            result=result,
+                            result_numeric=result_numeric,
+                            total_moves=stats.total_moves,
+                            game_duration_sec=stats.game_duration,
+                            termination_reason=termination,
+                        )
+                        self.elo.add_game(
+                            white_spec, black_spec, result_numeric, opening['eco']
+                        )
+
+                if not is_clean:
+                    problem = (
+                        f"{run_exc}" if run_exc is not None
+                        else f"game did not reach a clean chess terminal "
+                             f"(termination={termination}, winner={stats.winner})"
+                    )
+                    self.logger.log_error(
+                        game_index=game_idx + 1,
+                        white=white_spec,
+                        black=black_spec,
+                        error=f"premature_conclusion: {problem}",
+                    )
+                    _log.warning(
+                        "Game %d (%s vs %s) NOT concluded: %s",
+                        game_idx + 1, white_spec, black_spec, problem,
+                    )
 
             # Stop evaluator after game
             await evaluator.stop()
 
-            return self.logger.games_completed[-1]
+            if (
+                self.logger.games_completed
+                and self.logger.games_completed[-1].termination_reason in _CLEAN_TERMINATIONS
+                and self.logger.games_completed[-1].white_player == white_spec
+                and self.logger.games_completed[-1].black_player == black_spec
+            ):
+                return self.logger.games_completed[-1]
+            return None
 
     async def run_benchmark(self) -> Path:
         """Run the full benchmark."""
         return await self.run_benchmark_with_callback(None)
+
+    async def _pause_on_problems(
+        self,
+        ui_callback: Callable[[GameState], Awaitable[None]],
+        problems: list[tuple[int, str, str]],
+    ) -> None:
+        """Block the runner until the UI dismisses a problem-game pause.
+
+        For each problem game, synthesize a paused GameState snapshot and push
+        it through ``ui_callback`` so the UI renders the paused board + error
+        alongside the same buttons used for mid-game move pauses
+        (``pause_reason="game_failed"``). Then await the cross-thread
+        ``threading.Event`` (the UI sets it on Continue/Abort) without blocking
+        the asyncio loop: ``asyncio.to_thread`` runs the blocking wait in a
+        worker thread while the loop stays responsive.
+        """
+        game_idx, white_spec, black_spec = problems[-1]
+        board = chess.Board()
+        moves_summary = ", ".join(
+            f"game {g + 1} {w} vs {b}" for g, w, b in problems
+        )
+        self.problem_state = GameState(
+            board=board,
+            moves=[],
+            stats=GameStats(),
+            current_player="",
+            is_game_over=False,
+            winner=None,
+            fen_before=board.fen(),
+            is_paused=True,
+            pause_reason="game_failed",
+            pause_error=(
+                f"{len(problems)} game(s) ended with a problem and were not "
+                f"concluded: {moves_summary}. Decide whether to continue or "
+                f"abort the benchmark."
+            ),
+            paused_player=f"{white_spec} vs {black_spec}",
+            paused_turn=game_idx,
+        )
+        await ui_callback(self.problem_state)
+        # asyncio.to_thread is required (not `await event.wait()`): the UI sets
+        # the event via the loop-bound callback, so a blocking loop would
+        # deadlock waiting for a signal it can never receive.
+        await asyncio.to_thread(self._continue_after_problem_event.wait)
+        self._continue_after_problem_event.clear()
 
     async def run_benchmark_with_callback(
         self,
@@ -399,23 +536,32 @@ class BenchmarkRunner:
 
         # Generate pairings
         pairings: list[tuple[str, str]] = []
+        pairing_alternating_colors: list[bool] = []  # Track if pairing alternates colors per game
         players = list(self.config.players)
         if self.config.colors == "fixed" and len(players) >= 2:
             pairings.append((players[0], players[1]))
+            pairing_alternating_colors.append(False)
+        elif self.config.colors == "alternating" and len(players) == 2:
+            # For 2 players with alternating colors: single pairing, alternate colors per game
+            pairings.append((players[0], players[1]))
+            pairing_alternating_colors.append(True)
         else:
+            # Multiple players or other modes: all pairings
             for i, white in enumerate(players):
                 for j, black in enumerate(players):
                     if i != j:
                         pairings.append((white, black))
+                        pairing_alternating_colors.append(False)
 
         fatal_exception: Exception | None = None
 
         # Run games pairing by pairing (for proper Glicko-2 rating periods)
         for pairing_idx, (white, black) in enumerate(pairings):
-            _log.info("=== Pairing %d/%d: %s vs %s ===", pairing_idx + 1, len(pairings), white, black)
+            alternating = pairing_alternating_colors[pairing_idx]
+            _log.info("=== Pairing %d/%d: %s vs %s (alternating=%s) ===", pairing_idx + 1, len(pairings), white, black, alternating)
 
             # Create all game tasks for this pairing
-            pairing_game_tasks: list[tuple[str, str, dict[str, Any], int]] = []
+            pairing_game_tasks: list[tuple[str, str, dict[str, Any], int, bool]] = []
             for game_num in range(self.config.games_per_pairing):
                 game_count = pairing_idx * self.config.games_per_pairing + game_num
                 if game_count < len(self.openings):
@@ -423,7 +569,13 @@ class BenchmarkRunner:
                 else:
                     opening = self.openings[game_count % len(self.openings)]
 
-                pairing_game_tasks.append((white, black, opening, game_count))
+                # For alternating pairing, swap colors for odd-numbered games
+                if alternating and game_num % 2 == 1:
+                    game_white, game_black = black, white
+                else:
+                    game_white, game_black = white, black
+
+                pairing_game_tasks.append((game_white, game_black, opening, game_count, alternating))
 
             # Run games for this pairing with concurrency limit
             semaphore = asyncio.Semaphore(self.config.max_parallel_games)
@@ -434,8 +586,9 @@ class BenchmarkRunner:
                 black_spec: str,
                 opening: dict[str, Any],
                 game_idx: int,
+                alternating: bool = False,
                 sem: asyncio.Semaphore = semaphore,
-            ) -> GameLogEntry:
+            ) -> GameLogEntry | None:
                 async with sem:
                     nonlocal pairing_game_count
                     pairing_game_count += 1
@@ -467,7 +620,12 @@ class BenchmarkRunner:
 
                     try:
                         return await asyncio.wait_for(
-                            self.run_pairing(white_spec, black_spec, opening, game_idx, ui_callback),
+                            self.run_pairing(
+                                white_spec, black_spec, opening, game_idx, ui_callback, alternating,
+                                on_game_start=lambda g: setattr(
+                                    __import__('streamlit').session_state, 'benchmark_current_game', g
+                                )
+                            ),
                             timeout=self.config.game_timeout_seconds
                         )
                     except TimeoutError:
@@ -493,13 +651,18 @@ class BenchmarkRunner:
 
             # Classify exceptions for this pairing
             pairing_game_failures: list[tuple[int, str, str, Exception]] = []
+            paused_problem_games: list[tuple[int, str, str]] = []
 
             for i, result in enumerate(pairing_results):
-                if isinstance(result, Exception):
-                    task = pairing_game_tasks[i]
-                    white_spec, black_spec = task[0], task[1]
-                    game_idx = task[3]
+                task = pairing_game_tasks[i]
+                white_spec, black_spec = task[0], task[1]
+                game_idx = task[3]
 
+                if result is None:
+                    paused_problem_games.append((game_idx, white_spec, black_spec))
+                    continue
+
+                if isinstance(result, Exception):
                     # Fatal: limiter permanently saturated → continuing just queues
                     # every subsequent game behind the same stall.
                     if isinstance(result, LimiterExhaustedError):
@@ -549,6 +712,7 @@ class BenchmarkRunner:
                             game_idx + 1, white_spec, black_spec, result,
                         )
                         print(f"  Game {game_idx + 1} ({white_spec} vs {black_spec}) failed: {result}")
+                        paused_problem_games.append((game_idx, white_spec, black_spec))
                         continue
                     # Per-game move-exhaustion — log and continue.
                     if isinstance(result, MoveExhaustedError):
@@ -568,6 +732,7 @@ class BenchmarkRunner:
                             game_idx + 1, white_spec, black_spec, result,
                         )
                         print(f"  Game {game_idx + 1} ({white_spec} vs {black_spec}) failed: {result}")
+                        paused_problem_games.append((game_idx, white_spec, black_spec))
                         continue
                     # Residual per-game failure (evaluator crash, other GameExecutionError,
                     # unexpected Exception). Log and continue so one bad game doesn't abort
@@ -584,9 +749,24 @@ class BenchmarkRunner:
                         game_idx + 1, white_spec, black_spec, result,
                     )
                     print(f"  Game {game_idx + 1} ({white_spec} vs {black_spec}) failed: {result}")
+                    paused_problem_games.append((game_idx, white_spec, black_spec))
 
             if fatal_exception is not None:
                 break
+
+            # If any game in this pairing had a problem (returned None or was a
+            # per-game exception), PAUSE before moving to the next pairing —
+            # but only when a UI callback is attached (the CLI headless runner
+            # has no UI to pause on, so it skips and continues as before).
+            if paused_problem_games and ui_callback is not None:
+                await self._pause_on_problems(
+                    ui_callback, paused_problem_games
+                )
+                if self._abort_requested:
+                    raise FatalBenchmarkError(
+                        "Benchmark aborted by user after a problem game.",
+                        cause=None,
+                    )
 
             # Finalize rating period after this pairing's games complete
             self.elo.finalize_period()

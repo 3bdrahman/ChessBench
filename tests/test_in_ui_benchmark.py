@@ -83,7 +83,8 @@ class TestInProcessBenchmark:
 
         assert len(seen_states) >= 4
         final_states = [s for s in seen_states if s.is_game_over]
-        assert len(final_states) == 2
+        # With 2 players and alternating colors: 1 pairing × 1 game = 1 final state
+        assert len(final_states) == 1
         for fs in final_states:
             assert fs.winner is not None
             assert fs.stats.total_moves > 0
@@ -120,7 +121,8 @@ class TestInProcessBenchmark:
 
         run = load_run(run_dir)
         assert run is not None
-        assert run.total_games == 2
+        # With 2 players and alternating colors: 1 pairing × 1 game = 1 game total
+        assert run.total_games == 1
         assert "stockfish:depth-4" in run.player_stats
         assert "stockfish:depth-8" in run.player_stats
 
@@ -282,7 +284,7 @@ class TestPerGameTimeoutNonFatal:
         original_run_pairing = runner.run_pairing
         call_count = {"n": 0}
 
-        async def flaky_run_pairing(white_spec, black_spec, opening, game_idx, user_callback=None):
+        async def flaky_run_pairing(white_spec, black_spec, opening, game_idx, user_callback=None, alternating=False, on_game_start=None):
             if call_count["n"] == 0:
                 call_count["n"] += 1
                 raise GameTimeoutError(
@@ -292,7 +294,7 @@ class TestPerGameTimeoutNonFatal:
                     black=black_spec,
                 )
             call_count["n"] += 1
-            return await original_run_pairing(white_spec, black_spec, opening, game_idx, user_callback)
+            return await original_run_pairing(white_spec, black_spec, opening, game_idx, user_callback, alternating, on_game_start)
 
         runner.run_pairing = flaky_run_pairing  # type: ignore[method-assign]
 
@@ -302,8 +304,7 @@ class TestPerGameTimeoutNonFatal:
 
         run = load_run(run_dir)
         assert run is not None
-        # Pairing has 2 games; one timed out, the other completed.
-        # 2 pairings x 2 games = 4 scheduled games; only the timed-out one is missing
-        # from completed results. So completed-game count < scheduled count.
-        assert run.total_games < 4
+        # With 2 players and alternating colors: 1 pairing × 2 games = 2 scheduled games
+        # One timed out, so completed-game count < scheduled count.
+        assert run.total_games < 2
         assert run.total_games >= 1  # at least one game actually finished

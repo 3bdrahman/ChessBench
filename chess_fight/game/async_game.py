@@ -30,6 +30,12 @@ class GameState:
     last_completion_result: CompletionResult | None = None
     fen_before: str | None = None
     clock_state: dict[str, Any] | None = None
+    # Pause/resume support
+    is_paused: bool = False
+    pause_reason: str | None = None
+    pause_error: str | None = None
+    paused_player: str | None = None
+    paused_turn: int = 0
 
 
 class AsyncChessGame:
@@ -53,10 +59,59 @@ class AsyncChessGame:
         self.clock = clock
         self._turn_start_time = 0.0
         self.max_moves = max_moves
+        # Pause/resume support
+        self._pause_event = asyncio.Event()
+        self._pause_event.set()  # Start unpaused
+        self._paused = False
+        self._pause_reason: str | None = None
+        self._pause_error: str | None = None
+        self._paused_player: str | None = None
+        self._paused_turn: int = 0
+        self._retry_current_turn = False
 
     def cancel(self) -> None:
         """Cancel the game."""
         self._cancelled = True
+        self._pause_event.set()  # Unblock any waiting
+
+    def pause(self, reason: str, error: str | None = None, player: str | None = None) -> None:
+        """Pause the game with a reason."""
+        self._paused = True
+        self._pause_reason = reason
+        self._pause_error = error
+        self._paused_player = player
+        self._paused_turn = len(self.moves)
+        self._pause_event.clear()
+
+    def resume(self, retry_current_turn: bool = True) -> None:
+        """Resume the game from pause."""
+        self._paused = False
+        self._pause_reason = None
+        self._pause_error = None
+        self._paused_player = None
+        self._paused_turn = 0
+        self._retry_current_turn = retry_current_turn
+        self._pause_event.set()
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
+    @property
+    def pause_reason(self) -> str | None:
+        return self._pause_reason
+
+    @property
+    def pause_error(self) -> str | None:
+        return self._pause_error
+
+    @property
+    def paused_player(self) -> str | None:
+        return self._paused_player
+
+    @property
+    def paused_turn(self) -> int:
+        return self._paused_turn
 
     async def play_game(
         self,
@@ -80,6 +135,35 @@ class AsyncChessGame:
         while (not self.board.is_game_over(claim_draw=True) 
                and not self._cancelled 
                and len(self.moves) < self.max_moves):
+            # Handle pause/resume - wait if paused
+            if self._paused:
+                # Send paused state to UI
+                paused_state = GameState(
+                    board=self.board.copy(),
+                    moves=self.moves.copy(),
+                    stats=self.stats,
+                    current_player=self._paused_player or "",
+                    is_game_over=False,
+                    fen_before=self.board.fen(),
+                    clock_state=self.clock.get_state() if self.clock else None,
+                    is_paused=True,
+                    pause_reason=self._pause_reason,
+                    pause_error=self._pause_error,
+                    paused_player=self._paused_player,
+                    paused_turn=self._paused_turn,
+                )
+                await ui_callback(paused_state)
+                
+                # Wait for resume signal
+                await self._pause_event.wait()
+                
+                # If retry is requested, we'll retry the same turn (don't advance move count)
+                if not self._retry_current_turn:
+                    # User chose not to retry - treat as cancellation
+                    self._cancelled = True
+                    break
+                # If retry, continue to retry the same turn (loop continues without advancing)
+
             current_player = self.player1 if len(self.moves) % 2 == 0 else self.player2
             is_white = len(self.moves) % 2 == 0
             fen_before = self.board.fen()
@@ -112,44 +196,54 @@ class AsyncChessGame:
                     move_str, completion_result = await current_player.get_move_with_result(fen_before)
             except Exception as exc:
                 _log.error("Player %s move execution failed on turn %d: %s", current_player.name, len(self.moves), exc)
-                opponent = self.player2 if is_white else self.player1
-                self.stats.game_duration = time.time() - self.start_time
-
+                
+                # Pause the game instead of terminating
+                error_type = type(exc).__name__
                 is_chess_loss = isinstance(exc, MoveExhaustedError)
                 is_timeout = isinstance(exc, asyncio.TimeoutError)
-
+                
                 if is_chess_loss:
-                    self.stats.winner = opponent.name
-                    loss_reason = "Illegal Move"
-                    winner_str = f"{opponent.name} ({loss_reason} Loss)"
-                    self.stats.termination_reason = "illegal_move"
+                    reason = "illegal_move"
+                    error_msg = f"Illegal move: {exc}"
                 elif is_timeout:
-                    self.stats.winner = "Aborted"
-                    loss_reason = "Timeout"
-                    winner_str = f"Aborted ({loss_reason})"
-                    self.stats.termination_reason = "timeout"
+                    reason = "timeout"
+                    error_msg = f"Move timeout after {move_timeout_seconds}s"
                 else:
-                    self.stats.winner = "Aborted"
-                    loss_reason = exc.__class__.__name__
-                    winner_str = f"Aborted ({loss_reason})"
-                    self.stats.termination_reason = f"error:{loss_reason}"
-
-                final_state = GameState(
+                    reason = "error"
+                    error_msg = f"{error_type}: {exc}"
+                
+                self.pause(
+                    reason=reason,
+                    error=error_msg,
+                    player=current_player.name
+                )
+                
+                # Send paused state and wait for resume
+                paused_state = GameState(
                     board=self.board.copy(),
                     moves=self.moves.copy(),
                     stats=self.stats,
-                    current_player="",
-                    is_game_over=True,
-                    winner=winner_str,
-                    game_duration=self.stats.game_duration,
+                    current_player=current_player.name,
+                    is_game_over=False,
+                    fen_before=fen_before,
                     clock_state=self.clock.get_state() if self.clock else None,
+                    is_paused=True,
+                    pause_reason=reason,
+                    pause_error=error_msg,
+                    paused_player=current_player.name,
+                    paused_turn=len(self.moves),
                 )
-                await ui_callback(final_state)
+                await ui_callback(paused_state)
                 
-                if not is_chess_loss:
-                    raise exc
-                    
-                return self.stats
+                # Wait for resume
+                await self._pause_event.wait()
+                
+                if not self._retry_current_turn:
+                    # User chose not to retry - cancel game
+                    self._cancelled = True
+                    break
+                # Retry the same turn - continue loop without advancing move count
+                continue
 
             move = chess.Move.from_uci(move_str)
 

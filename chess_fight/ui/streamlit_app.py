@@ -32,6 +32,7 @@ from chess_fight.benchmark.results_view import (
 from chess_fight.benchmark.runner import BenchmarkConfig, BenchmarkRunner
 from chess_fight.common.common_types import is_chess_capable
 from chess_fight.common.exceptions import (
+    FatalBenchmarkError,
     GameExecutionError,
     InvalidApiKeyError,
     MoveValidationError,
@@ -463,16 +464,21 @@ def run_in_process_benchmark(
         colors=colors,
     )
 
-    # Immersive Theater Mode: Hide the sidebar during the game
-    st.markdown(
-        """
-        <style>
-            [data-testid="stSidebar"] { display: none !important; }
-            [data-testid="collapsedControl"] { display: none !important; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Immersive Theater Mode: hide the sidebar ONLY while a benchmark is
+    # actively running. The completion screen restores the sidebar so the
+    # session retains its normal navigation surface and doesn't end on a
+    # different-looking screen.
+    benchmark_active = not st.session_state.get("benchmark_done", False)
+    if benchmark_active:
+        st.markdown(
+            """
+            <style>
+                [data-testid="stSidebar"] { display: none !important; }
+                [data-testid="collapsedControl"] { display: none !important; }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
     if "benchmark_runner" not in st.session_state or st.session_state.benchmark_runner is None:
         try:
@@ -492,7 +498,15 @@ def run_in_process_benchmark(
 
     runner = st.session_state.benchmark_runner
 
-    num_pairings = 1 if colors == "fixed" else (len(runner.config.players) * (len(runner.config.players) - 1))
+    num_players = len(runner.config.players)
+    if colors == "fixed":
+        num_pairings = 1 if num_players >= 2 else 0
+    elif colors == "alternating" and num_players == 2:
+        # Single pairing with alternating colors per game
+        num_pairings = 1
+    else:
+        # Multiple players: all pairings
+        num_pairings = num_players * (num_players - 1)
     total_games = num_pairings * games
 
     def start_benchmark():
@@ -503,7 +517,6 @@ def run_in_process_benchmark(
         st.session_state.benchmark_start_time = time.time()
         st.session_state.benchmark_run_dir = None
         st.session_state.benchmark_completed_games = []  # Store completed game states
-        st.session_state.benchmark_selected_game = None  # Which completed game to view (None = live)
 
         def ui_callback_sync(state: GameState):
             try:
@@ -542,6 +555,97 @@ def run_in_process_benchmark(
         st.session_state.benchmark_thread = t
         t.start()
 
+    def _draw_paused_ui(board_ph, stats_ph, moves_ph, completion_ph, state):
+        """Draw the paused game UI with retry/cancel options.
+
+        Renders different button rows depending on ``pause_reason``:
+        - mid-game move error → Retry / Skip / Cancel buttons that resume or
+          cancel the current ``AsyncChessGame``.
+        - benchmark-level ``game_failed`` pause (a game ended without a clean
+          chess terminal) → Continue / Abort buttons that release the runner's
+          cross-thread ``threading.Event`` so the runner proceeds to the next
+          game or raises ``FatalBenchmarkError`` respectively.
+        The surrounding layout (board snapshot, error details, metrics, moves)
+        is identical in both cases, so the paused screen looks the same to the
+        user regardless of which kind of pause triggered it.
+        """
+        progress_ph = st.empty()
+
+        progress_ph.warning(f"⏸ Game Paused — {state.pause_reason or 'Unknown reason'}")
+
+        st.error(f"**Error:** {state.pause_error or 'No error details'}")
+        st.info(f"**Failed Player:** {state.paused_player} (Turn {state.paused_turn + 1})")
+
+        start_time = st.session_state.benchmark_start_time
+        _draw_board(board_ph, state, start_time)
+        _draw_metrics(stats_ph, state, start_time)
+        _draw_moves(moves_ph, state.moves)
+
+        is_benchmark_pause = (state.pause_reason == "game_failed")
+        if is_benchmark_pause:
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("▶️ Continue to next game", type="primary", width="stretch", key="paused_continue"):
+                    runner = st.session_state.get("benchmark_runner")
+                    if runner is not None and hasattr(runner, "request_continue_after_problem"):
+                        runner.request_continue_after_problem()
+                    st.rerun()
+            with col2:
+                if st.button("⛔ Abort benchmark", width="stretch", key="paused_abort"):
+                    runner = st.session_state.get("benchmark_runner")
+                    if runner is not None and hasattr(runner, "request_abort_after_problem"):
+                        runner.request_abort_after_problem()
+                    st.rerun()
+        else:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("↻ Retry Turn", type="primary", width="stretch", key="paused_retry"):
+                    game = st.session_state.get("benchmark_current_game")
+                    if game:
+                        game.resume(retry_current_turn=True)
+                    st.rerun()
+            with col2:
+                if st.button("⏭ Skip Turn (Force Move)", width="stretch", key="paused_skip"):
+                    game = st.session_state.get("benchmark_current_game")
+                    if game:
+                        game.resume(retry_current_turn=False)
+                    st.rerun()
+            with col3:
+                if st.button("⛔ Cancel Game", width="stretch", key="paused_cancel"):
+                    game = st.session_state.get("benchmark_current_game")
+                    if game:
+                        game.cancel()
+                    st.rerun()
+
+    def _draw_completed_game_summary(game_idx: int, state: GameState) -> None:
+        """Render one completed game as a collapsed expander below the live view.
+
+        The benchmark appends newly-finished games to
+        ``st.session_state.benchmark_completed_games`` in chronological order,
+        so iterating that list yields oldest-on-top → newest-on-bottom. Each
+        entry is a collapsed ``st.expander`` (cheap to render many; only the
+        metadata shows until the user opens it) containing the final board,
+        metrics, and move history. This replaces the older dropdown-based
+        navigation: the live (or paused) game is always on top and historical
+        games stack beneath it as they complete.
+        """
+        white_player = state.moves[0].player if state.moves else "?"
+        black_player = state.moves[1].player if len(state.moves) >= 2 else "?"
+        term_reason = getattr(state.stats, 'termination_reason', 'unknown')
+        label = (
+            f"Game {game_idx + 1} · {white_player} vs {black_player} · "
+            f"Result: {state.winner or '?'} · "
+            f"{term_reason.replace('_', ' ').title()}"
+        )
+        with st.expander(label, expanded=False):
+            start_time = st.session_state.benchmark_start_time
+            sum_board_ph = st.empty()
+            sum_stats_ph = st.empty()
+            sum_moves_ph = st.empty()
+            _draw_board(sum_board_ph, state, start_time)
+            _draw_metrics(sum_stats_ph, state, start_time)
+            _draw_moves(sum_moves_ph, state.moves)
+
     if "benchmark_thread" not in st.session_state or (not st.session_state.benchmark_thread.is_alive() and not st.session_state.get("benchmark_done", False)):
         if not st.session_state.get("benchmark_done", False):
             start_benchmark()
@@ -553,68 +657,47 @@ def run_in_process_benchmark(
         moves_ph = st.empty()
         completion_ph = st.empty()
 
-        # Game navigation: show dropdown if there are completed games
-        completed_games = st.session_state.get("benchmark_completed_games", [])
-        selected_game_idx = st.session_state.get("benchmark_selected_game")
+        state: GameState | None = st.session_state.get("benchmark_state")
 
-        # Navigation UI
-        if completed_games:
-            nav_col1, nav_col2 = st.columns([3, 1])
-            with nav_col1:
-                game_options = ["🔴 Live Game"] + [
-                    f"Game {i+1}: {g.winner if g.winner else 'In Progress'}" 
-                    for i, g in enumerate(completed_games)
-                ]
-                current_selection = 0 if selected_game_idx is None else selected_game_idx + 1
-                new_selection = st.selectbox(
-                    "Navigate Games",
-                    options=range(len(game_options)),
-                    format_func=lambda i: game_options[i],
-                    index=current_selection,
-                    key="benchmark_game_nav",
-                    width="stretch",
+        if state is not None and getattr(state, 'is_paused', False):
+            pause_reason = getattr(state, 'pause_reason', None)
+            if pause_reason == "game_failed":
+                progress_ph.warning(
+                    "Benchmark paused — a game ended with a problem and was not "
+                    "concluded. Continue to the next game or abort the benchmark."
                 )
-                if new_selection != current_selection:
-                    st.session_state.benchmark_selected_game = None if new_selection == 0 else new_selection - 1
-                    st.rerun()
-            with nav_col2:
-                if selected_game_idx is not None:
-                    if st.button("↩️ Back to Live", width="stretch"):
-                        st.session_state.benchmark_selected_game = None
-                        st.rerun()
-
-        # Determine which game state to display
-        if selected_game_idx is not None and selected_game_idx < len(completed_games):
-            # Show completed game
-            state = completed_games[selected_game_idx]
-            game_idx = selected_game_idx + 1
-            frac = min(1.0, len(completed_games) / max(1, total_games))
-            progress_ph.progress(
-                frac, text=f"Reviewing Game {game_idx} / {total_games} (completed)"
-            )
-        elif st.session_state.get("benchmark_state"):
-            # Show live game
-            state = st.session_state.benchmark_state
+            else:
+                progress_ph = st.empty()  # _draw_paused_ui sets its own progress
+            _draw_paused_ui(board_ph, stats_ph, moves_ph, completion_ph, state)
+        elif state is not None:
             game_idx = st.session_state.benchmark_game_index
             frac = min(1.0, game_idx / max(1, total_games))
             progress_ph.progress(
-                frac, text=f"Game {game_idx} / {total_games} complete"
+                frac, text=f"Game {game_idx + 1} / {total_games} in progress"
             )
+            start_time = st.session_state.benchmark_start_time
+            _draw_board(board_ph, state, start_time)
+            _draw_metrics(stats_ph, state, start_time)
+            _draw_moves(moves_ph, state.moves)
+            _draw_completion_result(completion_ph, state)
         else:
             progress_ph.info(
                 f"Starting in-process benchmark: {white_spec} vs {black_spec} ({games} games)..."
             )
-            return
+            start_time = st.session_state.benchmark_start_time
 
-        start_time = st.session_state.benchmark_start_time
-        _draw_board(board_ph, state, start_time)
-        _draw_metrics(stats_ph, state, start_time)
-        _draw_moves(moves_ph, state.moves)
-        _draw_completion_result(completion_ph, state)
+        # Stack completed games beneath the live game: oldest on top, newest on
+        # bottom. The runner's ui_callback appends in completion order.
+        completed_games = st.session_state.get("benchmark_completed_games", [])
+        if completed_games:
+            st.markdown("---")
+            st.markdown(f"### 🗂 Completed games ({len(completed_games)})")
+            for i, completed_state in enumerate(completed_games):
+                _draw_completed_game_summary(i, completed_state)
 
     if st.session_state.get("benchmark_error"):
         exc = st.session_state.benchmark_error
-        if isinstance(exc, GameExecutionError):
+        if isinstance(exc, (GameExecutionError, FatalBenchmarkError)):
             render_error(st, exc)
         elif isinstance(exc, (NoProvidersConfiguredError, SetupError, InvalidApiKeyError)):
             render_error(st, exc)
@@ -639,13 +722,19 @@ def run_in_process_benchmark(
             time.sleep(2.0)
             st.rerun()
 
+    # Completion: render the SAME screen as during the run (live board +
+    # stacked completed-game summaries) so the user doesn't end on a different
+    # looking screen; the sidebar is now visible again because
+    # ``benchmark_active`` was False above. Then append the run summary below.
+    _draw_live_ui()
+
+    st.markdown("---")
     st.success("Benchmark complete!")
 
-    # Show real ELO leaderboard + per-pairing results from the run we just did.
     run = None
     if st.session_state.get("benchmark_run_dir"):
         run = load_run(st.session_state.benchmark_run_dir)
-    
+
     if run is not None:
         render_run_summary(run, expanded=True)
 

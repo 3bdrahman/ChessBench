@@ -69,7 +69,12 @@ DEFAULT_OPENING_BOOK: str = "eco_balanced"
 DEFAULT_GAMES_PER_PAIRING: int = 10
 DEFAULT_COLORS_MODE: str = "alternating"
 DEFAULT_MAX_PARALLEL_GAMES: int = 4
-DEFAULT_MOVE_TIMEOUT_SECONDS: int = 120
+DEFAULT_MOVE_TIMEOUT_SECONDS: int = 450
+# ^ MUST exceed the worst-case move cycle inside get_move_with_result
+# (every retry × (DEFAULT_HTTP_TIMEOUT + DEFAULT_MAX_BACKOFF)).
+# If this falls below that ceiling, asyncio.wait_for cancels the move coroutine
+# mid-retry — the game false-pauses with reason="timeout" and the move is never
+# recorded even though the API key is valid and a request would have succeeded.
 # Failsafe only: chess self-terminates (50-move rule, repetition, mate, stalemate)
 # and the per-move timeout (DEFAULT_MOVE_TIMEOUT_SECONDS) bounds individual moves.
 # This guard exists purely for pathological cases (e.g. a model that always returns

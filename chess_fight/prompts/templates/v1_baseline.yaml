@@ -1,28 +1,13 @@
 version: "v1_baseline"
 model_hints:
-  description: "Original baseline prompt"
+  description: "Baseline prompt with SAN annotations, game history, last move, and piece locations"
 max_tokens: 2000
 sections:
   - name: "role"
     content_template: "You are a professional chess engine playing as {color}."
     required: true
     priority: 0
-  - name: "board_state"
-    content_template: |
-      [GAME STATE]
-      FEN: {fen}
-      Turn: {color}
-
-      [BOARD]
-      {ascii_board}
-
-      [LEGAL MOVES]
-      All legal moves (UCI): {legal_moves_uci}
-      Forcing: {forcing_uci}
-      Developing: {developing_uci}
-      Positional: {positional_uci}
-    required: true
-    priority: 1
+    is_system: true
   - name: "instructions"
     content_template: |
       [INSTRUCTIONS]
@@ -37,6 +22,30 @@ sections:
       </move>
 
       Failure to follow this exact format will result in disqualification.
-      IMPORTANT: Your move MUST be one of the legal UCI moves listed above.
+      IMPORTANT: Your move MUST be one of the legal UCI moves listed below.
     required: true
     priority: 0
+    is_system: true
+  - name: "board_state"
+    content_template: |
+      [GAME STATE]
+      FEN: {fen}
+      Turn: {color}
+      Opponent's Last Move: {last_move_san}
+      Game Move History: {move_history_san}
+
+      [BOARD]
+      {ascii_board}
+
+      [PIECE LOCATIONS]
+      White: {white_pieces}
+      Black: {black_pieces}
+
+      [LEGAL MOVES]
+      Legal moves (UCI with SAN): {legal_moves_annotated}
+      All legal UCI moves: {legal_moves_uci}
+      Forcing: {forcing_uci}
+      Developing: {developing_uci}
+      Positional: {positional_uci}
+    required: true
+    priority: 1

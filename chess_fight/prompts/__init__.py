@@ -17,6 +17,7 @@ class PromptSection:
     content_template: str
     required: bool = True
     priority: int = 0  # Lower = more important, dropped last during truncation
+    is_system: bool = False
 
     def render(self, context: dict[str, Any]) -> str:
         """Render the section with the given context."""
@@ -33,6 +34,19 @@ class PromptTemplate:
     version: str
     model_hints: dict[str, Any] = field(default_factory=dict)
     max_tokens: int | None = None
+
+    def referenced_variables(self) -> set[str]:
+        """Return the set of variable names referenced by all sections.
+
+        Parses ``{name}`` placeholders from every section's
+        ``content_template`` so callers can compute only the context
+        variables the template actually uses.
+        """
+        import re
+        variables: set[str] = set()
+        for section in self.sections:
+            variables.update(re.findall(r"\{(\w+)\}", section.content_template))
+        return variables
 
     def render(self, context: dict[str, Any], truncate: bool = True) -> str:
         """Render the full prompt with optional truncation."""
@@ -60,10 +74,32 @@ class PromptTemplate:
 
         return "\n\n".join(rendered_parts)
 
+    def render_messages(self, context: dict[str, Any], truncate: bool = True) -> list[ChatMessage]:
+        """Render prompt split into system and user ChatMessage objects."""
+        from chess_fight.common.common_types import ChatMessage
+
+        system_parts = []
+        user_parts = []
+
+        sorted_sections = sorted(self.sections, key=lambda s: s.priority)
+        for section in sorted_sections:
+            rendered = section.render(context)
+            if section.is_system:
+                system_parts.append(rendered)
+            else:
+                user_parts.append(rendered)
+
+        messages = []
+        if system_parts:
+            messages.append(ChatMessage(role="system", content="\n\n".join(system_parts)))
+        if user_parts:
+            messages.append(ChatMessage(role="user", content="\n\n".join(user_parts)))
+        return messages
+
     def hash(self) -> str:
         """Generate a hash of this template for logging/versioning."""
         content = f"{self.version}|" + "|".join(
-            f"{s.name}:{s.content_template}:{s.required}:{s.priority}"
+            f"{s.name}:{s.content_template}:{s.required}:{s.priority}:{s.is_system}"
             for s in self.sections
         )
         return hashlib.sha256(content.encode()).hexdigest()[:16]
@@ -89,6 +125,7 @@ class PromptRegistry:
                     content_template=s["content_template"],
                     required=s.get("required", True),
                     priority=s.get("priority", 0),
+                    is_system=s.get("is_system", False),
                 ))
 
             return PromptTemplate(

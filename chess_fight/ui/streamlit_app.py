@@ -116,7 +116,6 @@ def _draw_moves(moves_placeholder, moves: list) -> None:
                 "Move #": i + 1,
                 "Player": move.player,
                 "Move": move.move,
-                "Time": datetime.fromtimestamp(move.timestamp).strftime("%H:%M:%S"),
                 "Capture": "✓" if move.is_capture else "",
                 "Check": "✓" if move.is_check else "",
                 "Reasoning": (move.reasoning.replace("<", "&lt;").replace(">", "&gt;") if move.reasoning else ""),
@@ -946,7 +945,6 @@ def render_game_viewer(run) -> None:
                 "Color": m.color.title(),
                 "Player": game.white_player if m.color == "white" else game.black_player,
                 "Move": m.move_san,
-                "Time": t_str,
                 "Reasoning": m.thinking_trace.replace("<", "&lt;").replace(">", "&gt;") if m.thinking_trace else "",
             })
             

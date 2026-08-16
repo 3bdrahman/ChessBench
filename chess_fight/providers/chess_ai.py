@@ -51,28 +51,60 @@ class ProviderChessAI(ChessAI):
         self.name = f"{provider_name}:{model_id}"
 
     async def _get_move_from_model(self, fen: str, validation_attempt: int = 0, network_attempts: int = 0) -> str:
-        prompt = self._create_prompt(fen)
-        if validation_attempt > 0:
+        board = chess.Board(fen)
+        legal_moves_uci = " ".join(m.uci() for m in board.legal_moves)
+
+        if validation_attempt == 0:
+            messages = self._create_messages(fen)
+        elif validation_attempt == 1:
+            # First retry: append a stern warning to the full prompt
+            prompt = self._create_prompt(fen)
             prompt += (
-                f"\n\n[SYSTEM WARNING]: Your previous attempt failed because you either reasoned "
-                f"for too long without outputting a move, or your move was invalid. "
-                f"Do NOT output long reasoning. You MUST output a legal UCI move enclosed in <move></move> tags immediately."
+                f"\n\n[SYSTEM WARNING]: Your previous attempt FAILED. You either "
+                f"reasoned for too long without outputting a move, or your output "
+                f"format was wrong. You MUST respond with ONLY a short reason and "
+                f"a legal UCI move in <move></move> tags. Example: <move>e2e4</move>\n"
+                f"Legal moves: {legal_moves_uci}"
             )
+            messages = [ChatMessage(role="user", content=prompt)]
+        else:
+            # Second+ retry: replace the entire prompt with a minimal instruction.
+            prompt = (
+                f"You are playing chess. It is your turn.\n"
+                f"FEN: {fen}\n"
+                f"Legal moves (UCI): {legal_moves_uci}\n\n"
+                f"Pick ONE legal move from the list above and output it in this EXACT format with nothing else:\n"
+                f"<move>e2e4</move>\n\n"
+                f"Do NOT explain, analyze, or reason. Output ONLY the <move> tag."
+            )
+            messages = [ChatMessage(role="user", content=prompt)]
 
         # Pass FEN explicitly so providers like Stockfish can use it directly
         # instead of trying to parse it from the full prompt.
         params = dict(self.params)
         params["fen"] = fen
         params["reasoning_level"] = self.reasoning_level
+
+        # Determine max_tokens: increase on retries to prevent truncation
+        # before the model outputs a move.
+        base_max_tokens = REASONING_MAX_TOKENS.get(self.reasoning_level, 1024)
+        if validation_attempt >= 2:
+            # On 2nd+ retry with minimal prompt, a small budget suffices
+            retry_max_tokens = 128
+        elif validation_attempt == 1:
+            # On 1st retry, give 50% more headroom
+            retry_max_tokens = int(base_max_tokens * 1.5)
+        else:
+            retry_max_tokens = base_max_tokens
         if params.get("max_tokens") is None:
-            params["max_tokens"] = REASONING_MAX_TOKENS.get(self.reasoning_level, 1024)
+            params["max_tokens"] = retry_max_tokens
 
         while True:
             try:
                 result = await self.provider.complete(
                     self.api_key,
                     self.model_id,
-                    [ChatMessage(role="user", content=prompt)],
+                    messages,
                     **params
                 )
                 break

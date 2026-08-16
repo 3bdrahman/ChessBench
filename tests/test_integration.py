@@ -537,10 +537,20 @@ class TestRunnerMetricsEndToEnd:
         with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
-            mock_response = MagicMock()
-            mock_response.choices = [MagicMock(message=MagicMock(content="e2e4"))]
-            mock_response.usage = MagicMock(prompt_tokens=999, completion_tokens=4)
-            mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+            scholars_mate = ["e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6", "h5f7"]
+            move_idx = 0
+
+            async def mock_create(**kwargs):
+                nonlocal move_idx
+                move_str = scholars_mate[move_idx % len(scholars_mate)]
+                move_idx += 1
+                mock_resp = MagicMock()
+                mock_resp.choices = [MagicMock(message=MagicMock(content=move_str))]
+                mock_resp.usage = MagicMock(prompt_tokens=999, completion_tokens=4)
+                return mock_resp
+
+            mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
 
             await runner.run_benchmark()
 
@@ -580,14 +590,13 @@ class TestBenchmarkRunnerOllamaNoKey:
             async def list_models(self, api_key: str) -> list[ModelInfo]:
                 return [ModelInfo(id="llama3", name="llama3", provider="ollama")]
 
+            scholars_mate = ["e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6", "h5f7"]
+            move_idx = 0
+
             async def complete(self, api_key: str, model: str, messages: list[ChatMessage], **params) -> CompletionResult:
-                # Return a valid move based on the current position
-                fen = params.get("fen", chess.STARTING_FEN)
-                board = chess.Board(fen)
-                legal = list(board.legal_moves)
-                if legal:
-                    return CompletionResult(text=legal[0].uci(), tokens_in=100, tokens_out=5, latency_ms=100)
-                return CompletionResult(text="e2e4", tokens_in=100, tokens_out=5, latency_ms=100)
+                move_str = self.scholars_mate[self.move_idx % len(self.scholars_mate)]
+                self.move_idx += 1
+                return CompletionResult(text=move_str, tokens_in=100, tokens_out=5, latency_ms=100)
 
         config = BenchmarkConfig(
             players=["ollama:llama3", "ollama:llama3.1"],

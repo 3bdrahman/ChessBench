@@ -1,12 +1,13 @@
 version: "v2_tactical_focus"
 model_hints:
-  description: "Tactical emphasis, shorter context"
+  description: "Tactical emphasis with SAN annotations, last move, and move history"
 max_tokens: 1500
 sections:
   - name: "role"
     content_template: "You are playing chess as {color}. Focus on tactical precision."
     required: true
     priority: 0
+    is_system: true
   - name: "tactical_priority"
     content_template: |
       CRITICAL TACTICAL PRIORITIES:
@@ -16,11 +17,14 @@ sections:
       4. DEFEND against opponent's tactics
     required: true
     priority: 1
+    is_system: true
   - name: "position_analysis"
     content_template: |
       Current position:
       Stagnation: {stagnation_status} | Progress: {position_progress}
       Tension: {material_tension} | Dynamism: {position_dynamism}
+      Opponent's Last Move: {last_move_san}
+      Game Move History: {move_history_san}
     required: true
     priority: 2
   - name: "legal_moves"
@@ -34,9 +38,12 @@ sections:
 
       3. POSITIONAL MOVES (Last resort):
       {positional_moves}
+
+      All legal moves (UCI with SAN): {legal_moves_annotated}
     required: true
     priority: 3
   - name: "instructions"
     content_template: "UCI move:"
     required: true
     priority: 0
+    is_system: true

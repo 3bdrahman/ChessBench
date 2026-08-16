@@ -91,20 +91,80 @@ class TestPromptTemplate:
         board = chess.Board()
         prompt = ai._create_prompt(board.fen())
 
-        # No unrendered placeholders should remain
-        # Check for common placeholder patterns that shouldn't appear
+        # No unrendered placeholders should remain.
+        # Check all variables that the v1_baseline template references.
         bad_patterns = [
-            "{color}", "{position_repetitions}", "{stagnation_status}",
-            "{position_progress}", "{material_tension}", "{position_dynamism}",
-            "{development_score}", "{capture_analysis}", "{defense_analysis}",
-            "{vulnerability_analysis}", "{material_count}", "{material_balance}",
-            "{center_control}", "{development_status}", "{king_safety}",
-            "{undefended_pieces}", "{exposed_pieces}", "{ascii_board}",
-            "{forcing_moves}", "{developing_moves}", "{positional_moves}",
+            "{color}", "{fen}", "{ascii_board}",
+            "{legal_moves_uci}", "{forcing_uci}",
+            "{developing_uci}", "{positional_uci}",
+            "{legal_moves_annotated}", "{last_move_san}",
+            "{move_history_san}", "{white_pieces}", "{black_pieces}",
         ]
 
         for pattern in bad_patterns:
             assert pattern not in prompt, f"Unrendered placeholder: {pattern}"
+
+    def test_prompt_only_computes_needed_variables(self):
+        """Verify dead-weight evaluations are not called for v1_baseline."""
+        from unittest.mock import patch
+
+        ai = MockChessAI()
+        board = chess.Board()
+
+        # These evaluations are NOT referenced by v1_baseline and should
+        # never be called during prompt construction.
+        dead_methods = [
+            "analyze_defense",
+            "analyze_vulnerabilities",
+            "analyze_captures",
+            "analyze_king_safety",
+            "analyze_undefended_pieces",
+            "analyze_exposed_pieces",
+            "get_material_count",
+            "analyze_material_balance",
+            "analyze_center_control",
+            "analyze_development_status",
+            "calculate_development_score",
+        ]
+
+        for method_name in dead_methods:
+            with patch.object(ai.evaluator, method_name, wraps=getattr(ai.evaluator, method_name)) as mock_method:
+                ai._create_prompt(board.fen())
+                mock_method.assert_not_called(), f"{method_name} should not be called for v1_baseline"
+
+    def test_create_messages_returns_system_and_user_roles(self):
+        """Verify _create_messages returns system and user role ChatMessage list."""
+        ai = MockChessAI()
+        board = chess.Board()
+        messages = ai._create_messages(board.fen())
+
+        assert len(messages) == 2
+        assert messages[0].role == "system"
+        assert messages[1].role == "user"
+        assert "professional chess engine" in messages[0].content
+        assert "[GAME STATE]" in messages[1].content
+
+    def test_rich_context_helpers(self):
+        """Verify annotated legal moves, last move, move history, and piece locations."""
+        ai = MockChessAI()
+        board = chess.Board()
+
+        annotated = ai._get_annotated_legal_moves(board)
+        assert "e2e4 (e4)" in annotated or "g1f3 (Nf3)" in annotated
+
+        last_move = ai._get_last_move_san(board)
+        assert "None" in last_move
+
+        board.push(chess.Move.from_uci("e2e4"))
+        last_move = ai._get_last_move_san(board)
+        assert "1. e4 (e2e4)" in last_move
+
+        history = ai._get_move_history_san(board)
+        assert "1. e4" in history
+
+        w, b = ai._get_piece_locations_str(board)
+        assert "King at e1" in w
+        assert "King at e8" in b
 
 
 class TestAnalyzePositionRepetition:

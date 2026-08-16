@@ -37,6 +37,7 @@ class CompletionResult:
     error: str | None = None
     error_type: str | None = None
     retry_count: int = 0
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 # Capability flag added to models that can serve chess moves reliably.

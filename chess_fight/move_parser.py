@@ -364,6 +364,9 @@ def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
             if len(parts) > 1:
                 clean_text = parts[-1]
 
+    # Strip echoed legal moves list from prompt to avoid matching prompt echoes
+    clean_text = re.sub(r'Legal moves(?:\s*\([^)]*\))?:[^\n]*', '', clean_text, flags=re.IGNORECASE)
+
     # 3. PRIORITY 3: Explicit Move Headers (e.g. "**Move:** e4", "Selected move: Nf3", "Play: Nf3")
     move_header_patterns = [
         r'(?:final\s+)?move\s*:\s*([^\n]+)',

@@ -57,25 +57,23 @@ class ProviderChessAI(ChessAI):
         if validation_attempt == 0:
             messages = self._create_messages(fen)
         elif validation_attempt == 1:
-            # First retry: append a stern warning to the full prompt
+            # First retry: append a stern warning to the full prompt and enforce Structured Output via tools
             prompt = self._create_prompt(fen)
             prompt += (
                 f"\n\n[SYSTEM WARNING]: Your previous attempt FAILED. You either "
                 f"reasoned for too long without outputting a move, or your output "
-                f"format was wrong. You MUST respond with ONLY a short reason and "
-                f"a legal UCI move in <move></move> tags. Example: <move>e2e4</move>\n"
+                f"format was wrong. You MUST use the provided tool to output your move.\n"
                 f"Legal moves: {legal_moves_uci}"
             )
             messages = [ChatMessage(role="user", content=prompt)]
         else:
-            # Second+ retry: replace the entire prompt with a minimal instruction.
+            # Second+ retry: explicit instruction demanding tool usage without truncating thinking.
+            color = "White" if board.turn == chess.WHITE else "Black"
             prompt = (
-                f"You are playing chess. It is your turn.\n"
+                f"You are playing chess as {color}.\n"
                 f"FEN: {fen}\n"
                 f"Legal moves (UCI): {legal_moves_uci}\n\n"
-                f"Pick ONE legal move from the list above and output it in this EXACT format with nothing else:\n"
-                f"<move>e2e4</move>\n\n"
-                f"Do NOT explain, analyze, or reason. Output ONLY the <move> tag."
+                f"CRITICAL INSTRUCTION: You MUST use the make_chess_move tool to submit your move."
             )
             messages = [ChatMessage(role="user", content=prompt)]
 
@@ -85,15 +83,38 @@ class ProviderChessAI(ChessAI):
         params["fen"] = fen
         params["reasoning_level"] = self.reasoning_level
 
-        # Determine max_tokens: increase on retries to prevent truncation
-        # before the model outputs a move.
+        # Inject Tool constraints on Retry
+        if validation_attempt >= 1:
+            params["tools"] = [{
+                "type": "function",
+                "function": {
+                    "name": "make_chess_move",
+                    "description": "Submit your chosen chess move.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "reasoning": {
+                                "type": "string",
+                                "description": "Brief strategic plan or explanation"
+                            },
+                            "uci_move": {
+                                "type": "string",
+                                "enum": [m.uci() for m in board.legal_moves],
+                                "description": "The exact UCI format of your chosen move"
+                            }
+                        },
+                        "required": ["reasoning", "uci_move"]
+                    }
+                }
+            }]
+            params["tool_choice"] = {"type": "function", "function": {"name": "make_chess_move"}}
+
+        # Determine max_tokens: increase on retries so reasoning models
+        # (like Nemotron or Qwen-Thinking) never get cut off mid-thought.
         base_max_tokens = REASONING_MAX_TOKENS.get(self.reasoning_level, 1024)
-        if validation_attempt >= 2:
-            # On 2nd+ retry with minimal prompt, a small budget suffices
-            retry_max_tokens = 128
-        elif validation_attempt == 1:
-            # On 1st retry, give 50% more headroom
-            retry_max_tokens = int(base_max_tokens * 1.5)
+        if validation_attempt >= 1:
+            # Give ample headroom on retries so thinking preambles don't cause truncation
+            retry_max_tokens = max(1536, int(base_max_tokens * 1.5))
         else:
             retry_max_tokens = base_max_tokens
         if params.get("max_tokens") is None:
@@ -137,6 +158,16 @@ class ProviderChessAI(ChessAI):
         if self.last_completion_result:
             self.last_completion_result.retry_count = network_attempts
         board = chess.Board(fen)
+        
+        # Check for tool call extracted move
+        if result.tool_calls:
+            for tool_call in result.tool_calls:
+                args = tool_call.get("arguments", {})
+                if isinstance(args, dict) and "uci_move" in args:
+                    uci_move = args["uci_move"]
+                    if uci_move in [m.uci() for m in board.legal_moves]:
+                        return uci_move
+
         from chess_fight.move_parser import parse_move
         parsed = parse_move(result.text, board)
         

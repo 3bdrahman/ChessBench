@@ -696,5 +696,26 @@ class TestCheckSquareRenderingBug:
             chess.svg.board(board, check=cast("int | None", square_name))
 
 
+class TestStockfishEvaluatorPovScore:
+    """Test that StockfishEvaluator handles PovScore mate scores properly."""
+
+    @pytest.mark.asyncio
+    async def test_evaluator_handles_mate_score(self):
+        from chess_fight.benchmark.evaluator import StockfishEvaluator
+
+        evaluator = StockfishEvaluator()
+        evaluator._available = True
+        mock_engine = AsyncMock()
+        mate_pov = chess.engine.PovScore(chess.engine.Mate(-1), chess.WHITE)
+        mock_info = [{"score": mate_pov, "pv": [chess.Move.from_uci("g4h4")]}]
+        mock_engine.analyse = AsyncMock(return_value=mock_info)
+        evaluator._engine = mock_engine
+
+        board = chess.Board("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3")
+        res = await evaluator.evaluate(board)
+        assert res is not None
+        assert res.mate_in == -1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

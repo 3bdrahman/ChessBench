@@ -104,6 +104,11 @@ class OpenAIProvider(ModelProvider):
         if max_tokens is not None:
             completion_kwargs["max_tokens"] = max_tokens
 
+        if "tools" in params:
+            completion_kwargs["tools"] = params["tools"]
+            if "tool_choice" in params:
+                completion_kwargs["tool_choice"] = params["tool_choice"]
+
         reasoning_effort_map = {"low": "low", "mid": "medium", "high": "high"}
         if model.lower().startswith(("o1", "o3", "o4")) or "reasoning" in model.lower():
             completion_kwargs["reasoning_effort"] = reasoning_effort_map.get(reasoning_level, "medium")
@@ -117,12 +122,28 @@ class OpenAIProvider(ModelProvider):
 
         latency_ms = int((time.time() - start) * 1000)
 
+        tool_calls_out = None
+        message = response.choices[0].message
+        if hasattr(message, "tool_calls") and message.tool_calls:
+            import json
+            tool_calls_out = []
+            for tc in message.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except Exception:
+                    args = tc.function.arguments
+                tool_calls_out.append({
+                    "name": tc.function.name,
+                    "arguments": args
+                })
+
         return CompletionResult(
-            text=response.choices[0].message.content or "",
+            text=message.content or "",
             tokens_in=response.usage.prompt_tokens if response.usage else None,
             tokens_out=response.usage.completion_tokens if response.usage else None,
             latency_ms=latency_ms,
             raw_response=response.model_dump() if hasattr(response, "model_dump") else None,
+            tool_calls=tool_calls_out,
         )
 
 

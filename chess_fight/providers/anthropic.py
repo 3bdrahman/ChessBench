@@ -134,6 +134,27 @@ class AnthropicProvider(ModelProvider):
             }
             if system_prompt:
                 request_kwargs["system"] = system_prompt
+                
+            if "tools" in params:
+                anthropic_tools = []
+                for t in params["tools"]:
+                    if t.get("type") == "function":
+                        func = t["function"]
+                        anthropic_tools.append({
+                            "name": func["name"],
+                            "description": func.get("description", ""),
+                            "input_schema": func.get("parameters", {})
+                        })
+                if anthropic_tools:
+                    request_kwargs["tools"] = anthropic_tools
+                    
+            if "tool_choice" in params:
+                tc = params["tool_choice"]
+                if tc.get("type") == "function":
+                    request_kwargs["tool_choice"] = {
+                        "type": "tool",
+                        "name": tc["function"]["name"]
+                    }
 
             response = await client.messages.create(**request_kwargs)
         except Exception as exc:
@@ -143,10 +164,18 @@ class AnthropicProvider(ModelProvider):
         latency_ms = int((time.time() - start) * 1000)
 
         text = ""
+        tool_calls_out = None
         if response.content:
-            first_block = response.content[0]
-            if hasattr(first_block, "text"):
-                text = first_block.text
+            for block in response.content:
+                if block.type == "text":
+                    text += block.text
+                elif block.type == "tool_use":
+                    if tool_calls_out is None:
+                        tool_calls_out = []
+                    tool_calls_out.append({
+                        "name": block.name,
+                        "arguments": block.input
+                    })
 
         return CompletionResult(
             text=text,
@@ -154,6 +183,7 @@ class AnthropicProvider(ModelProvider):
             tokens_out=response.usage.output_tokens if response.usage else None,
             latency_ms=latency_ms,
             raw_response=response.model_dump() if hasattr(response, "model_dump") else None,
+            tool_calls=tool_calls_out,
         )
 
 

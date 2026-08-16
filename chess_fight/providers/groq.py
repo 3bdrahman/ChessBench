@@ -136,6 +136,11 @@ class GroqProvider(ModelProvider):
         if max_tokens is not None:
             completion_kwargs["max_tokens"] = max_tokens
 
+        if "tools" in params:
+            completion_kwargs["tools"] = params["tools"]
+            if "tool_choice" in params:
+                completion_kwargs["tool_choice"] = params["tool_choice"]
+
         start = time.time()
         try:
             response = await client.chat.completions.create(**completion_kwargs)
@@ -145,12 +150,28 @@ class GroqProvider(ModelProvider):
 
         latency_ms = int((time.time() - start) * 1000)
 
+        tool_calls_out = None
+        message = response.choices[0].message
+        if hasattr(message, "tool_calls") and message.tool_calls:
+            import json
+            tool_calls_out = []
+            for tc in message.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except Exception:
+                    args = tc.function.arguments
+                tool_calls_out.append({
+                    "name": tc.function.name,
+                    "arguments": args
+                })
+
         return CompletionResult(
-            text=response.choices[0].message.content or "",
+            text=message.content or "",
             tokens_in=response.usage.prompt_tokens if response.usage else None,
             tokens_out=response.usage.completion_tokens if response.usage else None,
             latency_ms=latency_ms,
             raw_response=response.model_dump() if hasattr(response, "model_dump") else None,
+            tool_calls=tool_calls_out,
         )
 
 

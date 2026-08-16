@@ -114,6 +114,32 @@ class GoogleProvider(ModelProvider):
                 config_kwargs["max_output_tokens"] = max_tokens
             if system_prompt:
                 config_kwargs["system_instruction"] = system_prompt
+                
+            if "tools" in params:
+                google_tools = []
+                for t in params["tools"]:
+                    if t.get("type") == "function":
+                        func = t["function"]
+                        google_tools.append({
+                            "function_declarations": [{
+                                "name": func["name"],
+                                "description": func.get("description", ""),
+                                "parameters": func.get("parameters", {})
+                            }]
+                        })
+                if google_tools:
+                    config_kwargs["tools"] = google_tools
+                    
+            if "tool_choice" in params:
+                tc = params["tool_choice"]
+                if tc.get("type") == "function":
+                    func_name = tc["function"]["name"]
+                    config_kwargs["tool_config"] = types.ToolConfig(
+                        function_calling_config=types.FunctionCallingConfig(
+                            mode="ANY",
+                            allowed_function_names=[func_name]
+                        )
+                    )
 
             response = await client.models.generate_content(
                 model=model,
@@ -131,13 +157,31 @@ class GoogleProvider(ModelProvider):
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             tokens_in = response.usage_metadata.prompt_token_count
             tokens_out = response.usage_metadata.candidates_token_count
+            
+        tool_calls_out = None
+        text_out = response.text if response.text else ""
+        if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if part.function_call:
+                    if tool_calls_out is None:
+                        tool_calls_out = []
+                    args = part.function_call.args
+                    if hasattr(args, "items"):
+                        args_dict = dict(args.items())
+                    else:
+                        args_dict = dict(args) if args else {}
+                    tool_calls_out.append({
+                        "name": part.function_call.name,
+                        "arguments": args_dict
+                    })
 
         return CompletionResult(
-            text=response.text if response.text else "",
+            text=text_out,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,
             raw_response=response.model_dump() if hasattr(response, "model_dump") else None,
+            tool_calls=tool_calls_out,
         )
 
 

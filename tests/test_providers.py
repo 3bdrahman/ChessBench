@@ -177,7 +177,10 @@ class TestAnthropicProvider:
             mock_client_class.return_value = mock_client
 
             mock_response = MagicMock()
-            mock_response.content = [MagicMock(text="e2e4")]
+            mock_block = MagicMock()
+            mock_block.type = "text"
+            mock_block.text = "e2e4"
+            mock_response.content = [mock_block]
             mock_response.usage = MagicMock(input_tokens=100, output_tokens=5)
             mock_client.messages.create = AsyncMock(return_value=mock_response)
 

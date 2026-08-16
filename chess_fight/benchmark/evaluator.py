@@ -138,7 +138,7 @@ class StockfishEvaluator:
             mate_in = None
             if score:
                 if score.is_mate():
-                    mate_in = score.mate()
+                    mate_in = score.white().mate()
                 else:
                     cp_score = score.white().score()
 

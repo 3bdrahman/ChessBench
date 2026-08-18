@@ -28,7 +28,7 @@ def render_hero() -> None:
         <section class="cf-hero">
             <div class="cf-hero-title">AI Chess Battle</div>
             <p class="cf-hero-sub">
-                Watch frontier language models play real chess — move-by-move, with
+                Watch language models play real chess — move-by-move, with
                 Stockfish-evaluated quality scoring, thinking traces, and live ELO.
                 A benchmarking arena, not a demo reel.
             </p>

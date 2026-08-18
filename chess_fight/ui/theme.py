@@ -353,6 +353,7 @@ code, .stCodeBlock, pre {
     max-width: 680px;
     margin: 0 auto 40px;
     line-height: 1.6;
+    text-align: center;
 }
 .cf-hero-board {
     display: flex;

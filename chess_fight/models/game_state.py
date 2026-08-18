@@ -11,9 +11,11 @@ class GameMove:
     move_san: str
     timestamp: float
     is_capture: bool
-    is_check: bool
-    is_promotion: bool
-    is_castling: bool
+    captured_piece: str | None = None
+    is_check: bool = False
+    is_checkmate: bool = False
+    is_promotion: bool = False
+    is_castling: bool = False
     cp_score: int | None = None
     mate_in: int | None = None
     latency_ms: int | None = None

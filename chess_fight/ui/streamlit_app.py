@@ -54,7 +54,6 @@ from chess_fight.ui.helpers import (
     player_banner_html,
     render_board_with_evalbar,
     render_loading_card,
-    render_move_ticker,
     render_thinking_trace_drawer,
 )
 from chess_fight.ui.landing import render_hero, render_landing_metrics
@@ -506,8 +505,7 @@ def render_live_game_screen(
     with left:
         # Move ticker ABOVE board (DESIGN.md §3)
         if state is not None:
-            current_ply = len(state.moves) if not is_paused else None
-            render_move_ticker(state.moves, current_ply=current_ply)
+            st.caption(f"Move History ({len(state.moves)} plys)")
 
         # Board + eval bar (board centered, fixed width via CSS)
         if state is not None:
@@ -609,11 +607,13 @@ def render_live_game_screen(
                     ply_idx = 0
                     for m in state.moves:
                         is_white_turn = (ply_idx % 2 == 0)
+                        piece_map = {'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛'}
+                        cap_suffix = f" ({piece_map.get(m.captured_piece, m.captured_piece)})" if m.captured_piece else ""
                         df_rows.append({
-                            "Move #": (ply_idx // 2) + 1,
+                            "Turn": ply_idx + 1,
                             "Color": "White" if is_white_turn else "Black",
                             "Player": m.player.split(":")[0],
-                            "Move": (m.move_san or m.move) if not m.is_illegal else f"❌ {m.move}",
+                            "Move": (f"{m.move_san or m.move}{cap_suffix}") if not m.is_illegal else f"❌ {m.move}",
                             "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
                             "Latency": format_duration_ms(m.latency_ms),
                             "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",
@@ -677,17 +677,18 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
 
         # Move history as pills
         if state.moves:
-            render_move_ticker(state.moves)
             with st.expander("Move History Data", expanded=False):
                 df_rows = []
                 ply_idx = 0
                 for m in state.moves:
                     is_white_turn = (ply_idx % 2 == 0)
+                    piece_map = {'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛'}
+                    cap_suffix = f" ({piece_map.get(m.captured_piece, m.captured_piece)})" if m.captured_piece else ""
                     df_rows.append({
-                        "Move #": (ply_idx // 2) + 1,
+                        "Turn": ply_idx + 1,
                         "Color": "White" if is_white_turn else "Black",
                         "Player": m.player.split(":")[0],
-                        "Move": (m.move_san or m.move) if not m.is_illegal else f"❌ {m.move}",
+                        "Move": (f"{m.move_san or m.move}{cap_suffix}") if not m.is_illegal else f"❌ {m.move}",
                         "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
                         "Latency": format_duration_ms(m.latency_ms),
                         "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",

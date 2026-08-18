@@ -137,15 +137,15 @@ code, .stCodeBlock, pre {
     background: transparent !important;
     border: none !important;
 }
-.cf-card {
+.cf-card, [data-testid="stVerticalBlockBorderWrapper"] {
     background: var(--arena-bg-elevated);
-    border: 1px solid var(--arena-border);
-    border-radius: var(--r-md);
-    padding: 24px;
-    box-shadow: var(--shadow-card);
+    border: 1px solid var(--arena-border) !important;
+    border-radius: var(--r-md) !important;
+    padding: 24px !important;
+    box-shadow: var(--shadow-card) !important;
 }
 .cf-card-compact { padding: 16px; }
-.cf-card:hover { border-color: var(--arena-border-strong); }
+.cf-card:hover, [data-testid="stVerticalBlockBorderWrapper"]:hover { border-color: var(--arena-border-strong) !important; }
 
 /* Metric cards — typographic emphasis, tabular nums */
 [data-testid="stMetric"] {

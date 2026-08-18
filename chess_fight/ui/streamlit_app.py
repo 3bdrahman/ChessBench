@@ -621,7 +621,7 @@ def render_live_game_screen(
                             width="large",
                         )
                     }
-                    st.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
+                    st.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
 
 
     # Completed games stack as cf-cards
@@ -670,6 +670,25 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
         # Move history as pills
         if state.moves:
             render_move_ticker(state.moves)
+            with st.expander("Move History Data", expanded=False):
+                df_rows = []
+                for idx, m in enumerate(state.moves):
+                    df_rows.append({
+                        "Move #": (idx // 2) + 1,
+                        "Color": "White" if idx % 2 == 0 else "Black",
+                        "Player": m.player,
+                        "Move": m.move,
+                        "Reasoning": m.reasoning.replace("<", "&lt;").replace(">", "&gt;") if m.reasoning else "",
+                    })
+                df = pd.DataFrame(df_rows)
+                column_config = {
+                    "Reasoning": st.column_config.TextColumn(
+                        "Reasoning",
+                        help="Click a cell to read the LLM's full reasoning for this move.",
+                        width="large",
+                    )
+                }
+                st.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
 
 
 def run_in_process_benchmark(
@@ -1163,7 +1182,7 @@ def render_game_viewer(run) -> None:
                 width="large",
             )
         }
-        st.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
+        st.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
         st.divider()
 
 

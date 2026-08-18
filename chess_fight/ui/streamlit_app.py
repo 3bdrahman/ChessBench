@@ -1806,7 +1806,7 @@ def render_analytical_dashboard():
                 st.success(f"Exported to {path}")
             except Exception as e:
                 st.error(f"Export failed: {e}")
-    st.markdown('</div>', unsafe_allow_html=True)
+
 
 
 # Add import for altair at the top of the file if not already there

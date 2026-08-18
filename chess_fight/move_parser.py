@@ -335,6 +335,22 @@ def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
     if not text:
         return MoveParseResult(uci=None, san=None, confidence=0.0, ambiguous=False)
 
+    import json
+    try:
+        # Check if text contains a JSON object
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group(0))
+            if isinstance(data, dict):
+                move_val = data.get("uci_move") or data.get("move") or data.get("move_uci")
+                if move_val and isinstance(move_val, str):
+                    res = _parse_move_candidate(move_val, board)
+                    if res and res.uci:
+                        res.confidence = 1.0
+                        return res
+    except json.JSONDecodeError:
+        pass
+
     # 1. PRIORITY 1: Explicit <move>...</move> tag extraction
     move_match = re.search(r'<move>\s*(.*?)\s*</move>', text, re.IGNORECASE | re.DOTALL)
     if move_match:

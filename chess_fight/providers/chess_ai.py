@@ -172,12 +172,21 @@ class ProviderChessAI(ChessAI):
         parsed = parse_move(result.text, board)
         
         if not parsed.uci:
-            raise MoveValidationError(
-                f"Could not extract legal move from response: {result.text[:200]}...",
-                fen=fen,
-                legal_moves=[m.uci() for m in board.legal_moves],
-                raw_text=result.text,
-            )
+            raw_result = parse_move(result.text, None)
+            if raw_result and raw_result.uci:
+                raise MoveValidationError(
+                    f"You attempted an ILLEGAL move: {raw_result.uci}. This move is not valid in the current position.",
+                    fen=fen,
+                    legal_moves=[m.uci() for m in board.legal_moves],
+                    raw_text=result.text,
+                )
+            else:
+                raise MoveValidationError(
+                    f"Could not extract legal move from response: {result.text[:200]}...",
+                    fen=fen,
+                    legal_moves=[m.uci() for m in board.legal_moves],
+                    raw_text=result.text,
+                )
         return parsed.uci
 
     def _extract_move(self, text: str) -> str:

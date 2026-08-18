@@ -369,46 +369,46 @@ def render_model_selectors(available_providers: list):
     model_options = list(all_models.keys())
 
     # Ensure initial session state picks 2 distinct models
-    sel_white = st.session_state.get("player_white_model")
-    sel_black = st.session_state.get("player_black_model")
+    sel_1 = st.session_state.get("player_model_1")
+    sel_2 = st.session_state.get("player_model_2")
 
-    if not sel_white or sel_white not in model_options:
-        sel_white = model_options[0]
-        st.session_state["player_white_model"] = sel_white
+    if not sel_1 or sel_1 not in model_options:
+        sel_1 = model_options[0]
+        st.session_state["player_model_1"] = sel_1
 
-    if not sel_black or sel_black not in model_options or sel_black == sel_white:
-        remaining = [m for m in model_options if m != sel_white]
-        sel_black = remaining[0] if remaining else model_options[0]
-        st.session_state["player_black_model"] = sel_black
+    if not sel_2 or sel_2 not in model_options or sel_2 == sel_1:
+        remaining = [m for m in model_options if m != sel_1]
+        sel_2 = remaining[0] if remaining else model_options[0]
+        st.session_state["player_model_2"] = sel_2
 
-    # Filter options for White (exclude currently selected Black model)
-    cur_black = st.session_state.get("player_black_model")
-    white_options = [m for m in model_options if m != cur_black]
-    white_idx = white_options.index(sel_white) if sel_white in white_options else 0
+    # Filter options for Model 1 (exclude currently selected Model 2)
+    cur_2 = st.session_state.get("player_model_2")
+    m1_options = [m for m in model_options if m != cur_2]
+    m1_idx = m1_options.index(sel_1) if sel_1 in m1_options else 0
 
-    st.sidebar.subheader("White ♔")
-    white_model = st.sidebar.selectbox(
-        "Select Model",
-        options=white_options,
-        index=white_idx,
-        key="player_white_model",
+    st.sidebar.subheader("Model 1")
+    model_1 = st.sidebar.selectbox(
+        "Select First Model",
+        options=m1_options,
+        index=m1_idx,
+        key="player_model_1",
     )
 
-    # Filter options for Black (exclude currently selected White model)
-    black_options = [m for m in model_options if m != white_model]
-    cur_black_val = st.session_state.get("player_black_model")
-    black_idx = black_options.index(cur_black_val) if cur_black_val in black_options else 0
+    # Filter options for Model 2 (exclude currently selected Model 1)
+    m2_options = [m for m in model_options if m != model_1]
+    cur_2_val = st.session_state.get("player_model_2")
+    m2_idx = m2_options.index(cur_2_val) if cur_2_val in m2_options else 0
 
-    st.sidebar.subheader("Black ♚")
-    black_model = st.sidebar.selectbox(
-        "Select Model",
-        options=black_options,
-        index=black_idx,
-        key="player_black_model",
+    st.sidebar.subheader("Model 2")
+    model_2 = st.sidebar.selectbox(
+        "Select Second Model",
+        options=m2_options,
+        index=m2_idx,
+        key="player_model_2",
     )
 
-    if white_model and black_model and white_model != black_model:
-        return all_models[white_model], all_models[black_model]
+    if model_1 and model_2 and model_1 != model_2:
+        return all_models[model_1], all_models[model_2]
     return None, None
 
 
@@ -602,6 +602,28 @@ def render_live_game_screen(
             # Thinking trace drawer (collapsed by default, summary always visible)
             render_thinking_trace_drawer(state)
 
+            if state.moves:
+                with st.expander("Move History Data", expanded=True):
+                    df_rows = []
+                    for m in state.moves:
+                        df_rows.append({
+                            "Move #": m.move_number,
+                            "Color": m.color.title(),
+                            "Player": m.player,
+                            "Move": m.move_san,
+                            "Reasoning": m.thinking_trace.replace("<", "&lt;").replace(">", "&gt;") if m.thinking_trace else "",
+                        })
+                    df = pd.DataFrame(df_rows)
+                    column_config = {
+                        "Reasoning": st.column_config.TextColumn(
+                            "Reasoning",
+                            help="Click a cell to read the LLM's full reasoning for this move.",
+                            width="large",
+                        )
+                    }
+                    st.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
+
+
     # Completed games stack as cf-cards
     if completed_games:
         st.markdown("---")
@@ -622,7 +644,7 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
         # Header row
         hdr_cols = st.columns([3, 1, 1, 1])
         with hdr_cols[0]:
-            st.markdown(f"**Game {game_idx + 1}** · {white_player} vs {black_player}")
+            st.markdown(f"**Game {game_idx + 1}** · ♔ White: **{white_player}** vs ♚ Black: **{black_player}**")
         with hdr_cols[1]:
             st.metric("Result", winner)
         with hdr_cols[2]:
@@ -986,6 +1008,8 @@ def render_run_summary(run, *, expanded: bool) -> None:
                 st.session_state.show_analytics = True
                 st.session_state.show_history = False
                 st.session_state.analytics_run_dir = str(run.run_dir)
+                st.session_state.game_running = False
+                st.session_state.pop("benchmark_state", None)
                 st.rerun()
 
         if expanded:
@@ -1051,7 +1075,7 @@ def render_game_viewer(run) -> None:
 
     for i, game in enumerate(run.games):
         term_reason = getattr(game, 'termination_reason', 'unknown')
-        st.markdown(f"#### Game {i+1}: {game.white_player} vs {game.black_player} ({game.result}) — *{term_reason.replace('_', ' ').title()}*")
+        st.markdown(f"#### Game {i+1}: ♔ White: **{game.white_player}** vs ♚ Black: **{game.black_player}** ({game.result}) — *{term_reason.replace('_', ' ').title()}*")
 
         if not game.moves:
             st.info("No moves recorded for this game.")
@@ -1150,12 +1174,13 @@ def render_game_viewer(run) -> None:
 
 
 def main():
+    apply_arena_theme()
     if "game_ui" not in st.session_state:
         st.session_state.game_ui = ChessUI()
 
     # Sidebar: API Keys and Model Selection
     available_providers = render_provider_keys_section()
-    white_config, black_config = render_model_selectors(available_providers)
+    model_1_config, model_2_config = render_model_selectors(available_providers)
 
     st.sidebar.markdown("---")
     st.sidebar.header("🎮 Game Controls")
@@ -1172,17 +1197,25 @@ def main():
         key="reasoning_level_select",
     )
 
-    # If more than 1 game, alternate colors to keep it fair.
+    # We always alternate colors for multiple games, but for the first game we randomly assign White/Black
+    # to avoid user bias, as playing White is an advantage.
     colors_mode = "alternating" if games > 1 else "fixed"
 
-    if st.sidebar.button("▶️ Start Match", type="primary", width="stretch"):
-        if not white_config or not black_config:
+    if st.sidebar.button("▶️ Run Benchmark", type="primary", width="stretch"):
+        if not model_1_config or not model_2_config:
             st.sidebar.error("Please select two distinct models for the players.")
-        elif white_config["provider"] == black_config["provider"] and white_config["model_id"] == black_config["model_id"]:
-            st.sidebar.error("White and Black must be different models.")
+        elif model_1_config["provider"] == model_2_config["provider"] and model_1_config["model_id"] == model_2_config["model_id"]:
+            st.sidebar.error("Model 1 and Model 2 must be different models.")
         else:
             _reset_game_state()
             st.session_state.game_running = True
+            
+            import random
+            if random.choice([True, False]):
+                white_config, black_config = model_1_config, model_2_config
+            else:
+                white_config, black_config = model_2_config, model_1_config
+
             st.session_state.active_match_config = {
                 "white_config": white_config,
                 "black_config": black_config,
@@ -1203,7 +1236,6 @@ def main():
         )
         return
 
-    apply_arena_theme()
 
     if st.session_state.get("show_analytics", False):
         render_analytical_dashboard()

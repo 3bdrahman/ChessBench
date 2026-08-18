@@ -46,6 +46,25 @@ def quality_pill_html(quality: str | None) -> str:
     return f'<span class="cf-quality-pill cf-pill-{cls}">{label}</span>'
 
 
+def format_duration_ms(ms: int | float | None) -> str:
+    """Format milliseconds into a human-readable duration (ms, s, m, h)."""
+    if ms is None:
+        return ""
+    ms = int(ms)
+    if ms < 1000:
+        return f"{ms}ms"
+    s = ms // 1000
+    if s < 60:
+        return f"{ms / 1000:.1f}s"
+    m = s // 60
+    s_rem = s % 60
+    if m < 60:
+        return f"{m}m {s_rem}s"
+    h = m // 60
+    m_rem = m % 60
+    return f"{h}h {m_rem}m {s_rem}s"
+
+
 def render_html_card(klass: str, title: str | None, body_html: str) -> None:
     """Render an arbitrary HTML card with optional title header."""
     title_html = f'<div style="font-weight:600;font-size:0.95rem;margin-bottom:8px;color:var(--arena-text)">{title}</div>' if title else ""

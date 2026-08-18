@@ -284,17 +284,19 @@ def player_banner_html(
     if is_winner:
         res_str = "1 — 0" if color == "white" else "0 — 1"
         result_mark = f'<span style="margin-left:auto;font-family:var(--font-mono);font-size:0.75rem;color:var(--arena-good);font-weight:700">{res_str}</span>'
-    return f"""
-    <div class="cf-player{active_cls}">
-        {turn_dot}
-        <div class="cf-player-avatar {avatar_cls}">{glyph}</div>
-        <div class="cf-player-meta">
-            <div class="cf-player-name">{name}</div>
-            <div class="cf-player-spec">{spec_html}</div>
-        </div>
-        {result_mark}
+    import textwrap
+    html = f"""
+<div class="cf-player{active_cls}">
+    {turn_dot}
+    <div class="cf-player-avatar {avatar_cls}">{glyph}</div>
+    <div class="cf-player-meta">
+        <div class="cf-player-name">{name}</div>
+        <div class="cf-player-spec">{spec_html}</div>
     </div>
+    {result_mark}
+</div>
     """
+    return html.strip()
 
 
 def demo_badge_html() -> str:

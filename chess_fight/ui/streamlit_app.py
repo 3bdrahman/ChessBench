@@ -605,13 +605,13 @@ def render_live_game_screen(
             if state.moves:
                 with st.expander("Move History Data", expanded=True):
                     df_rows = []
-                    for m in state.moves:
+                    for idx, m in enumerate(state.moves):
                         df_rows.append({
-                            "Move #": m.move_number,
-                            "Color": m.color.title(),
+                            "Move #": (idx // 2) + 1,
+                            "Color": "White" if idx % 2 == 0 else "Black",
                             "Player": m.player,
-                            "Move": m.move_san,
-                            "Reasoning": m.thinking_trace.replace("<", "&lt;").replace(">", "&gt;") if m.thinking_trace else "",
+                            "Move": m.move,
+                            "Reasoning": m.reasoning.replace("<", "&lt;").replace(">", "&gt;") if m.reasoning else "",
                         })
                     df = pd.DataFrame(df_rows)
                     column_config = {

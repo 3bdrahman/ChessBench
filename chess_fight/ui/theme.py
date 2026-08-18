@@ -280,6 +280,7 @@ code, .stCodeBlock, pre {
     align-items: center;
     gap: 12px;
     padding: 14px 16px;
+    margin-bottom: 16px;
     border-radius: var(--r-md);
     background: var(--arena-bg-elevated);
     border: 1px solid var(--arena-border);

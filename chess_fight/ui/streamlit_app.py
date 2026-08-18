@@ -612,6 +612,49 @@ def render_live_game_screen(
             _draw_completed_game_summary_card(i, completed_state)
 
 
+def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
+    """Render one completed game as a cf-card with inline board, metrics, moves."""
+    white_player = state.moves[0].player if state.moves else "?"
+    black_player = state.moves[1].player if len(state.moves) >= 2 else "?"
+    term_reason = getattr(state.stats, 'termination_reason', 'unknown')
+    winner = state.winner or "?"
+
+    with st.container():
+        st.markdown('<div class="cf-card cf-card-compact">', unsafe_allow_html=True)
+
+        # Header row
+        hdr_cols = st.columns([3, 1, 1, 1])
+        with hdr_cols[0]:
+            st.markdown(f"**Game {game_idx + 1}** · {white_player} vs {black_player}")
+        with hdr_cols[1]:
+            st.metric("Result", winner)
+        with hdr_cols[2]:
+            st.metric("Termination", term_reason.replace('_', ' ').title())
+        with hdr_cols[3]:
+            if state.last_completion_result:
+                st.metric("Avg Latency", f"{state.last_completion_result.latency_ms or 0} ms")
+
+        # Board + metrics side by side
+        bcol, mcol = st.columns([1, 1])
+        with bcol:
+            king = state.board.king(state.board.turn)
+            check_sq = king if state.board.is_check() and king is not None else None
+            last_mv = state.board.peek() if state.board.move_stack else None
+            render_board_with_evalbar(state.board, size=320, lastmove=last_mv, check_square=check_sq)
+
+        with mcol:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Moves", state.stats.total_moves)
+            m2.metric("Captures", state.stats.capture_moves)
+            m3.metric("Checks", state.stats.check_moves)
+
+        # Move history as pills
+        if state.moves:
+            render_move_ticker(state.moves)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
 def run_in_process_benchmark(
     white_config: dict,
     black_config: dict,
@@ -801,78 +844,6 @@ def run_in_process_benchmark(
                         game.cancel()
                     st.rerun()
 
-
-def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
-    """Render one completed game as a cf-card with inline board, metrics, moves."""
-    white_player = state.moves[0].player if state.moves else "?"
-    black_player = state.moves[1].player if len(state.moves) >= 2 else "?"
-    term_reason = getattr(state.stats, 'termination_reason', 'unknown')
-    winner = state.winner or "?"
-
-    with st.container():
-        st.markdown('<div class="cf-card cf-card-compact">', unsafe_allow_html=True)
-
-        # Header row
-        hdr_cols = st.columns([3, 1, 1, 1])
-        with hdr_cols[0]:
-            st.markdown(f"**Game {game_idx + 1}** · {white_player} vs {black_player}")
-        with hdr_cols[1]:
-            st.metric("Result", winner)
-        with hdr_cols[2]:
-            st.metric("Termination", term_reason.replace('_', ' ').title())
-        with hdr_cols[3]:
-            if state.last_completion_result:
-                st.metric("Avg Latency", f"{state.last_completion_result.latency_ms or 0} ms")
-
-        # Board + metrics side by side
-        bcol, mcol = st.columns([1, 1])
-        with bcol:
-            king = state.board.king(state.board.turn)
-            check_sq = king if state.board.is_check() and king is not None else None
-            last_mv = state.board.peek() if state.board.move_stack else None
-            render_board_with_evalbar(state.board, size=320, lastmove=last_mv, check_square=check_sq)
-
-        with mcol:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total Moves", state.stats.total_moves)
-            m2.metric("Captures", state.stats.capture_moves)
-            m3.metric("Checks", state.stats.check_moves)
-
-        # Move history as pills
-        if state.moves:
-            render_move_ticker(state.moves)
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-
-def _draw_completed_game_summary(game_idx: int, state: GameState) -> None:
-    """Render one completed game as a collapsed expander below the live view.
-
-    The benchmark appends newly-finished games to
-    ``st.session_state.benchmark_completed_games`` in chronological order,
-    so iterating that list yields oldest-on-top → newest-on-bottom. Each
-    entry is a collapsed ``st.expander`` (cheap to render many; only the
-    metadata shows until the user opens it) containing the final board,
-    metrics, and move history. This replaces the older dropdown-based
-    navigation: the live (or paused) game is always on top and historical
-    games stack beneath it as they complete.
-    """
-    white_player = state.moves[0].player if state.moves else "?"
-    black_player = state.moves[1].player if len(state.moves) >= 2 else "?"
-    term_reason = getattr(state.stats, 'termination_reason', 'unknown')
-    label = (
-        f"Game {game_idx + 1} · {white_player} vs {black_player} · "
-        f"Result: {state.winner or '?'} · "
-        f"{term_reason.replace('_', ' ').title()}"
-    )
-    with st.expander(label, expanded=False):
-        start_time = st.session_state.benchmark_start_time
-        sum_board_ph = st.empty()
-        sum_stats_ph = st.empty()
-        sum_moves_ph = st.empty()
-        _draw_board(sum_board_ph, state, start_time)
-        _draw_metrics(sum_stats_ph, state, start_time)
-        _draw_moves(sum_moves_ph, state.moves)
 
     # Now start the benchmark if not already running
     if "benchmark_thread" not in st.session_state or (not st.session_state.benchmark_thread.is_alive() and not st.session_state.get("benchmark_done", False)):

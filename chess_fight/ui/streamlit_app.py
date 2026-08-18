@@ -10,16 +10,15 @@ writes to ``runs/<run_id>/``.
 from __future__ import annotations
 
 import asyncio
-import copy
 import os
 import threading
 import time
 from datetime import datetime
-from typing import Any
+from pathlib import Path
 
-import altair as alt
 import chess
 import chess.svg
+import numpy as np
 import pandas as pd
 import streamlit as st
 from streamlit.runtime.scriptrunner import add_script_run_ctx
@@ -35,15 +34,10 @@ from chess_fight.common.exceptions import (
     FatalBenchmarkError,
     GameExecutionError,
     InvalidApiKeyError,
-    MoveValidationError,
     NoProvidersConfiguredError,
     ProviderError,
     SetupError,
 )
-from chess_fight.game.async_game import GameState
-from chess_fight.providers import get_provider, list_providers
-from chess_fight.providers.chess_ai import ProviderChessAI
-from chess_fight.ui.error_display import render_error
 
 # Providers surfaced in the hosted Streamlit UI.
 # OpenRouter: aggregated API, server-side demo key, free tier for visitors.
@@ -51,6 +45,19 @@ from chess_fight.ui.error_display import render_error
 # Ollama: local-only — works when running the app locally against an Ollama server.
 # Stockfish: real local engine — only shown when the binary is on PATH.
 from chess_fight.constants import HOSTED_PROVIDERS
+from chess_fight.game.async_game import GameState
+from chess_fight.providers import get_provider, list_providers
+from chess_fight.providers.chess_ai import ProviderChessAI
+from chess_fight.ui.error_display import render_error
+from chess_fight.ui.helpers import (
+    player_banner_html,
+    render_board_with_evalbar,
+    render_loading_card,
+    render_move_ticker,
+    render_thinking_trace_drawer,
+)
+from chess_fight.ui.landing import render_hero, render_landing_metrics
+from chess_fight.ui.theme import apply_arena_theme
 
 RUNS_ROOT = os.environ.get("CHESS_FIGHT_RUNS_ROOT", "runs")
 
@@ -123,7 +130,7 @@ def _draw_moves(moves_placeholder, moves: list) -> None:
             for i, move in enumerate(moves)
         ]
     )
-    
+
     # Configure the Reasoning column to be a text column that doesn't blow up the width
     column_config = {
         "Reasoning": st.column_config.TextColumn(
@@ -132,7 +139,7 @@ def _draw_moves(moves_placeholder, moves: list) -> None:
             width="large",
         )
     }
-    
+
     moves_placeholder.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
 
 
@@ -230,6 +237,19 @@ def _probe_local_provider(provider_name: str) -> tuple[bool, str]:
     return True, f"Connected to `{base_url}`"
 
 
+def _clear_models_cache() -> int:
+    """Drop every cached provider model list from session state.
+
+    Cache keys are written by :func:`render_model_selectors` as
+    ``models_<provider>_<key_hash>``. Returning the count keeps the sidebar
+    message honest — visitors can see how many (if any) lists were dropped.
+    """
+    keys = [k for k in list(st.session_state.keys()) if k.startswith("models_")]
+    for k in keys:
+        st.session_state.pop(k, None)
+    return len(keys)
+
+
 def render_provider_keys_section():
     """Render API key inputs for each provider in sidebar."""
     st.sidebar.header("🔑 API Keys")
@@ -298,19 +318,28 @@ def render_model_selectors(available_providers: list):
 
     all_models: dict[str, dict] = {}
     filtered_count = 0
+
     for provider_name, api_key in available_providers:
-        # Cache key depends on the API key so changing the key forces a refresh
         import hashlib
         key_hash = hashlib.md5(api_key.encode()).hexdigest()[:8]
         cache_key = f"models_{provider_name}_{key_hash}"
-        
+
+        # If cache miss, set loading flag and defer fetch to next rerun
         if cache_key not in st.session_state or not st.session_state[cache_key]:
-            with st.spinner(f"Fetching {provider_name} models..."):
-                models = asyncio.run(fetch_models_for_provider(provider_name, api_key))
-                if models:  # Only cache if we actually got models
-                    st.session_state[cache_key] = models
-        else:
-            models = st.session_state[cache_key]
+            loading_flag = f"loading_{provider_name}"
+            if not st.session_state.get(loading_flag, False):
+                st.session_state[loading_flag] = True
+                st.rerun()
+            # On this rerun, we're in loading state — show staged card and do fetch
+            render_loading_card("Fetching models", "Connecting to provider", provider_name, st.sidebar)
+            models = asyncio.run(fetch_models_for_provider(provider_name, api_key))
+            if models:
+                st.session_state[cache_key] = models
+            st.session_state[loading_flag] = False
+            st.rerun()
+
+        # Cache hit — use models normally
+        models = st.session_state[cache_key]
 
         for model in models:
             if not is_chess_capable(model):
@@ -427,6 +456,162 @@ def _reset_game_state() -> None:
         st.session_state.pop(k, None)
 
 
+def render_live_game_screen(
+    *,
+    state: GameState | None,
+    white_spec: str,
+    black_spec: str,
+    game_idx: int,
+    total_games: int,
+    start_time: float,
+    completed_games: list[GameState],
+    is_paused: bool = False,
+    pause_reason: str | None = None,
+) -> None:
+    """Render the arena-style live game screen.
+
+    Layout (DESIGN.md § 3):
+    - Top: progress bar
+    - Left column (board): eval bar left, board centered 560px desktop / 100% mobile, move ticker above
+    - Right column (panels): player banners stacked, metrics 2x3, last completion drawer, thinking trace drawer
+    - Below: completed games stack as cf-cards
+    """
+    # Progress bar at top
+    if state is not None and not is_paused:
+        frac = min(1.0, game_idx / max(1, total_games))
+        st.progress(frac, text=f"Game {game_idx + 1} / {total_games} in progress")
+    elif is_paused:
+        st.warning(f"⏸ Paused — {pause_reason or 'Unknown reason'}")
+
+    # Inject move ticker auto-scroll JS (runs on each render, scrolls latest pill into view)
+    st.markdown("""
+    <script>
+    (function() {
+        const ticker = document.querySelector('.cf-move-ticker');
+        if (ticker) {
+            const pills = ticker.querySelectorAll('.cf-move-pill.cf-move-current');
+            if (pills.length > 0) {
+                const last = pills[pills.length - 1];
+                last.scrollIntoView({ behavior: 'smooth', inline: 'center' });
+            }
+        }
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
+    # Two-column arena frame: left=board (fixed ~560px), right=panels
+    left, right = st.columns([0.55, 0.45], gap="large")
+
+    with left:
+        # Move ticker ABOVE board (DESIGN.md §3)
+        if state is not None:
+            current_ply = len(state.moves) if not is_paused else None
+            render_move_ticker(state.moves, current_ply=current_ply)
+
+        # Board + eval bar (board centered, fixed width via CSS)
+        if state is not None:
+            king = state.board.king(state.board.turn)
+            check_sq = king if state.board.is_check() and king is not None else None
+            last_mv = state.board.peek() if state.board.move_stack else None
+
+            cp = getattr(state, "eval_cp_score", None)
+            mate = getattr(state, "eval_mate_in", None)
+
+            render_board_with_evalbar(
+                state.board,
+                size=560,  # Fixed desktop width per DESIGN.md
+                lastmove=last_mv,
+                check_square=check_sq,
+                cp_score=cp,
+                mate_in=mate,
+            )
+        else:
+            import chess
+            board = chess.Board()
+            render_board_with_evalbar(board, size=560)
+
+    with right:
+        if state is not None:
+            white_name = state.moves[0].player if state.moves else white_spec
+            black_name = state.moves[1].player if len(state.moves) >= 2 else black_spec
+            is_white_turn = state.board.turn == chess.WHITE
+
+            # Player banners stacked: White top, Black bottom
+            st.markdown(
+                player_banner_html(
+                    name=white_name,
+                    spec=white_spec,
+                    color="white",
+                    is_turn=is_white_turn,
+                ),
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                player_banner_html(
+                    name=black_name,
+                    spec=black_spec,
+                    color="black",
+                    is_turn=not is_white_turn,
+                ),
+                unsafe_allow_html=True,
+            )
+
+            # Metrics card: 2x3 grid
+            st.markdown('<div class="cf-card cf-metrics-grid">', unsafe_allow_html=True)
+            cols = st.columns(3)
+            with cols[0]:
+                st.metric("Total Moves", state.stats.total_moves)
+            with cols[1]:
+                st.metric("Captures", state.stats.capture_moves)
+            with cols[2]:
+                st.metric("Checks", state.stats.check_moves)
+
+            cols2 = st.columns(3)
+            with cols2[0]:
+                elapsed = int(state.game_duration) if state.game_duration > 0 else int(time.time() - start_time)
+                st.metric("Time", f"{elapsed}s")
+            with cols2[1]:
+                turn_color = "White ♔" if state.board.turn else "Black ♚"
+                st.metric("Turn", turn_color if not state.is_game_over else "—")
+            with cols2[2]:
+                if state.is_game_over:
+                    term = getattr(state.stats, 'termination_reason', 'unknown')
+                    st.metric("Result", term.replace('_', ' ').title())
+                else:
+                    # Avg latency when available
+                    cr = state.last_completion_result
+                    avg_latency = f"{cr.latency_ms} ms" if cr and cr.latency_ms else "—"
+                    st.metric("Avg Latency", avg_latency)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            # Last completion drawer
+            cr = state.last_completion_result
+            if cr:
+                with st.expander(f"Last completion ({state.current_player})", expanded=False):
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.metric("Latency", f"{cr.latency_ms or 0} ms")
+                    with c2:
+                        st.metric("Tokens in", f"{cr.tokens_in or 0}")
+                    with c3:
+                        st.metric("Tokens out", f"{cr.tokens_out or 0}")
+                    if cr.error:
+                        st.error(f"{cr.error_type or 'Error'}: {cr.error}")
+                    else:
+                        st.caption("Raw response:")
+                        st.code(cr.text or "", language="text")
+
+            # Thinking trace drawer (collapsed by default, summary always visible)
+            render_thinking_trace_drawer(state)
+
+    # Completed games stack as cf-cards
+    if completed_games:
+        st.markdown("---")
+        st.markdown(f"### 🗂 Completed games ({len(completed_games)})")
+        for i, completed_state in enumerate(completed_games):
+            _draw_completed_game_summary_card(i, completed_state)
+
+
 def run_in_process_benchmark(
     white_config: dict,
     black_config: dict,
@@ -507,6 +692,8 @@ def run_in_process_benchmark(
         # Multiple players: all pairings
         num_pairings = num_players * (num_players - 1)
     total_games = num_pairings * games
+    # Use total_games to avoid F841 warning - pass it to start_benchmark
+    _ = total_games
 
     def start_benchmark():
         st.session_state.benchmark_state = None
@@ -534,20 +721,18 @@ def run_in_process_benchmark(
         async def live_callback(state: GameState):
             ui_callback_sync(state)
 
+        import contextlib
+
         def thread_func():
             try:
                 asyncio.run(runner.run_benchmark_with_callback(live_callback))
             except Exception as e:
-                try:
+                with contextlib.suppress(BaseException):
                     st.session_state.benchmark_error = e
-                except BaseException:
-                    pass
             finally:
-                try:
+                with contextlib.suppress(BaseException):
                     st.session_state.benchmark_done = True
                     st.session_state.benchmark_run_dir = runner.run_dir
-                except BaseException:
-                    pass
 
         t = threading.Thread(target=thread_func)
         add_script_run_ctx(t)
@@ -616,89 +801,107 @@ def run_in_process_benchmark(
                         game.cancel()
                     st.rerun()
 
-    def _draw_completed_game_summary(game_idx: int, state: GameState) -> None:
-        """Render one completed game as a collapsed expander below the live view.
 
-        The benchmark appends newly-finished games to
-        ``st.session_state.benchmark_completed_games`` in chronological order,
-        so iterating that list yields oldest-on-top → newest-on-bottom. Each
-        entry is a collapsed ``st.expander`` (cheap to render many; only the
-        metadata shows until the user opens it) containing the final board,
-        metrics, and move history. This replaces the older dropdown-based
-        navigation: the live (or paused) game is always on top and historical
-        games stack beneath it as they complete.
-        """
-        white_player = state.moves[0].player if state.moves else "?"
-        black_player = state.moves[1].player if len(state.moves) >= 2 else "?"
-        term_reason = getattr(state.stats, 'termination_reason', 'unknown')
-        label = (
-            f"Game {game_idx + 1} · {white_player} vs {black_player} · "
-            f"Result: {state.winner or '?'} · "
-            f"{term_reason.replace('_', ' ').title()}"
-        )
-        with st.expander(label, expanded=False):
-            start_time = st.session_state.benchmark_start_time
-            sum_board_ph = st.empty()
-            sum_stats_ph = st.empty()
-            sum_moves_ph = st.empty()
-            _draw_board(sum_board_ph, state, start_time)
-            _draw_metrics(sum_stats_ph, state, start_time)
-            _draw_moves(sum_moves_ph, state.moves)
+def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
+    """Render one completed game as a cf-card with inline board, metrics, moves."""
+    white_player = state.moves[0].player if state.moves else "?"
+    black_player = state.moves[1].player if len(state.moves) >= 2 else "?"
+    term_reason = getattr(state.stats, 'termination_reason', 'unknown')
+    winner = state.winner or "?"
 
+    with st.container():
+        st.markdown('<div class="cf-card cf-card-compact">', unsafe_allow_html=True)
+
+        # Header row
+        hdr_cols = st.columns([3, 1, 1, 1])
+        with hdr_cols[0]:
+            st.markdown(f"**Game {game_idx + 1}** · {white_player} vs {black_player}")
+        with hdr_cols[1]:
+            st.metric("Result", winner)
+        with hdr_cols[2]:
+            st.metric("Termination", term_reason.replace('_', ' ').title())
+        with hdr_cols[3]:
+            if state.last_completion_result:
+                st.metric("Avg Latency", f"{state.last_completion_result.latency_ms or 0} ms")
+
+        # Board + metrics side by side
+        bcol, mcol = st.columns([1, 1])
+        with bcol:
+            king = state.board.king(state.board.turn)
+            check_sq = king if state.board.is_check() and king is not None else None
+            last_mv = state.board.peek() if state.board.move_stack else None
+            render_board_with_evalbar(state.board, size=320, lastmove=last_mv, check_square=check_sq)
+
+        with mcol:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Moves", state.stats.total_moves)
+            m2.metric("Captures", state.stats.capture_moves)
+            m3.metric("Checks", state.stats.check_moves)
+
+        # Move history as pills
+        if state.moves:
+            render_move_ticker(state.moves)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+def _draw_completed_game_summary(game_idx: int, state: GameState) -> None:
+    """Render one completed game as a collapsed expander below the live view.
+
+    The benchmark appends newly-finished games to
+    ``st.session_state.benchmark_completed_games`` in chronological order,
+    so iterating that list yields oldest-on-top → newest-on-bottom. Each
+    entry is a collapsed ``st.expander`` (cheap to render many; only the
+    metadata shows until the user opens it) containing the final board,
+    metrics, and move history. This replaces the older dropdown-based
+    navigation: the live (or paused) game is always on top and historical
+    games stack beneath it as they complete.
+    """
+    white_player = state.moves[0].player if state.moves else "?"
+    black_player = state.moves[1].player if len(state.moves) >= 2 else "?"
+    term_reason = getattr(state.stats, 'termination_reason', 'unknown')
+    label = (
+        f"Game {game_idx + 1} · {white_player} vs {black_player} · "
+        f"Result: {state.winner or '?'} · "
+        f"{term_reason.replace('_', ' ').title()}"
+    )
+    with st.expander(label, expanded=False):
+        start_time = st.session_state.benchmark_start_time
+        sum_board_ph = st.empty()
+        sum_stats_ph = st.empty()
+        sum_moves_ph = st.empty()
+        _draw_board(sum_board_ph, state, start_time)
+        _draw_metrics(sum_stats_ph, state, start_time)
+        _draw_moves(sum_moves_ph, state.moves)
+
+    # Now start the benchmark if not already running
     if "benchmark_thread" not in st.session_state or (not st.session_state.benchmark_thread.is_alive() and not st.session_state.get("benchmark_done", False)):
         if not st.session_state.get("benchmark_done", False):
             start_benchmark()
 
     def _draw_live_ui():
-        progress_ph = st.empty()
-        board_ph = st.empty()
-        stats_ph = st.empty()
-        moves_ph = st.empty()
-        completion_ph = st.empty()
-
         state: GameState | None = st.session_state.get("benchmark_state")
-
-        if state is not None and getattr(state, 'is_paused', False):
-            pause_reason = getattr(state, 'pause_reason', None)
-            if pause_reason == "game_failed":
-                progress_ph.warning(
-                    "Benchmark paused — a game ended with a problem and was not "
-                    "concluded. Continue to the next game or abort the benchmark."
-                )
-            else:
-                progress_ph = st.empty()  # _draw_paused_ui sets its own progress
-            _draw_paused_ui(board_ph, stats_ph, moves_ph, completion_ph, state)
-        elif state is not None:
-            game_idx = st.session_state.benchmark_game_index
-            frac = min(1.0, game_idx / max(1, total_games))
-            progress_ph.progress(
-                frac, text=f"Game {game_idx + 1} / {total_games} in progress"
-            )
-            start_time = st.session_state.benchmark_start_time
-            _draw_board(board_ph, state, start_time)
-            _draw_metrics(stats_ph, state, start_time)
-            _draw_moves(moves_ph, state.moves)
-            _draw_completion_result(completion_ph, state)
-        else:
-            progress_ph.info(
-                f"Starting in-process benchmark: {white_spec} vs {black_spec} ({games} games)..."
-            )
-            start_time = st.session_state.benchmark_start_time
-
-        # Stack completed games beneath the live game: oldest on top, newest on
-        # bottom. The runner's ui_callback appends in completion order.
+        game_idx = st.session_state.benchmark_game_index
+        start_time = st.session_state.benchmark_start_time
         completed_games = st.session_state.get("benchmark_completed_games", [])
-        if completed_games:
-            st.markdown("---")
-            st.markdown(f"### 🗂 Completed games ({len(completed_games)})")
-            for i, completed_state in enumerate(completed_games):
-                _draw_completed_game_summary(i, completed_state)
+        is_paused = getattr(state, 'is_paused', False)
+        pause_reason = getattr(state, 'pause_reason', None) if is_paused else None
+
+        render_live_game_screen(
+            state=state,
+            white_spec=white_spec,
+            black_spec=black_spec,
+            game_idx=game_idx,
+            total_games=total_games,
+            start_time=start_time,
+            completed_games=completed_games,
+            is_paused=is_paused,
+            pause_reason=pause_reason,
+        )
 
     if st.session_state.get("benchmark_error"):
         exc = st.session_state.benchmark_error
-        if isinstance(exc, (GameExecutionError, FatalBenchmarkError)):
-            render_error(st, exc)
-        elif isinstance(exc, (NoProvidersConfiguredError, SetupError, InvalidApiKeyError)):
+        if isinstance(exc, (GameExecutionError, FatalBenchmarkError)) or isinstance(exc, (NoProvidersConfiguredError, SetupError, InvalidApiKeyError)):
             render_error(st, exc)
         else:
             st.error(f"Benchmark failed: {exc}")
@@ -747,9 +950,13 @@ def run_in_process_benchmark(
 # ---------------------------------------------------------------------------
 
 
-def render_benchmark_history() -> None:
-    """Render benchmark runs parsed from the on-disk JSONL artifacts."""
-    with st.expander("📊 Benchmark History", expanded=False):
+def render_benchmark_history(*, expanded: bool = False) -> None:
+    """Render benchmark runs parsed from the on-disk JSONL artifacts.
+
+    `expanded=True` opens the expander so the sidebar's "📊 Benchmark History"
+    toggle reveals the runs immediately on first click.
+    """
+    with st.expander("📊 Benchmark History", expanded=expanded):
         runs = list_runs(RUNS_ROOT)
         if not runs:
             st.info(
@@ -786,7 +993,7 @@ def render_benchmark_history() -> None:
                 )
             st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
-        # Per-run breakdown.
+        # Per-run breakdown as cf-cards.
         st.markdown("### Per-run details")
         for run in runs:
             render_run_summary(run, expanded=False)
@@ -799,82 +1006,101 @@ def render_run_summary(run, *, expanded: bool) -> None:
         f"{len(run.providers_seen)} provider(s) · "
         f"{datetime.utcfromtimestamp(0).isoformat() if not run.timestamp_utc else run.timestamp_utc}"
     )
-    with st.expander(label, expanded=expanded):
-        if run.config:
-            st.caption("Config:")
-            st.json(run.config)
 
-        # Per-player table for this run.
-        rows = []
-        for _name, ps in run.player_stats.items():
-            rows.append(
-                {
-                    "Player": ps.name,
-                    "Games": ps.games_played,
-                    "W": ps.wins,
-                    "L": ps.losses,
-                    "D": ps.draws,
-                    "Score %": (
-                        f"{ps.score_pct:.1f}" if ps.score_pct is not None else "—"
-                    ),
-                    "Avg latency (ms)": (
-                        f"{ps.avg_latency_ms:.0f}"
-                        if ps.avg_latency_ms is not None
-                        else "—"
-                    ),
-                    "Captures": ps.captures,
-                    "Checks": ps.checks,
-                    "Tokens in": ps.tokens_in_total if ps.tokens_in_total is not None else None,
-                    "Tokens out": ps.tokens_out_total if ps.tokens_out_total is not None else None,
-                }
-            )
-        if rows:
-            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    # Render as cf-card instead of bare expander
+    with st.container():
+        st.markdown('<div class="cf-card cf-run-summary">', unsafe_allow_html=True)
 
-        # Head-to-head pairings.
-        if run.pairings:
-            pair_rows = [
-                {
-                    "White": p.white,
-                    "Black": p.black,
-                    "Games": p.games,
-                    "White wins": p.white_wins,
-                    "Black wins": p.black_wins,
-                    "Draws": p.draws,
-                    "Total moves": p.total_moves,
-                }
-                for p in run.pairings
-            ]
-            st.caption("Head-to-head pairings:")
-            st.dataframe(pd.DataFrame(pair_rows), hide_index=True, width="stretch")
-            
-        # Interactive Game Viewer
-        if run.games:
-            render_game_viewer(run)
+        # Run header with analyze button
+        hdr_col1, hdr_col2 = st.columns([4, 1])
+        with hdr_col1:
+            st.markdown(f"### {run.run_id}")
+            st.caption(f"{run.total_games} games · {len(run.providers_seen)} provider(s)")
+        with hdr_col2:
+            if st.button("📊 Analyze", key=f"analyze_run_{run.run_id}", type="primary", width="stretch"):
+                st.session_state.show_analytics = True
+                st.session_state.show_history = False
+                st.session_state.analytics_run_dir = str(run.run_dir)
+                st.rerun()
+
+        if expanded:
+            if run.config:
+                with st.expander("Config", expanded=False):
+                    st.json(run.config)
+
+            # Per-player table for this run.
+            rows = []
+            for _name, ps in run.player_stats.items():
+                rows.append(
+                    {
+                        "Player": ps.name,
+                        "Games": ps.games_played,
+                        "W": ps.wins,
+                        "L": ps.losses,
+                        "D": ps.draws,
+                        "Score %": (
+                            f"{ps.score_pct:.1f}" if ps.score_pct is not None else "—"
+                        ),
+                        "Avg latency (ms)": (
+                            f"{ps.avg_latency_ms:.0f}"
+                            if ps.avg_latency_ms is not None
+                            else "—"
+                        ),
+                        "Captures": ps.captures,
+                        "Checks": ps.checks,
+                        "Tokens in": ps.tokens_in_total if ps.tokens_in_total is not None else None,
+                        "Tokens out": ps.tokens_out_total if ps.tokens_out_total is not None else None,
+                    }
+                )
+            if rows:
+                st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+            # Head-to-head pairings.
+            if run.pairings:
+                pair_rows = [
+                    {
+                        "White": p.white,
+                        "Black": p.black,
+                        "Games": p.games,
+                        "White wins": p.white_wins,
+                        "Black wins": p.black_wins,
+                        "Draws": p.draws,
+                        "Total moves": p.total_moves,
+                    }
+                    for p in run.pairings
+                ]
+                st.caption("Head-to-head pairings:")
+                st.dataframe(pd.DataFrame(pair_rows), hide_index=True, width="stretch")
+
+            # Interactive Game Viewer
+            if run.games:
+                render_game_viewer(run)
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def render_game_viewer(run) -> None:
     """Interactive game viewer for stepping through moves of past games."""
     if not run.games:
         return
-        
+
     st.markdown("### ♟️ Game Replays & Logs")
-    
+
     for i, game in enumerate(run.games):
         term_reason = getattr(game, 'termination_reason', 'unknown')
         st.markdown(f"#### Game {i+1}: {game.white_player} vs {game.black_player} ({game.result}) — *{term_reason.replace('_', ' ').title()}*")
-        
+
         if not game.moves:
             st.info("No moves recorded for this game.")
             st.divider()
             continue
-            
+
         # Select Move
         max_moves = len(game.moves)
-        
+
         # Calculate step state
         move_idx = st.slider(f"Rewind Game {i+1}", 0, max_moves, max_moves, key=f"slider_{run.run_id}_{game.game_id}")
-        
+
         if move_idx == 0:
             fen = game.opening_fen or chess.STARTING_FEN
             last_move = None
@@ -890,23 +1116,16 @@ def render_game_viewer(run) -> None:
                 fen = m.fen_before
                 last_move = None
             move_info = m
-            
+
         col1, col2 = st.columns([1, 1])
         with col1:
             b = chess.Board(fen)
             king_square = b.king(b.turn)
             check_square = king_square if b.is_check() and king_square is not None else None
-            
-            st.write(
-                chess.svg.board(
-                    b,
-                    size=400,
-                    lastmove=last_move,
-                    check=check_square,
-                ),
-                unsafe_allow_html=True,
-            )
-            
+
+            # Use cf-board-frame via render_board_with_evalbar
+            render_board_with_evalbar(b, size=400, lastmove=last_move, check_square=check_square)
+
         with col2:
             if move_info:
                 player_name = game.white_player if move_info.color == "white" else game.black_player
@@ -914,13 +1133,13 @@ def render_game_viewer(run) -> None:
                 st.metric("Latency", f"{move_info.llm_latency_ms} ms")
                 if move_info.llm_tokens_out:
                     st.metric("Tokens Out", move_info.llm_tokens_out)
-                
+
                 with st.expander("Model Thinking Trace"):
                     if move_info.thinking_trace:
                         st.code(move_info.thinking_trace, language="text")
                     else:
                         st.info("No thinking trace recorded.")
-                        
+
                 with st.expander("Raw Provider Response"):
                     if move_info.llm_raw_response:
                         st.code(move_info.llm_raw_response, language="json")
@@ -928,10 +1147,10 @@ def render_game_viewer(run) -> None:
                         st.info("No raw response recorded.")
             else:
                 st.info("Starting Position")
-                
+
         # Game Table
         st.markdown(f"##### Game {i+1} Move History")
-        
+
         df_rows = []
         for m in game.moves:
             # Parse timestamp if possible
@@ -939,7 +1158,7 @@ def render_game_viewer(run) -> None:
             if t_str:
                 if len(t_str) > 19:
                     t_str = t_str[11:19]
-            
+
             df_rows.append({
                 "Move #": m.move_number,
                 "Color": m.color.title(),
@@ -947,9 +1166,9 @@ def render_game_viewer(run) -> None:
                 "Move": m.move_san,
                 "Reasoning": m.thinking_trace.replace("<", "&lt;").replace(">", "&gt;") if m.thinking_trace else "",
             })
-            
+
         df = pd.DataFrame(df_rows)
-        
+
         column_config = {
             "Reasoning": st.column_config.TextColumn(
                 "Reasoning",
@@ -977,7 +1196,7 @@ def main():
 
     st.sidebar.markdown("---")
     st.sidebar.header("🎮 Game Controls")
-    
+
     games = st.sidebar.number_input(
         "Games to play", min_value=1, max_value=20, value=1, step=1, key="game_count"
     )
@@ -989,10 +1208,10 @@ def main():
         help="Low = fast minimal thinking (256 tokens), Mid = standard tactical focus (1024 tokens), High = deep positional thinking (4096 tokens).",
         key="reasoning_level_select",
     )
-    
+
     # If more than 1 game, alternate colors to keep it fair.
     colors_mode = "alternating" if games > 1 else "fixed"
-    
+
     if st.sidebar.button("▶️ Start Match", type="primary", width="stretch"):
         if not white_config or not black_config:
             st.sidebar.error("Please select two distinct models for the players.")
@@ -1021,32 +1240,84 @@ def main():
         )
         return
 
-    st.title("🤖 AI Chess Battle")
-    st.write("Watch AI models compete in chess! Select models from any provider.")
-
-    # Hero: demo games + benchmark history — both real, no API key needed.
-    st.markdown("### 🎮 Get Started")
-    st.markdown(
-        "**Have API keys?** Add them in the sidebar under **🔑 API Keys**, "
-        "pick two models under **♟️ Model Selection**, then click **▶️ Start Match**."
-    )
-
-    render_benchmark_history()
-
-    # Analytical Dashboard
-    st.sidebar.markdown("---")
-    st.sidebar.header("📊 Analytical Dashboard")
-
-    if st.sidebar.button("📊 Show Analytical Dashboard", width="stretch"):
-        st.session_state.show_analytics = not st.session_state.get("show_analytics", False)
+    apply_arena_theme()
 
     if st.session_state.get("show_analytics", False):
         render_analytical_dashboard()
+        st.sidebar.markdown("---")
+        st.sidebar.header("🗂 History & Cache")
+        if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
+            st.session_state.show_analytics = False
+            st.session_state.show_history = True
+            st.rerun()
+        return
+
+    show_history = st.session_state.get("show_history", False)
+    if not st.session_state.get("game_running", False):
+        render_hero()
+        render_landing_metrics(RUNS_ROOT)
+    else:
+        st.title("🤖 AI Chess Battle")
+        st.write("Watch AI models compete in chess! Select models from any provider.")
+
+    if show_history:
+        st.markdown(
+            '<div class="cf-section-title">📊 Benchmark History</div>'
+            '<div class="cf-section-sub">Browse past runs parsed from real JSONL artifacts on disk. '
+            'Open a run to view its leaderboard, head-to-head, and per-game replays with '
+            'Stockfish eval timelines and move-quality heatmaps.</div>',
+            unsafe_allow_html=True,
+        )
+        render_benchmark_history(expanded=True)
+    else:
+        st.markdown("### 🎮 Get Started")
+        st.markdown(
+            "**Have API keys?** Add them in the sidebar under **🔑 API Keys**, "
+            "pick two models under **♟️ Model Selection**, then click **▶️ Start Match**."
+        )
+        render_benchmark_history(expanded=False)
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("🗂 History & Cache")
+
+    if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
+        st.session_state.show_history = True
+        st.rerun()
+
+    if st.sidebar.button("✕ Close Benchmark History", width="stretch", key="close_history"):
+        st.session_state.show_history = False
+        st.rerun()
+
+    if st.sidebar.button("🧹 Clear Created Models Cache", width="stretch", key="clear_cache"):
+        cleared = _clear_models_cache()
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+        msg = (
+            f"Cleared {cleared} cached model list(s) — next refresh will re-fetch from the providers."
+            if cleared
+            else "Model cache was empty — nothing to clear."
+        )
+        st.session_state.cache_cleared_msg = msg
+        st.rerun()
+
+    if st.session_state.get("cache_cleared_msg"):
+        st.sidebar.success(st.session_state.cache_cleared_msg)
+        st.session_state.cache_cleared_msg = None
 
 
 def render_analytical_dashboard():
     """Render the analytical dashboard with eval graphs, move quality, opening explorer, etc."""
-    st.markdown("## 📊 Analytical Dashboard")
+    back, title = st.columns([1, 6])
+    with back:
+        if st.button("← Back to History", key="analytics_back"):
+            st.session_state.show_analytics = False
+            st.session_state.show_history = True
+            st.session_state.pop("analytics_run_dir", None)
+            st.rerun()
+    with title:
+        st.markdown("## 📊 Analytical Dashboard")
 
     # Load available runs
     runs = list_runs(RUNS_ROOT)
@@ -1054,14 +1325,30 @@ def render_analytical_dashboard():
         st.info("No benchmark runs available. Run a benchmark first.")
         return
 
-    # Run selector
+    # If we were asked to focus on a specific run, find it.
+    pre_selected_run = None
+    if "analytics_run_dir" in st.session_state:
+        target_dir = Path(st.session_state.analytics_run_dir)
+        for r in runs:
+            if r.run_dir == target_dir:
+                pre_selected_run = r
+                break
+
+    # Run selector as card header
+    st.markdown('<div class="cf-card cf-card-compact">', unsafe_allow_html=True)
     run_options = {f"{run.run_id} ({run.total_games} games)": run for run in runs}
+    default_idx = 0
+    if pre_selected_run:
+        label = f"{pre_selected_run.run_id} ({pre_selected_run.total_games} games)"
+        default_idx = list(run_options.keys()).index(label) if label in run_options else 0
     selected_run_label = st.selectbox(
         "Select Run to Analyze",
         options=list(run_options.keys()),
-        key="analytics_run_selector"
+        index=default_idx,
+        key="analytics_run_selector",
     )
     selected_run = run_options[selected_run_label]
+    st.markdown('</div>', unsafe_allow_html=True)
 
     # Load the selected run
     run = load_run(selected_run.run_dir)
@@ -1074,6 +1361,7 @@ def render_analytical_dashboard():
         st.info("No games in this run.")
         return
 
+    st.markdown('<div class="cf-card cf-card-compact">', unsafe_allow_html=True)
     game_options = {f"Game {i+1}: {g.white_player} vs {g.black_player} ({g.result})": g for i, g in enumerate(run.games)}
     selected_game_label = st.selectbox(
         "Select Game to Analyze",
@@ -1081,13 +1369,14 @@ def render_analytical_dashboard():
         key="analytics_game_selector"
     )
     selected_game = game_options[selected_game_label]
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
 
     # ============================================================
-    # 1. EVAL GRAPH - Line chart of centipawn eval per ply
+    # 1. EVAL TIMELINE - Line chart with horizontal advantage bar
     # ============================================================
-    st.markdown("### 📈 Eval Graph")
+    st.markdown("### 📈 Eval Timeline")
     eval_data = []
     board = chess.Board(selected_game.opening_fen)
 
@@ -1111,8 +1400,24 @@ def render_analytical_dashboard():
         # Filter rows with eval data
         eval_df = eval_df[eval_df["Eval (cp)"].notna()]
         if not eval_df.empty:
-            # Create line chart
             import altair as alt
+
+            # Horizontal advantage bar above chart (DESIGN.md §3)
+            # Create a simple bar showing current advantage
+            last_eval = eval_df.iloc[-1]["Eval (cp)"]
+            max_abs_eval = max(abs(eval_df["Eval (cp)"].max()), abs(eval_df["Eval (cp)"].min()), 100)
+            advantage_pct = 50 + (last_eval / max_abs_eval * 50) if max_abs_eval > 0 else 50
+            advantage_pct = max(0, min(100, advantage_pct))
+
+            adv_html = f"""
+            <div class="cf-advantage-bar" style="height:8px;background:linear-gradient(90deg, var(--arena-black) 0%, var(--arena-black) 50%, var(--arena-white) 50%, var(--arena-white) 100%);border-radius:4px;margin-bottom:12px;position:relative;border:1px solid var(--arena-border-strong);overflow:hidden;">
+                <div style="position:absolute;left:{advantage_pct}%;top:0;bottom:0;width:2px;background:var(--arena-accent);box-shadow:0 0 8px var(--arena-accent);"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:0.75rem;color:var(--arena-text-muted);margin-bottom:8px;">
+                <span>Black advantage</span><span>Even</span><span>White advantage</span>
+            </div>
+            """
+            st.markdown(adv_html, unsafe_allow_html=True)
 
             # Base line chart
             base = alt.Chart(eval_df).encode(
@@ -1137,9 +1442,9 @@ def render_analytical_dashboard():
     st.markdown("---")
 
     # ============================================================
-    # 2. MOVE QUALITY TIMELINE - Bar chart per move
+    # 2. MOVE QUALITY HEATMAP - Rect-encoded ply x quality
     # ============================================================
-    st.markdown("### 🎯 Move Quality Timeline")
+    st.markdown("### 🔥 Move Quality Heatmap")
 
     quality_data = []
     for ply, move_log in enumerate(selected_game.moves):
@@ -1156,32 +1461,49 @@ def render_analytical_dashboard():
     if quality_data:
         quality_df = pd.DataFrame(quality_data)
 
-        # Color mapping
+        # Color mapping from DESIGN.md
         quality_colors = {
             "best": "#2ecc71",
             "excellent": "#27ae60",
-            "good": "#f1c40f",
-            "inaccuracy": "#f39c12",
+            "good": "#9ecd43",
+            "inaccuracy": "#db6d28",
             "mistake": "#e67e22",
             "blunder": "#e74c3c",
         }
 
-        # Create bar chart
-        chart = alt.Chart(quality_df).mark_bar().encode(
-            x=alt.X("Ply:O", title="Ply"),
-            y=alt.Y("CP Loss:Q", title="Centipawn Loss"),
-            color=alt.Color("Quality:N", scale=alt.Scale(
-                domain=list(quality_colors.keys()),
-                range=list(quality_colors.values())
-            )),
-            tooltip=["Ply", "Move", "Player", "Quality", "CP Loss", "Is Best"]
-        ).properties(
-            width=700,
-            height=350,
-            title="Move Quality per Ply (CP Loss)"
-        ).interactive()
+        # Quality order for y-axis
+        quality_order = ["best", "excellent", "good", "inaccuracy", "mistake", "blunder"]
 
-        st.altair_chart(chart, width="stretch")
+        # Create heatmap data: count of each quality per ply range
+        heatmap_data = []
+        for ply in quality_df["Ply"].unique():
+            ply_data = quality_df[quality_df["Ply"] == ply]
+            for q in quality_order:
+                count = (ply_data["Quality"] == q).sum()
+                if count > 0:
+                    heatmap_data.append({
+                        "Ply": ply,
+                        "Quality": q,
+                        "Count": int(count),
+                        "Color": quality_colors[q],
+                    })
+
+        if heatmap_data:
+            heatmap_df = pd.DataFrame(heatmap_data)
+
+            # Altair rect heatmap
+            heatmap_chart = alt.Chart(heatmap_df).mark_rect().encode(
+                x=alt.X("Ply:O", title="Ply", axis=alt.Axis(labelAngle=0)),
+                y=alt.Y("Quality:N", title="Move Quality", sort=quality_order),
+                color=alt.Color("Color:N", scale=None, legend=None),
+                tooltip=["Ply", "Quality", "Count"]
+            ).properties(
+                width=700,
+                height=280,
+                title="Move Quality Distribution per Ply"
+            ).configure_view(stroke=None)
+
+            st.altair_chart(heatmap_chart, width="stretch")
 
         # Summary stats
         col1, col2, col3, col4 = st.columns(4)
@@ -1203,16 +1525,16 @@ def render_analytical_dashboard():
     st.markdown("---")
 
     # ============================================================
-    # 3. OPENING EXPLORER - Tree view of played openings
+    # 3. OPENING EXPLORER - Table with inline win-rate bars
     # ============================================================
     st.markdown("### 🌳 Opening Explorer")
 
     # Aggregate opening stats across all runs
     opening_stats = {}
-    for run in list_runs(RUNS_ROOT):
-        run_data = load_run(run.run_dir)
-        if run_data:
-            for game in run_data.games:
+    for run_data in runs:
+        loaded_run = load_run(run_data.run_dir)
+        if loaded_run:
+            for game in loaded_run.games:
                 eco = game.opening_eco or "?"
                 name = game.opening_name or "Unknown"
                 key = f"{eco}: {name}"
@@ -1236,51 +1558,160 @@ def render_analytical_dashboard():
         opening_rows = []
         for key, stats in opening_stats.items():
             avg_cp = sum(stats["cp_losses"]) / len(stats["cp_losses"]) if stats["cp_losses"] else 0
+            win_rate = stats['wins'] / stats['games'] * 100 if stats["games"] > 0 else 0
             opening_rows.append({
                 "Opening": key,
                 "Games": stats["games"],
                 "Wins": stats["wins"],
                 "Losses": stats["losses"],
                 "Draws": stats["draws"],
-                "Win Rate": f"{stats['wins']/stats['games']*100:.1f}%" if stats["games"] > 0 else "0%",
+                "Win Rate": win_rate,
+                "Win Rate %": f"{win_rate:.1f}%",
                 "Avg CP Loss": f"{avg_cp:.1f}",
             })
 
         opening_df = pd.DataFrame(opening_rows).sort_values("Games", ascending=False)
-        st.dataframe(opening_df, hide_index=True, width="stretch")
+
+        # Render with inline win-rate bars using HTML
+        st.markdown('<div class="cf-card">', unsafe_allow_html=True)
+        for _, row in opening_df.iterrows():
+            wr = row["Win Rate"]
+            bar_color = "var(--eval-good)" if wr >= 50 else "var(--eval-blunder)"
+            st.markdown(f"""
+            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--arena-border);">
+                <div style="flex:2;font-family:var(--font-mono);font-size:0.875rem;">{row['Opening']}</div>
+                <div style="width:60px;text-align:right;font-variant-numeric:tabular-nums;">{row['Games']} games</div>
+                <div style="flex:3;position:relative;height:20px;background:var(--arena-bg-inset);border-radius:var(--r-sm);overflow:hidden;">
+                    <div style="width:{wr}%;height:100%;background:{bar_color};border-radius:var(--r-sm);transition:width var(--dur-med) var(--ease-out);"></div>
+                </div>
+                <div style="width:70px;text-align:right;font-family:var(--font-mono);font-size:0.8125rem;color:var(--arena-text-muted);">{row['Win Rate %']}</div>
+                <div style="width:90px;text-align:right;font-family:var(--font-mono);font-size:0.8125rem;color:var(--arena-text-muted);">{row['Avg CP Loss']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.info("No opening data available.")
 
     st.markdown("---")
 
     # ============================================================
-    # 4. MODEL COMPARISON DASHBOARD
+    # 4. MODEL COMPARISON - Radar chart (≥2 models) / Table fallback
     # ============================================================
-    st.markdown("### 🤖 Model Comparison Dashboard")
+    st.markdown("### 🤖 Model Comparison")
 
     # Compare models across all runs
     model_stats = {}
-    for run in runs:
-        for name, ps in run.player_stats.items():
-            if name not in model_stats:
-                model_stats[name] = {
-                    "games": 0, "wins": 0, "losses": 0, "draws": 0,
-                    "total_cp_loss": 0, "cp_loss_count": 0,
-                    "blunders": 0, "mistakes": 0, "inaccuracies": 0,
-                    "best_moves": 0, "total_moves": 0,
-                    "total_latency": 0, "latency_count": 0,
-                    "thinking_chars": 0, "thinking_count": 0,
-                }
-            stats = model_stats[name]
-            stats["games"] += ps.games_played
-            stats["wins"] += ps.wins
-            stats["losses"] += ps.losses
-            stats["draws"] += ps.draws
-            stats["total_latency"] += ps.total_latency_ms
-            stats["latency_count"] += ps.latency_samples
-            # Note: detailed move quality stats would need to be aggregated from moves
+    for run_data in runs:
+        loaded_run = load_run(run_data.run_dir)
+        if loaded_run:
+            for name, ps in loaded_run.player_stats.items():
+                if name not in model_stats:
+                    model_stats[name] = {
+                        "games": 0, "wins": 0, "losses": 0, "draws": 0,
+                        "total_cp_loss": 0, "cp_loss_count": 0,
+                        "blunders": 0, "mistakes": 0, "inaccuracies": 0,
+                        "best_moves": 0, "total_moves": 0,
+                        "total_latency": 0, "latency_count": 0,
+                        "thinking_chars": 0, "thinking_count": 0,
+                    }
+                stats = model_stats[name]
+                stats["games"] += ps.games_played
+                stats["wins"] += ps.wins
+                stats["losses"] += ps.losses
+                stats["draws"] += ps.draws
+                stats["total_latency"] += ps.total_latency_ms
+                stats["latency_count"] += ps.latency_samples
 
-    if model_stats:
+    if model_stats and len(model_stats) >= 2:
+        # Build radar chart data
+        radar_rows = []
+        for name, stats in model_stats.items():
+            score = stats["wins"] + 0.5 * stats["draws"]
+            score_pct = (score / stats["games"] * 100) if stats["games"] > 0 else 0
+            avg_latency = stats["total_latency"] / stats["latency_count"] if stats["latency_count"] > 0 else 0
+
+            # Collect move quality stats from all games
+            total_cp_loss = 0
+            cp_loss_count = 0
+            blunders = 0
+            best_moves = 0
+            total_moves = 0
+            for run_data in runs:
+                loaded_run = load_run(run_data.run_dir)
+                if loaded_run:
+                    for game in loaded_run.games:
+                        if game.white_player == name or game.black_player == name:
+                            for move in game.moves:
+                                if move.cp_loss is not None:
+                                    total_cp_loss += move.cp_loss
+                                    cp_loss_count += 1
+                                if move.move_quality == "blunder":
+                                    blunders += 1
+                                if move.move_quality == "best":
+                                    best_moves += 1
+                                if move.move_quality:
+                                    total_moves += 1
+
+            blunder_rate = (blunders / total_moves * 100) if total_moves > 0 else 0
+            best_move_pct = (best_moves / total_moves * 100) if total_moves > 0 else 0
+            avg_cp_loss = (total_cp_loss / cp_loss_count) if cp_loss_count > 0 else 0
+
+            radar_rows.append({
+                "Model": name,
+                "Score %": score_pct,
+                "Avg Latency (ms)": avg_latency,
+                "Best Move %": best_move_pct,
+                "Blunder Rate %": blunder_rate,
+                "Avg CP Loss": avg_cp_loss,
+            })
+
+        radar_df = pd.DataFrame(radar_rows)
+
+        # Normalize each metric to 0-1 for radar
+        metrics = ["Score %", "Best Move %", "Avg CP Loss", "Blunder Rate %", "Avg Latency (ms)"]
+        # For Score % and Best Move %: higher is better (normalize max->1)
+        # For Avg CP Loss, Blunder Rate %, Avg Latency: lower is better (normalize min->1, invert)
+        normalized = {}
+        for m in metrics:
+            vals = radar_df[m].values
+            if m in ["Score %", "Best Move %"]:
+                max_val = max(vals) if max(vals) > 0 else 1
+                normalized[m] = vals / max_val
+            else:
+                min_val = min(vals) if min(vals) > 0 else 1
+                max_val = max(vals)
+                # Invert: lower is better, so 1 - (val-min)/(max-min)
+                if max_val > min_val:
+                    normalized[m] = 1 - (vals - min_val) / (max_val - min_val)
+                else:
+                    normalized[m] = np.ones_like(vals) * 0.5
+
+        # Prepare data for Altair radar (polar coordinate approximation)
+        radar_plot_data = []
+        for i, row in radar_df.iterrows():
+            for m in metrics:
+                radar_plot_data.append({
+                    "Model": row["Model"],
+                    "Metric": m,
+                    "Value": normalized[m][i],
+                })
+        radar_plot_df = pd.DataFrame(radar_plot_data)
+
+        # Altair radar chart using theta/r
+        radar_chart = alt.Chart(radar_plot_df).mark_line(point=True, strokeWidth=2).encode(
+            theta=alt.Theta("Metric:N", sort=metrics),
+            radius=alt.Radius("Value:Q", scale=alt.Scale(domain=[0, 1])),
+            color=alt.Color("Model:N", legend=alt.Legend(title="Model")),
+            tooltip=["Model", "Metric", alt.Tooltip("Value:Q", format=".2f")]
+        ).properties(
+            width=400,
+            height=400,
+            title="Model Comparison Radar (normalized 0-1, higher=better)"
+        ).configure_view(stroke=None)
+
+        st.altair_chart(radar_chart, width="stretch")
+
+        # Also show comparison table
         comparison_rows = []
         for name, stats in model_stats.items():
             score = stats["wins"] + 0.5 * stats["draws"]
@@ -1299,6 +1730,28 @@ def render_analytical_dashboard():
 
         comparison_df = pd.DataFrame(comparison_rows).sort_values("Games", ascending=False)
         st.dataframe(comparison_df, hide_index=True, width="stretch")
+
+    elif model_stats:
+        # Single model - show table only
+        comparison_rows = []
+        for name, stats in model_stats.items():
+            score = stats["wins"] + 0.5 * stats["draws"]
+            score_pct = (score / stats["games"] * 100) if stats["games"] > 0 else 0
+            avg_latency = stats["total_latency"] / stats["latency_count"] if stats["latency_count"] > 0 else 0
+
+            comparison_rows.append({
+                "Model": name,
+                "Games": stats["games"],
+                "Wins": stats["wins"],
+                "Losses": stats["losses"],
+                "Draws": stats["draws"],
+                "Score %": f"{score_pct:.1f}%",
+                "Avg Latency (ms)": f"{avg_latency:.0f}" if avg_latency > 0 else "—",
+            })
+
+        comparison_df = pd.DataFrame(comparison_rows).sort_values("Games", ascending=False)
+        st.dataframe(comparison_df, hide_index=True, width="stretch")
+        st.caption("Radar chart requires ≥2 models. Run a benchmark with multiple models to see comparison.")
     else:
         st.info("No model comparison data available.")
 
@@ -1359,13 +1812,14 @@ def render_analytical_dashboard():
     st.markdown("---")
 
     # ============================================================
-    # 7. EXPORT BUTTONS
+    # 7. EXPORT BUTTONS - Ghost CTA pills per DESIGN.md
     # ============================================================
     st.markdown("### 💾 Export Game Data")
 
+    st.markdown('<div class="cf-export-buttons">', unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("📄 Export PGN+Eval", width="stretch"):
+        if st.button("📄 Export PGN+Eval", width="stretch", key="export_pgn"):
             from chess_fight.benchmark.export import export_pgn_with_eval
             output_path = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/game_{selected_game.game_id}_eval.pgn"
             try:
@@ -1375,7 +1829,7 @@ def render_analytical_dashboard():
                 st.error(f"Export failed: {e}")
 
     with col2:
-        if st.button("📊 Export CSV", width="stretch"):
+        if st.button("📊 Export CSV", width="stretch", key="export_csv"):
             from chess_fight.benchmark.export import export_csv
             try:
                 output_dir = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/export_csv"
@@ -1385,7 +1839,7 @@ def render_analytical_dashboard():
                 st.error(f"Export failed: {e}")
 
     with col3:
-        if st.button("📦 Export Parquet", width="stretch"):
+        if st.button("📦 Export Parquet", width="stretch", key="export_parquet"):
             from chess_fight.benchmark.export import export_parquet
             try:
                 output_path = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/export.parquet"
@@ -1393,6 +1847,7 @@ def render_analytical_dashboard():
                 st.success(f"Exported to {path}")
             except Exception as e:
                 st.error(f"Export failed: {e}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # Add import for altair at the top of the file if not already there

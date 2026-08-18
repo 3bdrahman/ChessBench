@@ -106,6 +106,23 @@ _ARENA_CSS = """
     color: var(--arena-text) !important;
     font-feature-settings: "cv05", "ss01", "tnum";
 }
+
+/* Reduce whitespace at the top of the sidebar */
+[data-testid="stSidebar"] [data-testid="stSidebarHeader"] {
+    padding-top: 1rem !important;
+    padding-bottom: 0rem !important;
+}
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+    padding-top: 0rem !important;
+}
+[data-testid="stSidebarNav"] {
+    padding-top: 0 !important;
+}
+/* Reduce whitespace at the top of main content */
+.block-container {
+    padding-top: 3rem !important;
+}
+
 h1, h2, h3, .stHeading {
     letter-spacing: -0.01em;
     color: var(--arena-text);
@@ -308,22 +325,34 @@ code, .stCodeBlock, pre {
 /* Hero */
 .cf-hero {
     position: relative;
-    padding: 48px 24px 64px;
+    padding: 64px 24px 80px;
     text-align: center;
+    background: radial-gradient(circle at center, rgba(240, 180, 33, 0.05) 0%, transparent 60%);
+    border-radius: var(--r-lg);
+    margin-bottom: 32px;
 }
 .cf-hero-title {
-    font-size: 3rem;
-    font-weight: 700;
+    font-size: 4rem;
+    font-weight: 800;
     letter-spacing: -0.025em;
     line-height: 1.05;
-    margin: 0 auto 12px;
+    margin: 0 auto 16px;
+    background: linear-gradient(135deg, #f5f0e1 0%, #f0b421 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 0 8px 32px rgba(240, 180, 33, 0.25);
+    animation: cf-title-float 4s ease-in-out infinite alternate;
+}
+@keyframes cf-title-float {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(-6px); }
 }
 .cf-hero-sub {
-    font-size: 1.05rem;
+    font-size: 1.15rem;
     color: var(--arena-text-muted);
-    max-width: 640px;
-    margin: 0 auto 32px;
-    line-height: 1.5;
+    max-width: 680px;
+    margin: 0 auto 40px;
+    line-height: 1.6;
 }
 .cf-hero-board {
     display: flex;
@@ -336,19 +365,39 @@ code, .stCodeBlock, pre {
     filter: drop-shadow(0 24px 48px rgba(0,0,0,0.5));
     transition: transform var(--dur-med) var(--ease-out);
 }
-.cf-chip-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin: 24px 0; }
+.cf-chip-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin: 32px 0; }
 .cf-chip {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    gap: 8px;
+    padding: 8px 18px;
     border-radius: var(--r-pill);
-    background: var(--arena-bg-elevated);
+    background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--arena-border);
     color: var(--arena-text-muted);
-    font-size: 0.8125rem;
+    font-size: 0.85rem;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: transform var(--dur-med) var(--ease-out), border-color var(--dur-med), background var(--dur-med), box-shadow var(--dur-med);
 }
-.cf-chip strong { color: var(--arena-text); }
+.cf-chip:hover {
+    transform: translateY(-3px);
+    border-color: var(--arena-accent);
+    background: rgba(240, 180, 33, 0.08);
+    color: var(--arena-text);
+    box-shadow: 0 6px 16px rgba(240, 180, 33, 0.15);
+}
+.cf-chip strong { color: var(--arena-text); font-weight: 700; }
+
+/* Metric Cards */
+.cf-metric-card {
+    transition: transform var(--dur-med) var(--ease-out), border-color var(--dur-med), box-shadow var(--dur-med);
+}
+.cf-metric-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--arena-accent);
+    box-shadow: 0 12px 40px rgba(240, 180, 33, 0.2);
+}
 
 /* Section divider */
 .cf-section {

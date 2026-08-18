@@ -249,17 +249,19 @@ def headline_metric_row(runs_root: str = "runs") -> None:
             ("Models benchmarked", f"{len(leaderboard)}"),
         ]
 
+    import textwrap
     cells = "".join(
-        f"""
-        <div style="flex:1;min-width:140px;display:flex;flex-direction:column;gap:4px;padding:18px;background:var(--arena-bg-elevated);border:1px solid var(--arena-border);border-radius:var(--r-md);box-shadow:var(--shadow-card)">
-            <div style="font-size:1.75rem;font-weight:650;letter-spacing:-0.01em;color:var(--arena-text);font-variant-numeric:tabular-nums">{value}</div>
-            <div style="font-size:0.75rem;color:var(--arena-text-muted);text-transform:uppercase;letter-spacing:0.04em">{label}</div>
-        </div>
-        """
+        textwrap.dedent(f"""
+            <div class="cf-metric-card" style="flex:1;min-width:140px;display:flex;flex-direction:column;gap:8px;padding:24px;background:linear-gradient(145deg, var(--arena-bg-elevated) 0%, rgba(20,24,35,0.8) 100%);border:1px solid var(--arena-border);border-radius:var(--r-lg);box-shadow:0 8px 32px rgba(0,0,0,0.3);backdrop-filter:blur(10px);">
+                <div style="font-size:2.25rem;font-weight:750;letter-spacing:-0.02em;color:var(--arena-text);font-variant-numeric:tabular-nums;line-height:1.1;text-shadow:0 0 16px rgba(255,255,255,0.1)">{value}</div>
+                <div style="font-size:0.8rem;color:var(--arena-accent);text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">{label}</div>
+            </div>
+        """)
         for label, value in cards
     )
+    
     st.markdown(
-        f'<div style="display:flex;gap:12px;flex-wrap:wrap;margin:32px auto;max-width:820px">{cells}</div>',
+        f'<div style="display:flex;gap:16px;flex-wrap:wrap;margin:32px auto;max-width:860px">{cells}</div>',
         unsafe_allow_html=True,
     )
 

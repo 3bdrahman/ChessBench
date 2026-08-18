@@ -133,11 +133,11 @@ code, .stCodeBlock, pre {
 }
 
 /* Cards — strip Streamlit default container chrome and apply arena card surface */
-[data-testid="stMain"] .stContainer, .element-container:has(> .cf-card-host) {
+.element-container:has(> .cf-card-host) {
     background: transparent !important;
     border: none !important;
 }
-.cf-card, [data-testid="stVerticalBlockBorderWrapper"] {
+.cf-card {
     background: var(--arena-bg-elevated);
     border: 1px solid var(--arena-border) !important;
     border-radius: var(--r-md) !important;
@@ -145,7 +145,7 @@ code, .stCodeBlock, pre {
     box-shadow: var(--shadow-card) !important;
 }
 .cf-card-compact { padding: 16px; }
-.cf-card:hover, [data-testid="stVerticalBlockBorderWrapper"]:hover { border-color: var(--arena-border-strong) !important; }
+.cf-card:hover { border-color: var(--arena-border-strong) !important; }
 
 /* Metric cards — typographic emphasis, tabular nums */
 [data-testid="stMetric"] {

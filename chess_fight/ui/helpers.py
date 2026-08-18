@@ -282,11 +282,8 @@ def player_banner_html(
     turn_dot = '<span class="cf-turn-dot"></span>' if is_turn else ""
     result_mark = ""
     if is_winner:
-        result_mark = (
-            '<span style="margin-left:auto;font-family:var(--font-mono);font-size:0.75rem;color:var(--arena-good);font-weight:700">'
-            "1 — 0" if color == "white" else "0 — 1"
-            "</span>"
-        )
+        res_str = "1 — 0" if color == "white" else "0 — 1"
+        result_mark = f'<span style="margin-left:auto;font-family:var(--font-mono);font-size:0.75rem;color:var(--arena-good);font-weight:700">{res_str}</span>'
     return f"""
     <div class="cf-player{active_cls}">
         {turn_dot}

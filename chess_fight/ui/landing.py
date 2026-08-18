@@ -23,23 +23,24 @@ from chess_fight.ui.helpers import (
 
 def render_hero() -> None:
     """Render the arena hero on the main page."""
-    hero_html = """
-    <section class="cf-hero">
-        <div class="cf-hero-title">AI Chess Battle</div>
-        <p class="cf-hero-sub">
-            Watch frontier language models play real chess — move-by-move, with
-            Stockfish-evaluated quality scoring, thinking traces, and live ELO.
-            A benchmarking arena, not a demo reel.
-        </p>
-        <div class="cf-chip-row">
-            <span class="cf-chip"><strong>8</strong>&nbsp;providers</span>
-            <span class="cf-chip"><strong>Stockfish 18</strong>&nbsp;ground-truth evals</span>
-            <span class="cf-chip"><strong>Glicko-2</strong>&nbsp;Bayesian ELO</span>
-            <span class="cf-chip"><strong>295 ECO</strong>&nbsp;opening positions</span>
-            <span class="cf-chip"><strong>Async</strong>&nbsp;live game loop</span>
-        </div>
-    </section>
-    """
+    import textwrap
+    hero_html = textwrap.dedent("""
+        <section class="cf-hero">
+            <div class="cf-hero-title">AI Chess Battle</div>
+            <p class="cf-hero-sub">
+                Watch frontier language models play real chess — move-by-move, with
+                Stockfish-evaluated quality scoring, thinking traces, and live ELO.
+                A benchmarking arena, not a demo reel.
+            </p>
+            <div class="cf-chip-row">
+                <span class="cf-chip"><strong>8</strong>&nbsp;providers</span>
+                <span class="cf-chip"><strong>Stockfish 18</strong>&nbsp;ground-truth evals</span>
+                <span class="cf-chip"><strong>Glicko-2</strong>&nbsp;Bayesian ELO</span>
+                <span class="cf-chip"><strong>295 ECO</strong>&nbsp;opening positions</span>
+                <span class="cf-chip"><strong>Async</strong>&nbsp;live game loop</span>
+            </div>
+        </section>
+    """)
     st.markdown(hero_html, unsafe_allow_html=True)
 
 

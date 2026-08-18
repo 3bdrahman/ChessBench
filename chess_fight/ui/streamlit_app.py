@@ -512,7 +512,6 @@ def render_live_game_screen(
                 mate_in=mate,
             )
         else:
-            import chess
             board = chess.Board()
             render_board_with_evalbar(board, size=560)
 

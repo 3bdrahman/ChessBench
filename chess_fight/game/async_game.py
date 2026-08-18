@@ -301,25 +301,45 @@ class AsyncChessGame:
             if move in self.board.legal_moves:
                 cp_score = None
                 mate_in = None
+                
+                move_san = self.board.san(move)
+                is_capture = self.board.is_capture(move)
+                
+                captured_piece = None
+                if is_capture:
+                    if self.board.is_en_passant(move):
+                        captured_piece = "p"
+                    else:
+                        p = self.board.piece_at(move.to_square)
+                        if p:
+                            captured_piece = p.symbol().lower()
+
+                is_check = self.board.gives_check(move)
+                is_promotion = move.promotion is not None
+                is_castling = self.board.is_castling(move)
+
+                self.board.push(move)
+                is_checkmate = self.board.is_checkmate()
+
                 if self.evaluator and self.evaluator._available:
-                    self.board.push(move)
                     try:
                         eval_res = await self.evaluator.evaluate(self.board)
                         cp_score = eval_res.cp_score
                         mate_in = eval_res.mate_in
                     except Exception as e:
                         _log.warning("Stockfish eval failed: %s", e)
-                    self.board.pop()
 
                 game_move = GameMove(
                     player=current_player.name,
                     move=move_str,
-                    move_san=self.board.san(move),
+                    move_san=move_san,
                     timestamp=time.time(),
-                    is_capture=self.board.is_capture(move),
-                    is_check=self.board.gives_check(move),
-                    is_promotion=move.promotion is not None,
-                    is_castling=self.board.is_castling(move),
+                    is_capture=is_capture,
+                    captured_piece=captured_piece,
+                    is_check=is_check,
+                    is_checkmate=is_checkmate,
+                    is_promotion=is_promotion,
+                    is_castling=is_castling,
                     cp_score=cp_score,
                     mate_in=mate_in,
                     latency_ms=completion_result.latency_ms if completion_result else None,
@@ -328,7 +348,6 @@ class AsyncChessGame:
                     reasoning=completion_result.text if completion_result else None
                 )
 
-                self.board.push(move)
                 self.moves.append(game_move)
                 self._update_stats(game_move)
             else:

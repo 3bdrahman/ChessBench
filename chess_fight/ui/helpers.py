@@ -180,40 +180,6 @@ def render_loading_card(title: str, stage: str, provider: str | None = None, con
     )
 
 
-def render_move_ticker(moves: list[Any], current_ply: int | None = None) -> None:
-    """Render the horizontal move ticker with quality pills.
-
-    `moves` are expected to have `.move_san`, `.is_capture`, `.is_check`,
-    and optionally `.move_quality` (for completed games with full data).
-    """
-    if not moves:
-        return
-
-    pills = []
-    for i, m in enumerate(moves):
-        san = getattr(m, "move_san", None) or getattr(m, "move", "?")
-        capture = "x" if getattr(m, "is_capture", False) else ""
-        check = "+" if getattr(m, "is_check", False) else ""
-        label = f"{capture}{san}{check}"
-
-        # Quality pill if available (from completed games with full JSONL data)
-        quality = getattr(m, "move_quality", None)
-        q_html = quality_pill_html(quality)
-
-        # Current ply highlight
-        active = " cf-move-current" if current_ply is not None and i == current_ply else ""
-        pills.append(
-            f'<span class="cf-move-pill{active}">{label}{q_html}</span>'
-        )
-
-    html = f"""
-    <div class="cf-move-ticker" role="list" aria-label="Move history">
-        {''.join(pills)}
-    </div>
-    """
-    st.markdown(html, unsafe_allow_html=True)
-
-
 def render_thinking_trace_drawer(state: Any) -> None:
     """Render the collapsible thinking trace drawer under the live board.
 

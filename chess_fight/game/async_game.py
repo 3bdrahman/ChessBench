@@ -13,6 +13,7 @@ from chess_fight.common.common_types import CompletionResult
 from chess_fight.common.exceptions import MoveExhaustedError
 from chess_fight.game.clock import GameClock
 from chess_fight.models import ChessAI, GameMove, GameStats
+from chess_fight.benchmark.evaluator import StockfishEvaluator
 
 _log = logging.getLogger(__name__)
 
@@ -47,11 +48,13 @@ class AsyncChessGame:
         player2: ChessAI,
         starting_fen: str | None = None,
         clock: GameClock | None = None,
+        evaluator: StockfishEvaluator | None = None,
         max_moves: int = 512,
     ):
         self.board = chess.Board(starting_fen) if starting_fen else chess.Board()
         self.player1 = player1
         self.player2 = player2
+        self.evaluator = evaluator
         self.moves: list[GameMove] = []
         self.stats = GameStats()
         self.start_time = time.time()
@@ -68,6 +71,7 @@ class AsyncChessGame:
         self._paused_player: str | None = None
         self._paused_turn: int = 0
         self._retry_current_turn = False
+        self._force_move = False
 
     def cancel(self) -> None:
         """Cancel the game."""
@@ -83,7 +87,7 @@ class AsyncChessGame:
         self._paused_turn = len(self.moves)
         self._pause_event.clear()
 
-    def resume(self, retry_current_turn: bool = True) -> None:
+    def resume(self, retry_current_turn: bool = True, force_move: bool = False) -> None:
         """Resume the game from pause."""
         self._paused = False
         self._pause_reason = None
@@ -91,6 +95,7 @@ class AsyncChessGame:
         self._paused_player = None
         self._paused_turn = 0
         self._retry_current_turn = retry_current_turn
+        self._force_move = force_move
         self._pause_event.set()
 
     @property
@@ -205,6 +210,22 @@ class AsyncChessGame:
                 if is_chess_loss:
                     reason = "illegal_move"
                     error_msg = f"Illegal move: {exc}"
+                    
+                    last_attempt = exc.attempted_moves[-1] if hasattr(exc, "attempted_moves") and exc.attempted_moves else "unknown"
+                    reasoning = exc.raw_text if hasattr(exc, "raw_text") else None
+                    
+                    self.moves.append(GameMove(
+                        player=current_player.name,
+                        move=last_attempt,
+                        move_san="ILLEGAL",
+                        timestamp=time.time(),
+                        is_capture=False,
+                        is_check=False,
+                        is_promotion=False,
+                        is_castling=False,
+                        reasoning=reasoning,
+                        is_illegal=True
+                    ))
                 elif is_timeout:
                     reason = "timeout"
                     error_msg = f"Move timeout after {move_timeout_seconds}s"
@@ -238,6 +259,28 @@ class AsyncChessGame:
                 # Wait for resume
                 await self._pause_event.wait()
                 
+                if self._force_move:
+                    import random
+                    legal_moves = list(self.board.legal_moves)
+                    if legal_moves:
+                        move = random.choice(legal_moves)
+                        game_move = GameMove(
+                            player="SYSTEM_FORCE",
+                            move=move.uci(),
+                            move_san=self.board.san(move),
+                            timestamp=time.time(),
+                            is_capture=self.board.is_capture(move),
+                            is_check=self.board.gives_check(move),
+                            is_promotion=move.promotion is not None,
+                            is_castling=self.board.is_castling(move),
+                            reasoning="Forced random move to skip turn."
+                        )
+                        self.board.push(move)
+                        self.moves.append(game_move)
+                        self._update_stats(game_move)
+                    self._force_move = False
+                    continue
+                
                 if not self._retry_current_turn:
                     # User chose not to retry - cancel game
                     self._cancelled = True
@@ -256,12 +299,32 @@ class AsyncChessGame:
                 # even if they take a long time or hit rate limits.
 
             if move in self.board.legal_moves:
+                cp_score = None
+                mate_in = None
+                if self.evaluator and self.evaluator._available:
+                    self.board.push(move)
+                    try:
+                        eval_res = await self.evaluator.evaluate(self.board)
+                        cp_score = eval_res.cp_score
+                        mate_in = eval_res.mate_in
+                    except Exception as e:
+                        _log.warning("Stockfish eval failed: %s", e)
+                    self.board.pop()
+
                 game_move = GameMove(
                     player=current_player.name,
                     move=move_str,
+                    move_san=self.board.san(move),
                     timestamp=time.time(),
                     is_capture=self.board.is_capture(move),
                     is_check=self.board.gives_check(move),
+                    is_promotion=move.promotion is not None,
+                    is_castling=self.board.is_castling(move),
+                    cp_score=cp_score,
+                    mate_in=mate_in,
+                    latency_ms=completion_result.latency_ms if completion_result else None,
+                    tokens_in=completion_result.tokens_in if completion_result else None,
+                    tokens_out=completion_result.tokens_out if completion_result else None,
                     reasoning=completion_result.text if completion_result else None
                 )
 

@@ -50,6 +50,7 @@ from chess_fight.providers import get_provider, list_providers
 from chess_fight.providers.chess_ai import ProviderChessAI
 from chess_fight.ui.error_display import render_error
 from chess_fight.ui.helpers import (
+    format_duration_ms,
     player_banner_html,
     render_board_with_evalbar,
     render_loading_card,
@@ -104,10 +105,10 @@ def _draw_metrics(stats_placeholder, state: GameState, start_time: float | None 
             elapsed = int(time.time() - start_time)
         else:
             elapsed = 0
-        st.metric("Time Elapsed", f"{elapsed}s")
+        st.metric("Time Elapsed", format_duration_ms(elapsed * 1000))
     with cols[4]:
         if not state.is_game_over:
-            turn_color = "White ��" if state.board.turn else "Black ��"
+            turn_color = "White ♔" if state.board.turn else "Black ♚"
             st.metric("Current Turn", turn_color)
         else:
             term_reason = getattr(state.stats, 'termination_reason', 'unknown')
@@ -152,7 +153,7 @@ def _draw_completion_result(expander_placeholder, state: GameState) -> None:
     with expander_placeholder.expander(title, expanded=True):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            st.metric("Latency (ms)", cr.latency_ms if cr.latency_ms is not None else "—")
+            st.metric("Latency", format_duration_ms(cr.latency_ms) if cr.latency_ms is not None else "—")
         with col_b:
             st.metric("Tokens in", cr.tokens_in if cr.tokens_in is not None else "—")
         with col_c:
@@ -514,8 +515,9 @@ def render_live_game_screen(
             check_sq = king if state.board.is_check() and king is not None else None
             last_mv = state.board.peek() if state.board.move_stack else None
 
-            cp = getattr(state, "eval_cp_score", None)
-            mate = getattr(state, "eval_mate_in", None)
+            # If there's a last move, use its eval. Otherwise default to 0.
+            cp = state.moves[-1].cp_score if state.moves and state.moves[-1].cp_score is not None else 0
+            mate = state.moves[-1].mate_in if state.moves else None
 
             render_board_with_evalbar(
                 state.board,
@@ -579,8 +581,7 @@ def render_live_game_screen(
                     else:
                         # Avg latency when available
                         cr = state.last_completion_result
-                        avg_latency = f"{cr.latency_ms} ms" if cr and cr.latency_ms else "—"
-                        st.metric("Avg Latency", avg_latency)
+                        st.metric("Avg Latency", format_duration_ms(cr.latency_ms) if cr and cr.latency_ms else "—")
 
             # Last completion drawer
             cr = state.last_completion_result
@@ -588,7 +589,7 @@ def render_live_game_screen(
                 with st.expander(f"Last completion ({state.current_player})", expanded=False):
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        st.metric("Latency", f"{cr.latency_ms or 0} ms")
+                        st.metric("Latency", format_duration_ms(cr.latency_ms) if cr.latency_ms else "—")
                     with c2:
                         st.metric("Tokens in", f"{cr.tokens_in or 0}")
                     with c3:
@@ -605,14 +606,21 @@ def render_live_game_screen(
             if state.moves:
                 with st.expander("Move History Data", expanded=True):
                     df_rows = []
-                    for idx, m in enumerate(state.moves):
+                    ply_idx = 0
+                    for m in state.moves:
+                        is_white_turn = (ply_idx % 2 == 0)
                         df_rows.append({
-                            "Move #": (idx // 2) + 1,
-                            "Color": "White" if idx % 2 == 0 else "Black",
-                            "Player": m.player,
-                            "Move": m.move,
+                            "Move #": (ply_idx // 2) + 1,
+                            "Color": "White" if is_white_turn else "Black",
+                            "Player": m.player.split(":")[0],
+                            "Move": (m.move_san or m.move) if not m.is_illegal else f"❌ {m.move}",
+                            "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
+                            "Latency": format_duration_ms(m.latency_ms),
+                            "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",
                             "Reasoning": m.reasoning.replace("<", "&lt;").replace(">", "&gt;") if m.reasoning else "",
                         })
+                        if getattr(m, "is_illegal", False) is False:
+                            ply_idx += 1
                     df = pd.DataFrame(df_rows)
                     column_config = {
                         "Reasoning": st.column_config.TextColumn(
@@ -651,7 +659,7 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
             st.metric("Termination", term_reason.replace('_', ' ').title())
         with hdr_cols[3]:
             if state.last_completion_result:
-                st.metric("Avg Latency", f"{state.last_completion_result.latency_ms or 0} ms")
+                st.metric("Avg Latency", format_duration_ms(state.last_completion_result.latency_ms) if state.last_completion_result.latency_ms else "—")
 
         # Board + metrics side by side
         bcol, mcol = st.columns([1, 1])
@@ -672,14 +680,21 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
             render_move_ticker(state.moves)
             with st.expander("Move History Data", expanded=False):
                 df_rows = []
-                for idx, m in enumerate(state.moves):
+                ply_idx = 0
+                for m in state.moves:
+                    is_white_turn = (ply_idx % 2 == 0)
                     df_rows.append({
-                        "Move #": (idx // 2) + 1,
-                        "Color": "White" if idx % 2 == 0 else "Black",
-                        "Player": m.player,
-                        "Move": m.move,
+                        "Move #": (ply_idx // 2) + 1,
+                        "Color": "White" if is_white_turn else "Black",
+                        "Player": m.player.split(":")[0],
+                        "Move": (m.move_san or m.move) if not m.is_illegal else f"❌ {m.move}",
+                        "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
+                        "Latency": format_duration_ms(m.latency_ms),
+                        "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",
                         "Reasoning": m.reasoning.replace("<", "&lt;").replace(">", "&gt;") if m.reasoning else "",
                     })
+                    if getattr(m, "is_illegal", False) is False:
+                        ply_idx += 1
                 df = pd.DataFrame(df_rows)
                 column_config = {
                     "Reasoning": st.column_config.TextColumn(
@@ -889,9 +904,22 @@ def run_in_process_benchmark(
     def _draw_live_ui():
         state: GameState | None = st.session_state.get("benchmark_state")
         game_idx = st.session_state.benchmark_game_index
-        start_time = st.session_state.benchmark_start_time
-        completed_games = st.session_state.get("benchmark_completed_games", [])
         is_paused = getattr(state, 'is_paused', False)
+        
+        if is_paused:
+            if "benchmark_pause_time" not in st.session_state:
+                st.session_state.benchmark_pause_time = time.time()
+            # Slide start_time forward so time.time() - start_time remains constant during pause
+            pause_dur = time.time() - st.session_state.benchmark_pause_time
+            start_time = st.session_state.benchmark_start_time + pause_dur
+        else:
+            if "benchmark_pause_time" in st.session_state:
+                # Commit the pause duration to start_time
+                st.session_state.benchmark_start_time += (time.time() - st.session_state.benchmark_pause_time)
+                del st.session_state["benchmark_pause_time"]
+            start_time = st.session_state.benchmark_start_time
+
+        completed_games = st.session_state.get("benchmark_completed_games", [])
         pause_reason = getattr(state, 'pause_reason', None) if is_paused else None
 
         render_live_game_screen(
@@ -1136,7 +1164,7 @@ def render_game_viewer(run) -> None:
             if move_info:
                 player_name = game.white_player if move_info.color == "white" else game.black_player
                 st.markdown(f"**Move {move_info.move_number}** - {player_name} ({move_info.color.title()}) played `{move_info.move_san}`")
-                st.metric("Latency", f"{move_info.llm_latency_ms} ms")
+                st.metric("Latency", format_duration_ms(move_info.llm_latency_ms) if move_info.llm_latency_ms else "—")
                 if move_info.llm_tokens_out:
                     st.metric("Tokens Out", move_info.llm_tokens_out)
 
@@ -1735,7 +1763,7 @@ def render_analytical_dashboard():
                 "Losses": stats["losses"],
                 "Draws": stats["draws"],
                 "Score %": f"{score_pct:.1f}%",
-                "Avg Latency (ms)": f"{avg_latency:.0f}" if avg_latency > 0 else "—",
+                "Avg Latency": format_duration_ms(avg_latency) if avg_latency > 0 else "—",
             })
 
         comparison_df = pd.DataFrame(comparison_rows).sort_values("Games", ascending=False)
@@ -1756,7 +1784,7 @@ def render_analytical_dashboard():
                 "Losses": stats["losses"],
                 "Draws": stats["draws"],
                 "Score %": f"{score_pct:.1f}%",
-                "Avg Latency (ms)": f"{avg_latency:.0f}" if avg_latency > 0 else "—",
+                "Avg Latency": format_duration_ms(avg_latency) if avg_latency > 0 else "—",
             })
 
         comparison_df = pd.DataFrame(comparison_rows).sort_values("Games", ascending=False)

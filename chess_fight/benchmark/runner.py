@@ -283,6 +283,11 @@ class BenchmarkRunner:
         self._abort_requested = True
         self._continue_after_problem_event.set()
 
+    def resume_game(self, retry: bool = True, force_move: bool = False) -> None:
+        """UI thread: resume the currently paused game."""
+        if hasattr(self, 'current_game') and self.current_game:
+            self.current_game.resume(retry_current_turn=retry, force_move=force_move)
+
     async def run_pairing(
         self,
         white_spec: str,
@@ -371,8 +376,9 @@ class BenchmarkRunner:
                 self.config.time_control_seconds_per_move,
                 0  # No increment for now, could be added to config later
             )
-            game = AsyncChessGame(white_ai, black_ai, clock=clock)
+            game = AsyncChessGame(white_ai, black_ai, clock=clock, evaluator=evaluator)
             game.board = board.copy()
+            self.current_game = game
 
             # Notify UI that a new game has started
             if on_game_start:

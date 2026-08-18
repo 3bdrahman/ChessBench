@@ -8,10 +8,19 @@ from typing import Any
 class GameMove:
     player: str
     move: str
+    move_san: str
     timestamp: float
     is_capture: bool
     is_check: bool
+    is_promotion: bool
+    is_castling: bool
+    cp_score: int | None = None
+    mate_in: int | None = None
+    latency_ms: int | None = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
     reasoning: str | None = None
+    is_illegal: bool = False
 
 
 @dataclass

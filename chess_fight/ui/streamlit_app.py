@@ -1775,37 +1775,37 @@ def render_analytical_dashboard():
     # ============================================================
     st.markdown("### 💾 Export Game Data")
 
-    st.markdown('<div class="cf-export-buttons">', unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("📄 Export PGN+Eval", width="stretch", key="export_pgn"):
-            from chess_fight.benchmark.export import export_pgn_with_eval
-            output_path = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/game_{selected_game.game_id}_eval.pgn"
-            try:
-                path = export_pgn_with_eval(selected_game.run_dir if hasattr(selected_game, 'run_dir') else RUNS_ROOT, output_path)
-                st.success(f"Exported to {path}")
-            except Exception as e:
-                st.error(f"Export failed: {e}")
+    with st.container(border=True):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("📄 Export PGN+Eval", width="stretch", key="export_pgn"):
+                from chess_fight.benchmark.export import export_pgn_with_eval
+                output_path = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/game_{selected_game.game_id}_eval.pgn"
+                try:
+                    path = export_pgn_with_eval(selected_game.run_dir if hasattr(selected_game, 'run_dir') else RUNS_ROOT, output_path)
+                    st.success(f"Exported to {path}")
+                except Exception as e:
+                    st.error(f"Export failed: {e}")
 
-    with col2:
-        if st.button("📊 Export CSV", width="stretch", key="export_csv"):
-            from chess_fight.benchmark.export import export_csv
-            try:
-                output_dir = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/export_csv"
-                path = export_csv(selected_game.run_dir if hasattr(selected_game, 'run_dir') else RUNS_ROOT, output_dir)
-                st.success(f"Exported to {path}")
-            except Exception as e:
-                st.error(f"Export failed: {e}")
+        with col2:
+            if st.button("📊 Export CSV", width="stretch", key="export_csv"):
+                from chess_fight.benchmark.export import export_csv
+                try:
+                    output_dir = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/export_csv"
+                    path = export_csv(selected_game.run_dir if hasattr(selected_game, 'run_dir') else RUNS_ROOT, output_dir)
+                    st.success(f"Exported to {path}")
+                except Exception as e:
+                    st.error(f"Export failed: {e}")
 
-    with col3:
-        if st.button("📦 Export Parquet", width="stretch", key="export_parquet"):
-            from chess_fight.benchmark.export import export_parquet
-            try:
-                output_path = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/export.parquet"
-                path = export_parquet(selected_game.run_dir if hasattr(selected_game, 'run_dir') else RUNS_ROOT, output_path)
-                st.success(f"Exported to {path}")
-            except Exception as e:
-                st.error(f"Export failed: {e}")
+        with col3:
+            if st.button("📦 Export Parquet", width="stretch", key="export_parquet"):
+                from chess_fight.benchmark.export import export_parquet
+                try:
+                    output_path = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/export.parquet"
+                    path = export_parquet(selected_game.run_dir if hasattr(selected_game, 'run_dir') else RUNS_ROOT, output_path)
+                    st.success(f"Exported to {path}")
+                except Exception as e:
+                    st.error(f"Export failed: {e}")
 
 
 

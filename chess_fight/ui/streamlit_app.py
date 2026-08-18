@@ -556,32 +556,31 @@ def render_live_game_screen(
             )
 
             # Metrics card: 2x3 grid
-            st.markdown('<div class="cf-card cf-metrics-grid">', unsafe_allow_html=True)
-            cols = st.columns(3)
-            with cols[0]:
-                st.metric("Total Moves", state.stats.total_moves)
-            with cols[1]:
-                st.metric("Captures", state.stats.capture_moves)
-            with cols[2]:
-                st.metric("Checks", state.stats.check_moves)
-
-            cols2 = st.columns(3)
-            with cols2[0]:
-                elapsed = int(state.game_duration) if state.game_duration > 0 else int(time.time() - start_time)
-                st.metric("Time", f"{elapsed}s")
-            with cols2[1]:
-                turn_color = "White ♔" if state.board.turn else "Black ♚"
-                st.metric("Turn", turn_color if not state.is_game_over else "—")
-            with cols2[2]:
-                if state.is_game_over:
-                    term = getattr(state.stats, 'termination_reason', 'unknown')
-                    st.metric("Result", term.replace('_', ' ').title())
-                else:
-                    # Avg latency when available
-                    cr = state.last_completion_result
-                    avg_latency = f"{cr.latency_ms} ms" if cr and cr.latency_ms else "—"
-                    st.metric("Avg Latency", avg_latency)
-            st.markdown('</div>', unsafe_allow_html=True)
+            with st.container(border=True):
+                cols = st.columns(3)
+                with cols[0]:
+                    st.metric("Total Moves", state.stats.total_moves)
+                with cols[1]:
+                    st.metric("Captures", state.stats.capture_moves)
+                with cols[2]:
+                    st.metric("Checks", state.stats.check_moves)
+    
+                cols2 = st.columns(3)
+                with cols2[0]:
+                    elapsed = int(state.game_duration) if state.game_duration > 0 else int(time.time() - start_time)
+                    st.metric("Time", f"{elapsed}s")
+                with cols2[1]:
+                    turn_color = "White ♔" if state.board.turn else "Black ♚"
+                    st.metric("Turn", turn_color if not state.is_game_over else "—")
+                with cols2[2]:
+                    if state.is_game_over:
+                        term = getattr(state.stats, 'termination_reason', 'unknown')
+                        st.metric("Result", term.replace('_', ' ').title())
+                    else:
+                        # Avg latency when available
+                        cr = state.last_completion_result
+                        avg_latency = f"{cr.latency_ms} ms" if cr and cr.latency_ms else "—"
+                        st.metric("Avg Latency", avg_latency)
 
             # Last completion drawer
             cr = state.last_completion_result
@@ -618,8 +617,7 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
     term_reason = getattr(state.stats, 'termination_reason', 'unknown')
     winner = state.winner or "?"
 
-    with st.container():
-        st.markdown('<div class="cf-card cf-card-compact">', unsafe_allow_html=True)
+    with st.container(border=True):
 
         # Header row
         hdr_cols = st.columns([3, 1, 1, 1])
@@ -650,8 +648,6 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
         # Move history as pills
         if state.moves:
             render_move_ticker(state.moves)
-
-        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def run_in_process_benchmark(
@@ -978,8 +974,7 @@ def render_run_summary(run, *, expanded: bool) -> None:
     )
 
     # Render as cf-card instead of bare expander
-    with st.container():
-        st.markdown('<div class="cf-card cf-run-summary">', unsafe_allow_html=True)
+    with st.container(border=True):
 
         # Run header with analyze button
         hdr_col1, hdr_col2 = st.columns([4, 1])
@@ -1045,8 +1040,6 @@ def render_run_summary(run, *, expanded: bool) -> None:
             # Interactive Game Viewer
             if run.games:
                 render_game_viewer(run)
-
-        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def render_game_viewer(run) -> None:
@@ -1305,20 +1298,19 @@ def render_analytical_dashboard():
                 break
 
     # Run selector as card header
-    st.markdown('<div class="cf-card cf-card-compact">', unsafe_allow_html=True)
-    run_options = {f"{run.run_id} ({run.total_games} games)": run for run in runs}
-    default_idx = 0
-    if pre_selected_run:
-        label = f"{pre_selected_run.run_id} ({pre_selected_run.total_games} games)"
-        default_idx = list(run_options.keys()).index(label) if label in run_options else 0
-    selected_run_label = st.selectbox(
-        "Select Run to Analyze",
-        options=list(run_options.keys()),
-        index=default_idx,
-        key="analytics_run_selector",
-    )
-    selected_run = run_options[selected_run_label]
-    st.markdown('</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        run_options = {f"{run.run_id} ({run.total_games} games)": run for run in runs}
+        default_idx = 0
+        if pre_selected_run:
+            label = f"{pre_selected_run.run_id} ({pre_selected_run.total_games} games)"
+            default_idx = list(run_options.keys()).index(label) if label in run_options else 0
+        selected_run_label = st.selectbox(
+            "Select Run to Analyze",
+            options=list(run_options.keys()),
+            index=default_idx,
+            key="analytics_run_selector",
+        )
+        selected_run = run_options[selected_run_label]
 
     # Load the selected run
     run = load_run(selected_run.run_dir)
@@ -1331,15 +1323,14 @@ def render_analytical_dashboard():
         st.info("No games in this run.")
         return
 
-    st.markdown('<div class="cf-card cf-card-compact">', unsafe_allow_html=True)
-    game_options = {f"Game {i+1}: {g.white_player} vs {g.black_player} ({g.result})": g for i, g in enumerate(run.games)}
-    selected_game_label = st.selectbox(
-        "Select Game to Analyze",
-        options=list(game_options.keys()),
-        key="analytics_game_selector"
-    )
-    selected_game = game_options[selected_game_label]
-    st.markdown('</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        game_options = {f"Game {i+1}: {g.white_player} vs {g.black_player} ({g.result})": g for i, g in enumerate(run.games)}
+        selected_game_label = st.selectbox(
+            "Select Game to Analyze",
+            options=list(game_options.keys()),
+            key="analytics_game_selector"
+        )
+        selected_game = game_options[selected_game_label]
 
     st.markdown("---")
 
@@ -1543,22 +1534,20 @@ def render_analytical_dashboard():
         opening_df = pd.DataFrame(opening_rows).sort_values("Games", ascending=False)
 
         # Render with inline win-rate bars using HTML
-        st.markdown('<div class="cf-card">', unsafe_allow_html=True)
-        for _, row in opening_df.iterrows():
-            wr = row["Win Rate"]
-            bar_color = "var(--eval-good)" if wr >= 50 else "var(--eval-blunder)"
-            st.markdown(f"""
-            <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--arena-border);">
-                <div style="flex:2;font-family:var(--font-mono);font-size:0.875rem;">{row['Opening']}</div>
-                <div style="width:60px;text-align:right;font-variant-numeric:tabular-nums;">{row['Games']} games</div>
-                <div style="flex:3;position:relative;height:20px;background:var(--arena-bg-inset);border-radius:var(--r-sm);overflow:hidden;">
-                    <div style="width:{wr}%;height:100%;background:{bar_color};border-radius:var(--r-sm);transition:width var(--dur-med) var(--ease-out);"></div>
+        with st.container(border=True):
+            for _, row in opening_df.iterrows():
+                wr = row["Win Rate"]
+                bar_color = "var(--eval-good)" if wr >= 50 else "var(--eval-blunder)"
+                st.markdown(f"""
+                <div style="display:flex;align-items:center;margin-bottom:8px;font-size:0.875rem;">
+                    <div style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:12px;" title="{row['Opening']}">{row['Opening']}</div>
+                    <div style="width:100px;background:var(--arena-border);height:8px;border-radius:4px;overflow:hidden;margin-right:12px;">
+                        <div style="width:{wr}%;background:{bar_color};height:100%;"></div>
+                    </div>
+                    <div style="width:40px;text-align:right;font-family:var(--font-mono);font-size:0.8125rem;">{int(wr)}%</div>
+                    <div style="width:90px;text-align:right;font-family:var(--font-mono);font-size:0.8125rem;color:var(--arena-text-muted);">{row['Avg CP Loss']}</div>
                 </div>
-                <div style="width:70px;text-align:right;font-family:var(--font-mono);font-size:0.8125rem;color:var(--arena-text-muted);">{row['Win Rate %']}</div>
-                <div style="width:90px;text-align:right;font-family:var(--font-mono);font-size:0.8125rem;color:var(--arena-text-muted);">{row['Avg CP Loss']}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
     else:
         st.info("No opening data available.")
 

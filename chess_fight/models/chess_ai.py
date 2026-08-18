@@ -348,12 +348,22 @@ class ChessAI(ABC):
         result = parse_move(move_str, board)
 
         if result is None or result.uci is None:
-            raise MoveValidationError(
-                f"Could not extract legal move from response: {move_str[:100]}...",
-                fen=board.fen(),
-                legal_moves=[m.uci() for m in board.legal_moves],
-                raw_text=move_str,
-            )
+            # Check if it outputted an illegal move
+            raw_result = parse_move(move_str, None)
+            if raw_result and raw_result.uci:
+                raise MoveValidationError(
+                    f"You attempted an ILLEGAL move: {raw_result.uci}. This move is not valid in the current position.",
+                    fen=board.fen(),
+                    legal_moves=[m.uci() for m in board.legal_moves],
+                    raw_text=move_str,
+                )
+            else:
+                raise MoveValidationError(
+                    f"Could not extract legal move from response: {move_str[:100]}...",
+                    fen=board.fen(),
+                    legal_moves=[m.uci() for m in board.legal_moves],
+                    raw_text=move_str,
+                )
         return result.uci
 
     def _is_valid_square(self, square: str) -> bool:

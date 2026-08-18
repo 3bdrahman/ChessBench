@@ -1222,6 +1222,7 @@ def render_game_viewer(run) -> None:
 
 
 def main():
+    rehydrate_session_state()
     apply_arena_theme()
     if "game_ui" not in st.session_state:
         st.session_state.game_ui = ChessUI()
@@ -1890,3 +1891,128 @@ def render_analytical_dashboard():
 
 
 # Add import for altair at the top of the file if not already there
+import time
+import chess
+from chess_fight.models import GameState, GameMove, GameStats
+
+def rehydrate_session_state():
+    import streamlit as st
+    from chess_fight.benchmark.results_view import list_runs
+    import os
+    RUNS_ROOT = os.environ.get("CHESS_FIGHT_RUNS_ROOT", "runs")
+    
+    if "rehydrated" in st.session_state:
+        return
+        
+    st.session_state.rehydrated = True
+    
+    if "benchmark_completed_games" in st.session_state and st.session_state.benchmark_completed_games:
+        return
+        
+    runs = list_runs(RUNS_ROOT)
+    if not runs:
+        return
+        
+    latest_run = runs[0]
+    # Check if the run is recent enough, e.g., within the last 12 hours
+    if not latest_run.timestamp_utc:
+        return
+        
+    # parse timestamp_utc (e.g. "2026-08-15T23:33:19Z")
+    import datetime
+    try:
+        ts = datetime.datetime.fromisoformat(latest_run.timestamp_utc.replace("Z", "+00:00"))
+    except Exception:
+        pass
+        
+    if not latest_run.games:
+        return
+        
+    rehydrated_games = []
+    for game_rec in latest_run.games:
+        stats = GameStats(
+            total_moves=game_rec.total_moves,
+            capture_moves=0,
+            check_moves=0,
+            game_duration=game_rec.game_duration_sec,
+            winner=game_rec.winner_spec,
+            termination_reason=game_rec.termination_reason
+        )
+        
+        board = chess.Board(game_rec.opening_fen or chess.STARTING_FEN)
+        game_moves = []
+        for m in game_rec.moves:
+            # We must detect captures and checks from the board state to populate GameMove accurately,
+            # or we can try to guess from san if we want to be fast.
+            # But the board state is better since we need to leave the board at the end position!
+            is_capture = False
+            captured_piece = None
+            is_check = False
+            is_checkmate = False
+            is_promotion = False
+            is_castling = False
+            is_illegal = False
+            
+            try:
+                move_obj = chess.Move.from_uci(m.move_uci)
+                if move_obj in board.legal_moves:
+                    is_capture = board.is_capture(move_obj)
+                    if is_capture:
+                        if board.is_en_passant(move_obj):
+                            captured_piece = "p"
+                        else:
+                            p = board.piece_at(move_obj.to_square)
+                            if p:
+                                captured_piece = p.symbol().lower()
+                    
+                    is_check = board.gives_check(move_obj)
+                    is_promotion = move_obj.promotion is not None
+                    is_castling = board.is_castling(move_obj)
+                    
+                    board.push(move_obj)
+                    is_checkmate = board.is_checkmate()
+                    
+                    if is_capture:
+                        stats.capture_moves += 1
+                    if is_check:
+                        stats.check_moves += 1
+                else:
+                    is_illegal = True
+            except Exception:
+                is_illegal = True
+
+            game_moves.append(GameMove(
+                player=m.player,
+                move=m.move_uci,
+                move_san=m.move_san,
+                timestamp=0.0,
+                is_capture=is_capture,
+                captured_piece=captured_piece,
+                is_check=is_check,
+                is_checkmate=is_checkmate,
+                is_promotion=is_promotion,
+                is_castling=is_castling,
+                cp_score=m.eval_cp_score,
+                mate_in=m.eval_mate_in,
+                latency_ms=m.llm_latency_ms,
+                tokens_in=m.llm_tokens_in,
+                tokens_out=m.llm_tokens_out,
+                reasoning=m.thinking_trace,
+                is_illegal=is_illegal
+            ))
+            
+        gs = GameState(
+            board=board,
+            moves=game_moves,
+            stats=stats,
+            current_player=game_rec.white_player if board.turn == chess.WHITE else game_rec.black_player,
+            is_game_over=True,
+            winner=game_rec.winner_spec,
+            game_duration=game_rec.game_duration_sec,
+            fen_before=game_rec.opening_fen or chess.STARTING_FEN
+        )
+        rehydrated_games.append(gs)
+        
+    st.session_state.benchmark_completed_games = rehydrated_games
+    st.session_state.benchmark_done = True
+    st.session_state.benchmark_run_dir = str(latest_run.run_dir)

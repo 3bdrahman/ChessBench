@@ -1,20 +1,18 @@
-import asyncio
-import logging
-from chess_fight.benchmark.runner import BenchmarkConfig, BenchmarkRunner
-from chess_fight.providers.registry import register_provider
-from tests.test_integration import MockProvider
+from playwright.sync_api import sync_playwright
+import time
 
-logging.basicConfig(level=logging.INFO)
-
-async def main():
-    register_provider("mock_registered", MockProvider)
-    config = BenchmarkConfig(
-        players=['mock_registered:mock', 'mock_registered:mock'],
-        games_per_pairing=1,
-        colors='fixed'
-    )
-    runner = BenchmarkRunner(config)
-    await runner.run_benchmark()
+def test_app():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto("http://localhost:8501")
+        print("Waiting for load...")
+        time.sleep(10)
+        
+        page.screenshot(path="screenshot.png", full_page=True)
+        print("Saved screenshot.png")
+            
+        browser.close()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    test_app()

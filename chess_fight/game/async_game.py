@@ -72,11 +72,19 @@ class AsyncChessGame:
         self._paused_turn: int = 0
         self._retry_current_turn = False
         self._force_move = False
+        self._loop = None
 
     def cancel(self) -> None:
         """Cancel the game."""
         self._cancelled = True
-        self._pause_event.set()  # Unblock any waiting
+        self._set_pause_event()
+
+    def _set_pause_event(self) -> None:
+        """Thread-safely wake up the asyncio event loop."""
+        if self._loop and not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._pause_event.set)
+        else:
+            self._pause_event.set()
 
     def pause(self, reason: str, error: str | None = None, player: str | None = None) -> None:
         """Pause the game with a reason."""
@@ -96,7 +104,7 @@ class AsyncChessGame:
         self._paused_turn = 0
         self._retry_current_turn = retry_current_turn
         self._force_move = force_move
-        self._pause_event.set()
+        self._set_pause_event()
 
     @property
     def is_paused(self) -> bool:
@@ -132,6 +140,10 @@ class AsyncChessGame:
             move_timeout_seconds: Optional timeout for each move in seconds
         """
         is_white = True
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
 
         # Start clock if provided
         if self.clock:

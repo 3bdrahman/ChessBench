@@ -182,6 +182,7 @@ def _classify_and_raise(exc: Exception, provider: str, model: str, latency_ms: i
         APITimeoutError,
         InternalServerError,
         NotFoundError,
+        PermissionDeniedError,
     )
     from openai import (
         AuthenticationError as OpenAIAuthError,
@@ -198,6 +199,14 @@ def _classify_and_raise(exc: Exception, provider: str, model: str, latency_ms: i
                 expected_prefix="gsk_",
                 http_status=401,
             ) from exc
+        raise AuthenticationError(
+            provider=provider,
+            detail=str(exc),
+            http_status=exc.status_code or 403,
+        ) from exc
+
+    if isinstance(exc, PermissionDeniedError):
+        # 403 = valid key format but not authorized (expired, no access to model, etc.)
         raise AuthenticationError(
             provider=provider,
             detail=str(exc),

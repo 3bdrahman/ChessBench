@@ -1,4 +1,8 @@
-"""NVIDIA NIM provider implementation (OpenAI-compatible)."""
+"""DeepInfra provider implementation (OpenAI-compatible API).
+
+DeepInfra offers serverless inference with a wide variety of models
+including Llama, Mixtral, Qwen, and more at competitive prices.
+"""
 
 import contextlib
 import logging
@@ -33,48 +37,46 @@ _log = logging.getLogger(__name__)
 
 
 @register_provider
-class NIMProvider(ModelProvider):
-    name = "nim"
+class DeepInfraProvider(ModelProvider):
+    name = "deepinfra"
     requires_api_key = True
 
     def __init__(self) -> None:
-        self.base_url = os.getenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+        self.base_url = os.getenv(
+            "DEEPINFRA_BASE_URL",
+            "https://api.deepinfra.com/v1/openai",
+        )
 
     def validate_key(self, api_key: str) -> bool:
-        return len(api_key) >= 10
+        return len(api_key) >= 20
 
     def _key_prefix_hint(self) -> str:
-        return "NIM key"
+        return "DeepInfra key"
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
         client = AsyncOpenAI(api_key=api_key, base_url=self.base_url, timeout=DEFAULT_HTTP_TIMEOUT)
         try:
             models = await client.models.list()
         except Exception as exc:
-            _log.warning("NIM list_models failed: %s", exc)
+            _log.warning("DeepInfra list_models failed: %s", exc)
             return []
 
         chat_models: list[ModelInfo] = []
         for model in models.data:
             model_id = model.id
             mid = model_id.lower()
-            # NIM publishes embedding, image, and asr models alongside chat.
+            # Filter out non-chat models
             if any(tok in mid for tok in (
-                "embed", "rerank", "asr", "tts", "sd-", "flux",
-                "clip", "vision-cnt", "cosmos", "vila",
-            )):
-                continue
-            if not any(tok in mid for tok in (
-                "llama", "qwen", "mistral", "mixtral", "deepseek",
-                "phi", "gemma", "nemotron", "starcoder", "codestral",
-                "meta/", "microsoft/", "google/",
+                "embed", "rerank", "whisper", "tts", "dall-e", "dalle",
+                "moderation", "clip", "vision-cnt", "cosmos", "vila",
+                "asr", "sd-", "flux", "imagen", "veo",
             )):
                 continue
 
             chat_models.append(ModelInfo(
                 id=model_id,
                 name=model_id,
-                provider="nim",
+                provider="deepinfra",
                 context_window=DEFAULT_CONTEXT_WINDOW,
                 capabilities=[CAP_CHESS],
             ))
@@ -119,7 +121,7 @@ class NIMProvider(ModelProvider):
             response = await client.chat.completions.create(**completion_kwargs)
         except Exception as exc:
             latency_ms = int((time.time() - start) * 1000)
-            _classify_and_raise(exc, "nim", model, latency_ms, api_key)
+            _classify_and_raise(exc, "deepinfra", model, latency_ms, api_key)
 
         latency_ms = int((time.time() - start) * 1000)
 
@@ -169,7 +171,7 @@ def _classify_and_raise(exc: Exception, provider: str, model: str, latency_ms: i
             raise InvalidApiKeyError(
                 provider=provider,
                 got_prefix=api_key[:8] + "…" if api_key else "",
-                expected_prefix="NIM key",
+                expected_prefix="DeepInfra key",
                 http_status=401,
             ) from exc
         raise AuthenticationError(
@@ -209,7 +211,7 @@ def _classify_and_raise(exc: Exception, provider: str, model: str, latency_ms: i
     if isinstance(exc, APIConnectionError):
         raise ConnectionError(
             provider=provider,
-            host="integrate.api.nvidia.com",
+            host="api.deepinfra.com",
             detail=str(exc),
         ) from exc
 

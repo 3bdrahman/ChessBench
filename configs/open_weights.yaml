@@ -1,0 +1,32 @@
+# Open Weights Models Benchmark Suite
+# Evaluates locally-runnable models via Ollama
+
+name: "Open Weights Models"
+description: "Benchmark of open-weight models (Llama, Qwen, Mistral) running locally via Ollama — no API costs"
+
+benchmark:
+  time_control_seconds_per_move: 60  # Local models may be slower
+  opening_book: "eco_balanced"
+  games_per_pairing: 5
+  colors: "alternating"
+
+  temperature: 0.0
+  max_tokens: 2000
+  seed: 42
+  reasoning_level: "high"
+
+  max_parallel_games: 2  # Limited by local GPU/CPU
+
+  move_timeout_seconds: 180
+  game_timeout_seconds: 7200
+
+  players:
+    - "ollama:llama3.1:70b"
+    - "ollama:qwen2.5:72b"
+    - "ollama:mistral-large"
+    - "ollama:nemotron-3-ultra"
+
+  api_keys: {}
+
+  output_dir: "runs"
+  run_name: "open_weights_2024"

@@ -7,6 +7,9 @@ from chess_fight.providers.registry import PROVIDER_REGISTRY, get_provider, regi
 # This avoids import-time circular dependencies and issues on Streamlit Cloud
 _PROVIDER_MODULES = (
     "anthropic",
+    "deepinfra",
+    "fireworks",
+    "generic_openai",
     "google",
     "groq",
     "nim",
@@ -14,6 +17,7 @@ _PROVIDER_MODULES = (
     "openai",
     "openrouter",
     "stockfish",
+    "together",
 )
 
 def __getattr__(name: str):

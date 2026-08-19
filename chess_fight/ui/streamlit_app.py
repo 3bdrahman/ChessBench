@@ -221,6 +221,35 @@ async def fetch_models_for_provider(provider_name: str, api_key: str) -> list:
         return []
 
 
+def _test_model_async(model_config: dict) -> None:
+    """Test a model with a minimal completion (1 token) in a background thread."""
+    import threading
+    
+    def run_test():
+        import asyncio
+        provider_name = model_config["provider"]
+        model_id = model_config["model_id"]
+        api_key = model_config["api_key"]
+        
+        provider = get_provider(provider_name)
+        if not provider:
+            st.toast(f"❌ Provider {provider_name} not found", icon="❌")
+            return
+        
+        try:
+            is_valid, error = asyncio.run(provider.validate_model(api_key, model_id))
+            if is_valid:
+                st.toast(f"✅ {model_id} is working!", icon="✅")
+            else:
+                st.toast(f"❌ {model_id} failed: {error}", icon="❌")
+        except Exception as exc:
+            st.toast(f"❌ {model_id} error: {exc}", icon="❌")
+    
+    thread = threading.Thread(target=run_test, daemon=True)
+    add_script_run_ctx(thread)
+    thread.start()
+
+
 def _probe_local_provider(provider_name: str) -> tuple[bool, str]:
     """Returns (reachable, message) for a local provider's HTTP endpoint."""
     import httpx
@@ -387,12 +416,15 @@ def render_model_selectors(available_providers: list):
     m1_idx = m1_options.index(sel_1) if sel_1 in m1_options else 0
 
     st.sidebar.subheader("Model 1")
-    model_1 = st.sidebar.selectbox(
+    col_m1, col_t1 = st.sidebar.columns([3, 1])
+    model_1 = col_m1.selectbox(
         "Select First Model",
         options=m1_options,
         index=m1_idx,
         key="player_model_1",
     )
+    if col_t1.button("🔬", key="test_model_1", help="Test model with 1 token"):
+        _test_model_async(all_models[model_1])
 
     # Filter options for Model 2 (exclude currently selected Model 1)
     m2_options = [m for m in model_options if m != model_1]
@@ -400,12 +432,15 @@ def render_model_selectors(available_providers: list):
     m2_idx = m2_options.index(cur_2_val) if cur_2_val in m2_options else 0
 
     st.sidebar.subheader("Model 2")
-    model_2 = st.sidebar.selectbox(
+    col_m2, col_t2 = st.sidebar.columns([3, 1])
+    model_2 = col_m2.selectbox(
         "Select Second Model",
         options=m2_options,
         index=m2_idx,
         key="player_model_2",
     )
+    if col_t2.button("🔬", key="test_model_2", help="Test model with 1 token"):
+        _test_model_async(all_models[model_2])
 
     if model_1 and model_2 and model_1 != model_2:
         return all_models[model_1], all_models[model_2]

@@ -1,0 +1,33 @@
+# Reasoning Models Benchmark Suite
+# Tests models with explicit reasoning capabilities (o1, o3, Claude 3.7 thinking)
+
+name: "Reasoning Models Comparison"
+description: "Evaluate models with chain-of-thought / reasoning capabilities on complex chess positions"
+
+benchmark:
+  time_control_seconds_per_move: 60  # Reasoning models need more time
+  opening_book: "eco_balanced"
+  games_per_pairing: 8
+  colors: "alternating"
+
+  temperature: 0.0
+  max_tokens: 8000  # Allow long reasoning traces
+  seed: 42
+  reasoning_level: "high"
+
+  max_parallel_games: 2  # API rate limits on reasoning models
+
+  move_timeout_seconds: 300
+  game_timeout_seconds: 7200
+
+  players:
+    - "openai:o1-preview"
+    - "openai:o1-mini"
+    - "openai:o3-mini"
+    - "anthropic:claude-3-7-sonnet-20250219"
+    - "openrouter:deepseek/deepseek-r1"
+
+  api_keys: {}
+
+  output_dir: "runs"
+  run_name: "reasoning_models_2024"

@@ -1,4 +1,8 @@
-"""NVIDIA NIM provider implementation (OpenAI-compatible)."""
+"""Together AI provider implementation (OpenAI-compatible API).
+
+Together AI offers fast inference with a generous free tier and many
+open-source models including Llama, Mixtral, Qwen, and more.
+"""
 
 import contextlib
 import logging
@@ -33,48 +37,57 @@ _log = logging.getLogger(__name__)
 
 
 @register_provider
-class NIMProvider(ModelProvider):
-    name = "nim"
+class TogetherProvider(ModelProvider):
+    name = "together"
     requires_api_key = True
 
     def __init__(self) -> None:
-        self.base_url = os.getenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+        self.base_url = os.getenv(
+            "TOGETHER_BASE_URL",
+            "https://api.together.xyz/v1",
+        )
 
     def validate_key(self, api_key: str) -> bool:
-        return len(api_key) >= 10
+        # Together AI keys typically start with specific prefixes
+        return len(api_key) >= 20
 
     def _key_prefix_hint(self) -> str:
-        return "NIM key"
+        return "Together AI key"
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
         client = AsyncOpenAI(api_key=api_key, base_url=self.base_url, timeout=DEFAULT_HTTP_TIMEOUT)
         try:
             models = await client.models.list()
         except Exception as exc:
-            _log.warning("NIM list_models failed: %s", exc)
+            _log.warning("Together list_models failed: %s", exc)
             return []
 
         chat_models: list[ModelInfo] = []
         for model in models.data:
             model_id = model.id
             mid = model_id.lower()
-            # NIM publishes embedding, image, and asr models alongside chat.
+            # Filter out non-chat models
             if any(tok in mid for tok in (
-                "embed", "rerank", "asr", "tts", "sd-", "flux",
-                "clip", "vision-cnt", "cosmos", "vila",
+                "embed", "rerank", "whisper", "tts", "dall-e", "dalle",
+                "moderation", "clip", "vision-cnt", "cosmos", "vila",
+                "asr", "sd-", "flux", "imagen", "veo",
             )):
                 continue
+            
+            # Together hosts many models - check for known chat model patterns
             if not any(tok in mid for tok in (
                 "llama", "qwen", "mistral", "mixtral", "deepseek",
                 "phi", "gemma", "nemotron", "starcoder", "codestral",
-                "meta/", "microsoft/", "google/",
+                "meta/", "microsoft/", "google/", "nous/", "upstage/",
+                "01-ai/", "cognitivecomputations/", "teknium/",
             )):
-                continue
+                # Be permissive for Together since they host many models
+                pass
 
             chat_models.append(ModelInfo(
                 id=model_id,
                 name=model_id,
-                provider="nim",
+                provider="together",
                 context_window=DEFAULT_CONTEXT_WINDOW,
                 capabilities=[CAP_CHESS],
             ))
@@ -119,7 +132,7 @@ class NIMProvider(ModelProvider):
             response = await client.chat.completions.create(**completion_kwargs)
         except Exception as exc:
             latency_ms = int((time.time() - start) * 1000)
-            _classify_and_raise(exc, "nim", model, latency_ms, api_key)
+            _classify_and_raise(exc, "together", model, latency_ms, api_key)
 
         latency_ms = int((time.time() - start) * 1000)
 
@@ -169,7 +182,7 @@ def _classify_and_raise(exc: Exception, provider: str, model: str, latency_ms: i
             raise InvalidApiKeyError(
                 provider=provider,
                 got_prefix=api_key[:8] + "…" if api_key else "",
-                expected_prefix="NIM key",
+                expected_prefix="Together AI key",
                 http_status=401,
             ) from exc
         raise AuthenticationError(
@@ -209,7 +222,7 @@ def _classify_and_raise(exc: Exception, provider: str, model: str, latency_ms: i
     if isinstance(exc, APIConnectionError):
         raise ConnectionError(
             provider=provider,
-            host="integrate.api.nvidia.com",
+            host="api.together.xyz",
             detail=str(exc),
         ) from exc
 

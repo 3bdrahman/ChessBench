@@ -6,6 +6,7 @@ import pytest
 
 from chess_fight.common.common_types import ChatMessage
 from chess_fight.common.exceptions import (
+    AuthenticationError,
     ConnectionError,
     InvalidApiKeyError,
     ModelNotFoundError,
@@ -13,6 +14,7 @@ from chess_fight.common.exceptions import (
     TimeoutError,
 )
 from chess_fight.providers.anthropic import AnthropicProvider
+from chess_fight.providers.nim import NIMProvider
 from chess_fight.providers.ollama import OllamaProvider
 from chess_fight.providers.openai import OpenAIProvider
 
@@ -202,6 +204,37 @@ class TestOllamaErrorHandling:
                     "nonexistent-model",
                     [ChatMessage(role="user", content="test")],
                 )
+
+
+class TestNIMErrorHandling:
+    @pytest.fixture
+    def provider(self):
+        return NIMProvider()
+
+    @pytest.mark.asyncio
+    async def test_permission_denied_raises_authentication_error(self, provider):
+        """Test that 403 PermissionDeniedError maps to AuthenticationError."""
+        from openai import PermissionDeniedError
+
+        response = MagicMock(status_code=403)
+        err = PermissionDeniedError(
+            message="Authorization failed",
+            response=response,
+            body=None,
+        )
+        with patch("chess_fight.providers.nim.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(side_effect=err)
+
+            with pytest.raises(AuthenticationError) as exc_info:
+                await provider.complete(
+                    "nim-valid-key-but-no-access",
+                    "google/gemma-4-31b-it",
+                    [ChatMessage(role="user", content="test")],
+                )
+        assert exc_info.value.provider == "nim"
+        assert exc_info.value.http_status == 403
 
 
 class TestProviderRetryBehavior:

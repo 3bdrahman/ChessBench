@@ -1893,7 +1893,8 @@ def render_analytical_dashboard():
 # Add import for altair at the top of the file if not already there
 import time
 import chess
-from chess_fight.models import GameState, GameMove, GameStats
+from chess_fight.models import GameMove, GameStats
+from chess_fight.game.async_game import GameState
 
 def rehydrate_session_state():
     import streamlit as st

@@ -609,20 +609,29 @@ def render_live_game_screen(
                         is_white_turn = (ply_idx % 2 == 0)
                         piece_map = {'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛'}
                         cap_suffix = f" ({piece_map.get(m.captured_piece, m.captured_piece)})" if m.captured_piece else ""
+                        is_illegal = getattr(m, "is_illegal", False)
                         df_rows.append({
                             "Turn": ply_idx + 1,
                             "Color": "White" if is_white_turn else "Black",
                             "Player": m.player.split(":")[0],
-                            "Move": (f"{m.move_san or m.move}{cap_suffix}") if not m.is_illegal else f"❌ {m.move}",
+                            "Move": f"{m.move_san or m.move}{cap_suffix}",
+                            "Capture": "✅" if m.is_capture else "",
+                            "Check": "✅" if m.is_check else "",
+                            "Checkmate": "✅" if m.is_checkmate else "",
+                            "Illegal": "❌" if is_illegal else "",
                             "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
                             "Latency": format_duration_ms(m.latency_ms),
                             "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",
                             "Reasoning": m.reasoning.replace("<", "&lt;").replace(">", "&gt;") if m.reasoning else "",
                         })
-                        if getattr(m, "is_illegal", False) is False:
+                        if not is_illegal:
                             ply_idx += 1
                     df = pd.DataFrame(df_rows)
                     column_config = {
+                        "Capture": st.column_config.TextColumn("Capture", width="small"),
+                        "Check": st.column_config.TextColumn("Check", width="small"),
+                        "Checkmate": st.column_config.TextColumn("Checkmate", width="small"),
+                        "Illegal": st.column_config.TextColumn("Illegal", width="small"),
                         "Reasoning": st.column_config.TextColumn(
                             "Reasoning",
                             help="Click a cell to read the LLM's full reasoning for this move.",
@@ -879,21 +888,21 @@ def run_in_process_benchmark(
             col1, col2, col3 = st.columns(3)
             with col1:
                 if st.button("↻ Retry Turn", type="primary", width="stretch", key="paused_retry"):
-                    game = st.session_state.get("benchmark_current_game")
-                    if game:
-                        game.resume(retry_current_turn=True)
+                    runner = st.session_state.get("benchmark_runner")
+                    if runner:
+                        runner.resume_game(retry=True)
                     st.rerun()
             with col2:
                 if st.button("⏭ Skip Turn (Force Move)", width="stretch", key="paused_skip"):
-                    game = st.session_state.get("benchmark_current_game")
-                    if game:
-                        game.resume(retry_current_turn=False)
+                    runner = st.session_state.get("benchmark_runner")
+                    if runner:
+                        runner.resume_game(retry=False, force_move=True)
                     st.rerun()
             with col3:
                 if st.button("⛔ Cancel Game", width="stretch", key="paused_cancel"):
-                    game = st.session_state.get("benchmark_current_game")
-                    if game:
-                        game.cancel()
+                    runner = st.session_state.get("benchmark_runner")
+                    if runner and hasattr(runner, 'current_game') and runner.current_game:
+                        runner.current_game.cancel()
                     st.rerun()
 
 
@@ -1194,17 +1203,24 @@ def render_game_viewer(run) -> None:
                 if len(t_str) > 19:
                     t_str = t_str[11:19]
 
+            san = m.move_san or ""
             df_rows.append({
                 "Move #": m.move_number,
                 "Color": m.color.title(),
                 "Player": game.white_player if m.color == "white" else game.black_player,
-                "Move": m.move_san,
+                "Move": san,
+                "Capture": "✅" if "x" in san else "",
+                "Check": "✅" if "+" in san else "",
+                "Checkmate": "✅" if "#" in san else "",
                 "Reasoning": m.thinking_trace.replace("<", "&lt;").replace(">", "&gt;") if m.thinking_trace else "",
             })
 
         df = pd.DataFrame(df_rows)
 
         column_config = {
+            "Capture": st.column_config.TextColumn("Capture", width="small"),
+            "Check": st.column_config.TextColumn("Check", width="small"),
+            "Checkmate": st.column_config.TextColumn("Checkmate", width="small"),
             "Reasoning": st.column_config.TextColumn(
                 "Reasoning",
                 help="Click a cell to read the LLM's full reasoning for this move.",

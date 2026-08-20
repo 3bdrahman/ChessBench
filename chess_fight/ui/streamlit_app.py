@@ -517,6 +517,47 @@ def render_live_game_screen(
         st.progress(frac, text=f"Game {game_idx + 1} / {total_games} in progress")
     elif is_paused:
         st.warning(f"⏸ Paused — {pause_reason or 'Unknown reason'}")
+        if getattr(state, "pause_error", None):
+            st.error(f"**Error:** {state.pause_error}")
+        if getattr(state, "paused_player", None):
+            turn_info = getattr(state, "paused_turn", 0) + 1
+            st.info(f"**Failed Player:** {state.paused_player} (Turn {turn_info})")
+
+        is_benchmark_pause = (pause_reason == "game_failed")
+        if is_benchmark_pause:
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("▶️ Continue to next game", type="primary", width="stretch", key="paused_continue"):
+                    runner = st.session_state.get("benchmark_runner")
+                    if runner is not None and hasattr(runner, "request_continue_after_problem"):
+                        runner.request_continue_after_problem()
+                    st.rerun()
+            with col2:
+                if st.button("⛔ Abort benchmark", width="stretch", key="paused_abort"):
+                    runner = st.session_state.get("benchmark_runner")
+                    if runner is not None and hasattr(runner, "request_abort_after_problem"):
+                        runner.request_abort_after_problem()
+                    st.rerun()
+        else:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("↻ Retry Turn", type="primary", width="stretch", key="paused_retry"):
+                    runner = st.session_state.get("benchmark_runner")
+                    if runner:
+                        runner.resume_game(retry=True)
+                    st.rerun()
+            with col2:
+                if st.button("⏭ Skip Turn (Force Move)", width="stretch", key="paused_skip"):
+                    runner = st.session_state.get("benchmark_runner")
+                    if runner:
+                        runner.resume_game(retry=False, force_move=True)
+                    st.rerun()
+            with col3:
+                if st.button("⛔ Cancel Game", width="stretch", key="paused_cancel"):
+                    runner = st.session_state.get("benchmark_runner")
+                    if runner and hasattr(runner, 'current_game') and runner.current_game:
+                        runner.current_game.cancel()
+                    st.rerun()
 
     # Inject move ticker auto-scroll JS (runs on each render, scrolls latest pill into view)
     st.markdown("""
@@ -878,67 +919,7 @@ def run_in_process_benchmark(
         st.session_state.benchmark_thread = t
         t.start()
 
-    def _draw_paused_ui(board_ph, stats_ph, moves_ph, completion_ph, state):
-        """Draw the paused game UI with retry/cancel options.
 
-        Renders different button rows depending on ``pause_reason``:
-        - mid-game move error → Retry / Skip / Cancel buttons that resume or
-          cancel the current ``AsyncChessGame``.
-        - benchmark-level ``game_failed`` pause (a game ended without a clean
-          chess terminal) → Continue / Abort buttons that release the runner's
-          cross-thread ``threading.Event`` so the runner proceeds to the next
-          game or raises ``FatalBenchmarkError`` respectively.
-        The surrounding layout (board snapshot, error details, metrics, moves)
-        is identical in both cases, so the paused screen looks the same to the
-        user regardless of which kind of pause triggered it.
-        """
-        progress_ph = st.empty()
-
-        progress_ph.warning(f"⏸ Game Paused — {state.pause_reason or 'Unknown reason'}")
-
-        st.error(f"**Error:** {state.pause_error or 'No error details'}")
-        st.info(f"**Failed Player:** {state.paused_player} (Turn {state.paused_turn + 1})")
-
-        start_time = st.session_state.benchmark_start_time
-        _draw_board(board_ph, state, start_time)
-        _draw_metrics(stats_ph, state, start_time)
-        _draw_moves(moves_ph, state.moves)
-
-        is_benchmark_pause = (state.pause_reason == "game_failed")
-        if is_benchmark_pause:
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("▶️ Continue to next game", type="primary", width="stretch", key="paused_continue"):
-                    runner = st.session_state.get("benchmark_runner")
-                    if runner is not None and hasattr(runner, "request_continue_after_problem"):
-                        runner.request_continue_after_problem()
-                    st.rerun()
-            with col2:
-                if st.button("⛔ Abort benchmark", width="stretch", key="paused_abort"):
-                    runner = st.session_state.get("benchmark_runner")
-                    if runner is not None and hasattr(runner, "request_abort_after_problem"):
-                        runner.request_abort_after_problem()
-                    st.rerun()
-        else:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if st.button("↻ Retry Turn", type="primary", width="stretch", key="paused_retry"):
-                    runner = st.session_state.get("benchmark_runner")
-                    if runner:
-                        runner.resume_game(retry=True)
-                    st.rerun()
-            with col2:
-                if st.button("⏭ Skip Turn (Force Move)", width="stretch", key="paused_skip"):
-                    runner = st.session_state.get("benchmark_runner")
-                    if runner:
-                        runner.resume_game(retry=False, force_move=True)
-                    st.rerun()
-            with col3:
-                if st.button("⛔ Cancel Game", width="stretch", key="paused_cancel"):
-                    runner = st.session_state.get("benchmark_runner")
-                    if runner and hasattr(runner, 'current_game') and runner.current_game:
-                        runner.current_game.cancel()
-                    st.rerun()
 
 
     # Now start the benchmark if not already running

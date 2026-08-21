@@ -244,6 +244,9 @@ def render_provider_keys_section():
     st.sidebar.header("🔑 API Keys")
 
     providers = list_providers()
+    if "nim" in providers:
+        providers.remove("nim")
+        providers.insert(0, "nim")
     available_providers = []
 
     demo_api_key = None

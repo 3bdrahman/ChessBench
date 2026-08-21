@@ -132,7 +132,7 @@ def render_board_with_evalbar(
         eval_label = f"{'+' if cp_score >= 0 else ''}{cp_score / 100:.2f}"
 
     html = f"""
-    <div style="display:flex;gap:8px;align-items:stretch;justify-content:center">
+    <div style="display:flex;gap:8px;align-items:stretch;justify-content:flex-start">
         <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
             <div class="cf-evalbar" aria-label="Stockfish advantage: {eval_label or 'even'}">
                 <div class="cf-evalbar-fill-black" style="transform:scaleY({black_pct/100.0})"></div>
@@ -293,12 +293,13 @@ def player_banner_html(
     if is_winner:
         res_str = "1 — 0" if color == "white" else "0 — 1"
         result_mark = f'<span style="margin-left:auto;font-family:var(--font-mono);font-size:0.75rem;color:var(--arena-good);font-weight:700">{res_str}</span>'
+    display_name = f"White: {name}" if color == "white" else f"Black: {name}"
     html = f"""
 <div class="cf-player{active_cls}">
 {turn_dot}
 <div class="cf-player-avatar {avatar_cls}">{glyph}</div>
 <div class="cf-player-meta">
-<div class="cf-player-name">{name}</div>
+<div class="cf-player-name">{display_name}</div>
 <div class="cf-player-spec">{spec_html}</div>
 </div>
 {result_mark}

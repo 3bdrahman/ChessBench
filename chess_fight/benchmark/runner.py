@@ -115,6 +115,10 @@ class BenchmarkConfig:
     # API keys (loaded from env or config)
     api_keys: dict[str, str] = field(default_factory=dict)
 
+    # Custom Prompts
+    system_prompts: dict[str, str] = field(default_factory=dict)
+    turn_prompts: dict[str, str] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -236,6 +240,8 @@ class BenchmarkRunner:
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
                 reasoning_level=self.config.reasoning_level,
+                system_prompt=self.config.system_prompts.get(player_spec),
+                turn_prompt=self.config.turn_prompts.get(player_spec),
             )
             players[player_spec] = ai
 

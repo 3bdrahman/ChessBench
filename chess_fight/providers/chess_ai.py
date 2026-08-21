@@ -38,7 +38,13 @@ class ProviderChessAI(ChessAI):
     ) -> None:
         if "reasoning_level" in params:
             reasoning_level = params.pop("reasoning_level")
-        super().__init__(reasoning_level=reasoning_level)
+        system_prompt = params.pop("system_prompt", None)
+        turn_prompt = params.pop("turn_prompt", None)
+        super().__init__(
+            reasoning_level=reasoning_level,
+            system_prompt=system_prompt,
+            turn_prompt=turn_prompt,
+        )
         self.provider_name = provider_name
         self.model_id = model_id
         self.api_key = api_key

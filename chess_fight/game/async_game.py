@@ -180,6 +180,9 @@ class AsyncChessGame:
                     self._cancelled = True
                     break
                 # If retry, continue to retry the same turn (loop continues without advancing)
+                if self.moves and getattr(self.moves[-1], "is_illegal", False):
+                    # Pop the illegal move placeholder so we don't accidentally advance the turn
+                    self.moves.pop()
 
             current_player = self.player1 if len(self.moves) % 2 == 0 else self.player2
             is_white = len(self.moves) % 2 == 0

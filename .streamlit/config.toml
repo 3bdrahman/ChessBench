@@ -8,32 +8,3 @@ font = "monospace"
 [server]
 # Use polling watcher to avoid inotify watch limit on Streamlit Cloud
 fileWatcherType = "poll"
-# Watch interval in milliseconds (2000 = 2 seconds)
-fileWatcherPollInterval = 2000
-
-# Exclude directories that generate too many file watches
-watchFilePatterns = [
-    "chess_fight/**/*.py",
-    "streamlit_app.py",
-    "benchmark.yaml",
-    "pyproject.toml",
-    ".streamlit/**/*.toml",
-]
-
-# Prevent watching these directories
-ignorePaths = [
-    ".git",
-    "__pycache__",
-    ".pytest_cache",
-    "*.pyc",
-    "runs",
-    "demos",
-    "htmlcov",
-    ".codegraph",
-    ".mypy_cache",
-    ".ruff_cache",
-    "tests",
-    "dist",
-    "build",
-    "*.egg-info",
-]

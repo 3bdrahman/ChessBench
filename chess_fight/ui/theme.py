@@ -109,13 +109,21 @@ _ARENA_CSS = """
 
 /* Reduce whitespace at the top of the sidebar */
 [data-testid="stSidebar"] [data-testid="stSidebarHeader"] {
-    padding-top: 0rem !important;
+    padding-top: 0.5rem !important;
     padding-bottom: 0rem !important;
+    min-height: 0 !important;
 }
-[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
+[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+[data-testid="stSidebar"] .block-container {
     padding-top: 0rem !important;
+    margin-top: 0rem !important;
 }
 [data-testid="stSidebarNav"] {
+    padding-top: 0 !important;
+}
+[data-testid="stSidebar"] .stHeading:first-of-type {
+    margin-top: -1rem !important;
     padding-top: 0 !important;
 }
 /* Reduce whitespace at the top of main content */

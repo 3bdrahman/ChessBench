@@ -45,10 +45,11 @@ DEFAULT_THINKING_CONFIG = ThinkingKeywordConfig()
 def extract_thinking(text: str) -> str:
     """Extract thinking content from LLM response.
 
-    Looks for <thinking>...</thinking> tags or similar markers.
+    Looks for <think>...</think> or <thinking>...</thinking> tags or similar markers.
+    If no tags are found, strips the <move> block and returns the remaining text.
     """
-    # Try <thinking>...</thinking>
-    match = re.search(r'<thinking>(.*?)</thinking>', text, re.DOTALL | re.IGNORECASE)
+    # Try <think> or <thinking>
+    match = re.search(r'<(?:think|thinking)>(.*?)</(?:think|thinking)>', text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
 
@@ -62,8 +63,9 @@ def extract_thinking(text: str) -> str:
     if match:
         return match.group(1).strip()
 
-    # If no tags found, return empty string (thinking not separated)
-    return ""
+    # If no tags found, fallback: remove <move> block and return whatever is left
+    no_move = re.sub(r'<move>.*?</move>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    return no_move.strip()
 
 
 def analyze_thinking(text: str, config: ThinkingKeywordConfig | None = None) -> ThinkingTrace:

@@ -283,10 +283,10 @@ class BenchmarkRunner:
         self._abort_requested = True
         self._continue_after_problem_event.set()
 
-    def resume_game(self, retry: bool = True, force_move: bool = False) -> None:
+    def resume_game(self, retry: bool = True, force_move: bool = False, rewind: bool = False) -> None:
         """UI thread: resume the currently paused game."""
         if hasattr(self, 'current_game') and self.current_game:
-            self.current_game.resume(retry_current_turn=retry, force_move=force_move)
+            self.current_game.resume(retry_current_turn=retry, force_move=force_move, rewind_turn=rewind)
 
     async def run_pairing(
         self,

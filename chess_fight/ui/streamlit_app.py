@@ -478,7 +478,18 @@ def render_live_game_screen(
                         runner.request_abort_after_problem()
                     st.rerun()
         else:
-            col1, col2, col3 = st.columns(3)
+            can_rewind = len(state.moves) > 1 or (len(state.moves) == 1 and not getattr(state.moves[0], "is_illegal", False))
+            if can_rewind:
+                col_rewind, col1, col2, col3 = st.columns(4)
+                with col_rewind:
+                    if st.button("⏪ Rewind Turn", width="stretch", key="paused_rewind"):
+                        runner = st.session_state.get("benchmark_runner")
+                        if runner:
+                            runner.resume_game(retry=False, rewind=True)
+                        st.rerun()
+            else:
+                col1, col2, col3 = st.columns(3)
+                
             with col1:
                 if st.button("↻ Retry Turn", type="primary", width="stretch", key="paused_retry"):
                     runner = st.session_state.get("benchmark_runner")
@@ -562,20 +573,22 @@ def render_live_game_screen(
                 unsafe_allow_html=True,
             )
 
-            # Metrics card: 2x3 grid
+            # Metrics card
             with st.container(border=True):
-                cols = st.columns(3)
+                cols = st.columns(4)
                 with cols[0]:
-                    st.metric("Total Moves", state.stats.total_moves)
+                    st.metric("Game", f"{game_idx + 1} / {total_games}")
                 with cols[1]:
-                    st.metric("Captures", state.stats.capture_moves)
+                    st.metric("Total Moves", state.stats.total_moves)
                 with cols[2]:
+                    st.metric("Captures", state.stats.capture_moves)
+                with cols[3]:
                     st.metric("Checks", state.stats.check_moves)
     
                 cols2 = st.columns(3)
                 with cols2[0]:
                     elapsed = int(state.game_duration) if state.game_duration > 0 else int(time.time() - start_time)
-                    st.metric("Time", f"{elapsed}s")
+                    st.metric("Time", format_duration_ms(elapsed * 1000))
                 with cols2[1]:
                     turn_color = "White ♔" if state.board.turn else "Black ♚"
                     st.metric("Turn", turn_color if not state.is_game_over else "—")
@@ -948,6 +961,17 @@ def run_in_process_benchmark(
 # ---------------------------------------------------------------------------
 
 
+@st.cache_data(show_spinner=False)
+def get_cached_runs(runs_root: str):
+    return list_runs(runs_root)
+
+def flush_benchmark_history(runs_root: str):
+    import shutil
+    import os
+    if os.path.exists(runs_root):
+        shutil.rmtree(runs_root)
+    get_cached_runs.clear()
+
 def render_benchmark_history(*, expanded: bool = False) -> None:
     """Render benchmark runs parsed from the on-disk JSONL artifacts.
 
@@ -955,7 +979,15 @@ def render_benchmark_history(*, expanded: bool = False) -> None:
     toggle reveals the runs immediately on first click.
     """
     with st.expander("📊 Benchmark History", expanded=expanded):
-        runs = list_runs(RUNS_ROOT)
+        render_landing_metrics(RUNS_ROOT)
+        
+        col1, col2 = st.columns([4, 1])
+        with col2:
+            if st.button("🗑️ Flush History", key="flush_history", type="secondary", width="stretch"):
+                flush_benchmark_history(RUNS_ROOT)
+                st.rerun()
+
+        runs = get_cached_runs(RUNS_ROOT)
         if not runs:
             st.info(
                 "No benchmark runs found under "
@@ -965,34 +997,8 @@ def render_benchmark_history(*, expanded: bool = False) -> None:
             return
 
         st.markdown(f"**{len(runs)} real benchmark(s)** loaded from `{RUNS_ROOT}`:")
-
-        # Aggregated leaderboard across all runs.
-        leaderboard = aggregate_leaderboard(runs)
-        if leaderboard:
-            st.markdown("### Aggregated leaderboard (all runs)")
-            rows = []
-            for row in leaderboard:
-                rows.append(
-                    {
-                        "Player": row.player,
-                        "Games": row.games,
-                        "W": row.wins,
-                        "L": row.losses,
-                        "D": row.draws,
-                        "Score %": f"{row.score_pct:.1f}" if row.score_pct is not None else "—",
-                        "Avg latency (ms)": (
-                            f"{row.avg_latency_ms:.0f}"
-                            if row.avg_latency_ms is not None
-                            else "—"
-                        ),
-                        "Tokens in": row.tokens_in if row.tokens_in is not None else None,
-                        "Tokens out": row.tokens_out if row.tokens_out is not None else None,
-                    }
-                )
-            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-
-        # Per-run breakdown as cf-cards.
-        st.markdown("### Per-run details")
+        # Per-run details
+        st.markdown("### Previous Game Tables")
         for run in runs:
             render_run_summary(run, expanded=False)
 
@@ -1268,7 +1274,6 @@ def main():
     show_history = st.session_state.get("show_history", False)
     if not st.session_state.get("game_running", False):
         render_hero()
-        render_landing_metrics(RUNS_ROOT)
     else:
         st.title("🤖 AI Chess Battle")
         st.write("Watch AI models compete in chess! Select models from any provider.")
@@ -1288,7 +1293,6 @@ def main():
             "**Have API keys?** Add them in the sidebar under **🔑 API Keys**, "
             "pick two models under **♟️ Model Selection**, then click **▶️ Start Match**."
         )
-        render_benchmark_history(expanded=False)
 
     st.sidebar.markdown("---")
     st.sidebar.header("📊 Benchmark History")

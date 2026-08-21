@@ -37,63 +37,53 @@ class TokenBucketRateLimiter:
         Returns:
             Time waited in seconds, or None if rate limited and max queue time exceeded.
         """
-        async with self._lock:
-            now = time.time()
+        wait_start = time.time()
+        while True:
+            if time.time() - wait_start > self.config.max_queue_time_seconds:
+                return None
+                
+            async with self._lock:
+                now = time.time()
+                wait_time = 0.0
 
-            # Check if we're in a Retry-After period
-            if now < self._retry_after_until:
-                wait_time = self._retry_after_until - now
-                if wait_time > self.config.max_queue_time_seconds:
+                # Check if we're in a Retry-After period
+                if now < self._retry_after_until:
+                    wait_time = self._retry_after_until - now
+                
+                # Check concurrent limit
+                elif self.active_requests >= self.config.max_concurrent:
+                    wait_time = 0.1
+                
+                else:
+                    # Clean old timestamps (older than 1 minute)
+                    cutoff = now - 60
+                    while self.request_timestamps and self.request_timestamps[0] < cutoff:
+                        self.request_timestamps.popleft()
+
+                    # Check request rate limit
+                    if len(self.request_timestamps) >= self.config.requests_per_minute:
+                        wait_time = self.request_timestamps[0] + 60 - now
+                    else:
+                        # Clean old token usage
+                        while self.token_usage and self.token_usage[0][0] < cutoff:
+                            self.token_usage.popleft()
+
+                        # Check token rate limit
+                        tokens_used_last_minute = sum(t for _, t in self.token_usage)
+                        if tokens_used_last_minute + tokens > self.config.tokens_per_minute:
+                            wait_time = self._calculate_token_wait(tokens, cutoff, now)
+                        else:
+                            # All checks passed - record the request
+                            self.request_timestamps.append(now)
+                            self.token_usage.append((now, tokens))
+                            self.active_requests += 1
+                            return 0.0
+
+            # If we reach here, we need to wait outside the lock
+            if wait_time > 0:
+                if time.time() + wait_time - wait_start > self.config.max_queue_time_seconds:
                     return None
                 await asyncio.sleep(wait_time)
-                now = time.time()
-
-            # Check concurrent limit
-            if self.active_requests >= self.config.max_concurrent:
-                wait_start = time.time()
-                while self.active_requests >= self.config.max_concurrent:
-                    await asyncio.sleep(0.1)
-                    if time.time() - wait_start > self.config.max_queue_time_seconds:
-                        return None
-                now = time.time()
-
-            # Clean old timestamps (older than 1 minute)
-            cutoff = now - 60
-            while self.request_timestamps and self.request_timestamps[0] < cutoff:
-                self.request_timestamps.popleft()
-
-            # Check request rate limit
-            if len(self.request_timestamps) >= self.config.requests_per_minute:
-                wait_time = self.request_timestamps[0] + 60 - now
-                if wait_time > self.config.max_queue_time_seconds:
-                    return None
-                await asyncio.sleep(wait_time)
-                now = time.time()
-                # Re-clean after sleep
-                cutoff = now - 60
-                while self.request_timestamps and self.request_timestamps[0] < cutoff:
-                    self.request_timestamps.popleft()
-
-            # Clean old token usage
-            while self.token_usage and self.token_usage[0][0] < cutoff:
-                self.token_usage.popleft()
-
-            # Check token rate limit
-            tokens_used_last_minute = sum(t for _, t in self.token_usage)
-            if tokens_used_last_minute + tokens > self.config.tokens_per_minute:
-                # Find when enough tokens will be freed
-                wait_time = self._calculate_token_wait(tokens, cutoff, now)
-                if wait_time > self.config.max_queue_time_seconds:
-                    return None
-                await asyncio.sleep(wait_time)
-                now = time.time()
-
-            # All checks passed - record the request
-            self.request_timestamps.append(now)
-            self.token_usage.append((now, tokens))
-            self.active_requests += 1
-
-            return 0.0  # No wait needed
 
     def _calculate_token_wait(self, needed_tokens: int, cutoff: float, now: float) -> float:
         """Calculate how long to wait for enough tokens to be available."""

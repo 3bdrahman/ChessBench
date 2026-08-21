@@ -519,9 +519,6 @@ def render_live_game_screen(
         left, right = st.columns([0.55, 0.45], gap="large")
 
         with left:
-            # Move ticker ABOVE board (DESIGN.md §3)
-            st.markdown(render_move_ticker_html(state.moves), unsafe_allow_html=True)
-    
             # Board + eval bar (board centered, fixed width via CSS)
             king = state.board.king(state.board.turn)
             check_sq = king if state.board.is_check() and king is not None else None
@@ -586,10 +583,6 @@ def render_live_game_screen(
                     if state.is_game_over:
                         term = getattr(state.stats, 'termination_reason', 'unknown')
                         st.metric("Result", term.replace('_', ' ').title())
-                    else:
-                        # Avg latency when available
-                        cr = state.last_completion_result
-                        st.metric("Avg Latency", format_duration_ms(cr.latency_ms) if cr and cr.latency_ms else "—")
 
             # Last completion drawer
             cr = state.last_completion_result
@@ -611,44 +604,45 @@ def render_live_game_screen(
             # Thinking trace drawer (collapsed by default, summary always visible)
             render_thinking_trace_drawer(state)
 
-            if state.moves:
-                with st.expander("Move History Data", expanded=False):
-                    df_rows = []
-                    ply_idx = 0
-                    for m in state.moves:
-                        is_white_turn = (ply_idx % 2 == 0)
-                        piece_map = {'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛'}
-                        cap_suffix = f" ({piece_map.get(m.captured_piece, m.captured_piece)})" if m.captured_piece else ""
-                        is_illegal = getattr(m, "is_illegal", False)
-                        df_rows.append({
-                            "Turn": ply_idx + 1,
-                            "Color": "White" if is_white_turn else "Black",
-                            "Player": m.player.split(":", 1)[-1],
-                            "Move": f"{m.move_san or m.move}{cap_suffix}",
-                            "Capture": 1 if m.is_capture else 0,
-                            "Check": 1 if m.is_check else 0,
-                            "Checkmate": 1 if m.is_checkmate else 0,
-                            "Illegal": 1 if is_illegal else 0,
-                            "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
-                            "Latency": format_duration_ms(m.latency_ms),
-                            "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",
-                            "Reasoning": m.reasoning.replace("<", "&lt;").replace(">", "&gt;") if m.reasoning else "",
-                        })
-                        if not is_illegal:
-                            ply_idx += 1
-                    df = pd.DataFrame(df_rows)
-                    column_config = {
-                        "Capture": st.column_config.NumberColumn("Capture", width="small", format="%d"),
-                        "Check": st.column_config.NumberColumn("Check", width="small", format="%d"),
-                        "Checkmate": st.column_config.NumberColumn("Checkmate", width="small", format="%d"),
-                        "Illegal": st.column_config.NumberColumn("Illegal", width="small", format="%d"),
-                        "Reasoning": st.column_config.TextColumn(
-                            "Reasoning",
-                            help="Click a cell to read the LLM's full reasoning for this move.",
-                            width="large",
-                        )
-                    }
-                    st.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
+        # Render the move history dataframe full-width below the board and panels
+        if state.moves:
+            with st.expander("Move History Data", expanded=False):
+                df_rows = []
+                ply_idx = 0
+                for m in state.moves:
+                    is_white_turn = (ply_idx % 2 == 0)
+                    piece_map = {'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛'}
+                    cap_suffix = f" ({piece_map.get(m.captured_piece, m.captured_piece)})" if m.captured_piece else ""
+                    is_illegal = getattr(m, "is_illegal", False)
+                    df_rows.append({
+                        "Turn": ply_idx + 1,
+                        "Color": "White" if is_white_turn else "Black",
+                        "Player": m.player.split(":", 1)[-1],
+                        "Move": f"{m.move_san or m.move}{cap_suffix}",
+                        "Capture": 1 if m.is_capture else 0,
+                        "Check": 1 if m.is_check else 0,
+                        "Checkmate": 1 if m.is_checkmate else 0,
+                        "Illegal": 1 if is_illegal else 0,
+                        "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
+                        "Latency": format_duration_ms(m.latency_ms),
+                        "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",
+                        "Reasoning": m.reasoning.replace("<", "&lt;")[:500] + "..." if m.reasoning and len(m.reasoning) > 500 else (m.reasoning.replace("<", "&lt;") if m.reasoning else ""),
+                    })
+                    if not is_illegal:
+                        ply_idx += 1
+                df = pd.DataFrame(df_rows)
+                column_config = {
+                    "Capture": st.column_config.NumberColumn("Capture", width="small", format="%d"),
+                    "Check": st.column_config.NumberColumn("Check", width="small", format="%d"),
+                    "Checkmate": st.column_config.NumberColumn("Checkmate", width="small", format="%d"),
+                    "Illegal": st.column_config.NumberColumn("Illegal", width="small", format="%d"),
+                    "Reasoning": st.column_config.TextColumn(
+                        "Reasoning",
+                        help="Click a cell to read the LLM's full reasoning for this move.",
+                        width="large",
+                    )
+                }
+                st.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
 
 
     # Completed games stack as cf-cards
@@ -669,16 +663,13 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
     with st.container(border=True):
 
         # Header row
-        hdr_cols = st.columns([3, 1, 1, 1])
+        hdr_cols = st.columns([4, 1, 1])
         with hdr_cols[0]:
             st.markdown(f"**Game {game_idx + 1}** · ♔ White: **{white_player}** vs ♚ Black: **{black_player}**")
         with hdr_cols[1]:
             st.metric("Result", winner)
         with hdr_cols[2]:
             st.metric("Termination", term_reason.replace('_', ' ').title())
-        with hdr_cols[3]:
-            if state.last_completion_result:
-                st.metric("Avg Latency", format_duration_ms(state.last_completion_result.latency_ms) if state.last_completion_result.latency_ms else "—")
 
         # Board + metrics side by side
         bcol, mcol = st.columns([1, 1])
@@ -781,8 +772,9 @@ def run_in_process_benchmark(
         st.markdown(
             """
             <style>
-                [data-testid="stSidebar"] { display: none !important; }
+                [data-testid="stSidebar"] { display: none !important; width: 0 !important; }
                 [data-testid="collapsedControl"] { display: none !important; }
+                section.main > div.block-container { max-width: 100% !important; padding-left: 2rem !important; padding-right: 2rem !important; }
             </style>
             """,
             unsafe_allow_html=True,

@@ -205,6 +205,9 @@ class MoveValidationError(ChessFightError):
         self.raw_text = raw_text
 
 
+class MoveFormatError(MoveValidationError):
+    """Raised when LLM output cannot be parsed due to bad format."""
+
 class MoveExhaustedError(ChessFightError):
     """Raised when all retry attempts to get a valid move are exhausted.
 
@@ -346,6 +349,7 @@ __all__ = [
     "LimiterExhaustedError",
     "ModelNotFoundError",
     "MoveExhaustedError",
+    "MoveFormatError",
     "MoveValidationError",
     "NetworkError",
     "NoProvidersConfiguredError",

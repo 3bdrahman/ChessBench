@@ -625,26 +625,12 @@ class BenchmarkRunner:
                         )
 
                     try:
-                        return await asyncio.wait_for(
-                            self.run_pairing(
-                                white_spec, black_spec, opening, game_idx, ui_callback, alternating,
-                                on_game_start=lambda g: setattr(
-                                    __import__('streamlit').session_state, 'benchmark_current_game', g
-                                )
-                            ),
-                            timeout=self.config.game_timeout_seconds
+                        return await self.run_pairing(
+                            white_spec, black_spec, opening, game_idx, ui_callback, alternating,
+                            on_game_start=lambda g: setattr(
+                                __import__('streamlit').session_state, 'benchmark_current_game', g
+                            )
                         )
-                    except TimeoutError:
-                        _log.error(
-                            "Game %d (%s vs %s) timed out after %d seconds",
-                            game_idx + 1, white_spec, black_spec, self.config.game_timeout_seconds
-                        )
-                        raise GameTimeoutError(
-                            timeout_seconds=self.config.game_timeout_seconds,
-                            game_index=game_idx,
-                            white=white_spec,
-                            black=black_spec,
-                        ) from None
                     finally:
                         self.rate_limiter.release(white_provider)
                         self.rate_limiter.release(black_provider)

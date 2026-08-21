@@ -149,7 +149,7 @@ class AsyncChessGame:
         if self.clock:
             self.clock.start_turn(True, 0)
 
-        while (not self.board.is_game_over(claim_draw=True) 
+        while (not self.board.is_game_over(claim_draw=False) 
                and not self._cancelled 
                and len(self.moves) < self.max_moves):
             # Handle pause/resume - wait if paused
@@ -225,6 +225,7 @@ class AsyncChessGame:
                     
                     last_attempt = exc.attempted_moves[-1] if hasattr(exc, "attempted_moves") and exc.attempted_moves else "unknown"
                     reasoning = exc.raw_text if hasattr(exc, "raw_text") else None
+                    is_format_error = "MoveFormatError" in str(exc.raw_text) if hasattr(exc, "raw_text") else False
                     
                     self.moves.append(GameMove(
                         player=current_player.name,
@@ -236,7 +237,8 @@ class AsyncChessGame:
                         is_promotion=False,
                         is_castling=False,
                         reasoning=reasoning,
-                        is_illegal=True
+                        is_illegal=True,
+                        is_format_error=is_format_error,
                     ))
                 elif is_timeout:
                     reason = "timeout"
@@ -357,7 +359,8 @@ class AsyncChessGame:
                     latency_ms=completion_result.latency_ms if completion_result else None,
                     tokens_in=completion_result.tokens_in if completion_result else None,
                     tokens_out=completion_result.tokens_out if completion_result else None,
-                    reasoning=completion_result.text if completion_result else None
+                    reasoning=completion_result.text if completion_result else None,
+                    validation_retries=completion_result.validation_retries if completion_result else 0
                 )
 
                 self.moves.append(game_move)
@@ -384,7 +387,7 @@ class AsyncChessGame:
 
         # Final state
         self.stats.game_duration = time.time() - self.start_time
-        if self._cancelled and not self.board.is_game_over(claim_draw=True):
+        if self._cancelled and not self.board.is_game_over(claim_draw=False):
             self.stats.winner = "Cancelled"
             self.stats.termination_reason = "cancelled"
         elif len(self.moves) >= self.max_moves:
@@ -393,7 +396,7 @@ class AsyncChessGame:
         else:
             self.stats.winner = self._determine_winner()
             # Determine clean chess termination reason
-            outcome = self.board.outcome(claim_draw=True)
+            outcome = self.board.outcome(claim_draw=False)
             if outcome is not None:
                 if outcome.termination == chess.Termination.CHECKMATE:
                     self.stats.termination_reason = "checkmate"
@@ -442,9 +445,9 @@ class AsyncChessGame:
             self.stats.check_moves += 1
 
     def _determine_winner(self) -> str:
-        # claim_draw=True so the claimable draws (threefold repetition,
-        # fifty-move rule) are recognized in addition to the automatic ones.
-        outcome = self.board.outcome(claim_draw=True)
+        # claim_draw=False enforces the strict FIDE rules (75-move rule / 5-fold repetition)
+        # since our engines don't explicitly claim draws.
+        outcome = self.board.outcome(claim_draw=False)
         if outcome is None:
             return "Unknown"
         if outcome.winner is None:

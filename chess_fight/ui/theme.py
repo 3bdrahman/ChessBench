@@ -109,7 +109,7 @@ _ARENA_CSS = """
 
 /* Reduce whitespace at the top of the sidebar */
 [data-testid="stSidebar"] [data-testid="stSidebarHeader"] {
-    padding-top: 1rem !important;
+    padding-top: 0rem !important;
     padding-bottom: 0rem !important;
 }
 [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
@@ -239,10 +239,6 @@ code, .stCodeBlock, pre {
 }
 [data-testid="stDataFrame"] * { background: transparent !important; }
 
-/* Progress bars */
-[data-testid="stProgress"] > div > div {
-    background: linear-gradient(90deg, var(--arena-accent) 0%, var(--arena-accent-hot) 100%) !important;
-}
 
 /* SVG board — give it a dimensional frame */
 .cf-board-frame {
@@ -253,7 +249,13 @@ code, .stCodeBlock, pre {
     box-shadow: var(--shadow-board);
     display: inline-block;
 }
-.cf-board-frame svg { display: block; border-radius: 8px; }
+.cf-board-frame svg {
+    display: block;
+    border-radius: 8px;
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+}
 
 /* Quality pills */
 .cf-quality-pill {

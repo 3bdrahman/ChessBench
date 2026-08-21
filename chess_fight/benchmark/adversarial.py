@@ -199,7 +199,7 @@ class AdversarialEvaluator:
                 cp_losses.append(cp_loss)
 
             # Determine result
-            outcome = game.board.outcome(claim_draw=True)
+            outcome = game.board.outcome(claim_draw=False)
             if outcome:
                 if outcome.winner is None:
                     draws += 1

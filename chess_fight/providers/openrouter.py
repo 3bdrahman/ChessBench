@@ -65,23 +65,6 @@ class OpenRouterProvider(ModelProvider):
         for model in data.get("data", []):
             model_id = model["id"]
             mid = model_id.lower()
-
-            # First check token filters
-            if any(tok in mid for tok in _NON_CHAT_TOKENS):
-                continue
-            
-            # Check architecture to ensure it's a text-output model
-            arch = model.get("architecture") or {}
-            out_mods = arch.get("output_modalities") or []
-            in_mods = arch.get("input_modalities") or []
-            
-            # Must be capable of taking text and outputting text
-            if "text" not in out_mods or "text" not in in_mods:
-                continue
-
-            capabilities = []
-            if not any(tok in mid for tok in _WEAK_FOR_CHESS_TOKENS):
-                capabilities.append(CAP_CHESS)
             
             is_free = ":free" in mid or mid.endswith(":free")
             name = model_id
@@ -96,7 +79,7 @@ class OpenRouterProvider(ModelProvider):
                 provider="openrouter",
                 context_window=ctx,
                 pricing_tier="free" if is_free else "paid",
-                capabilities=capabilities,
+                capabilities=[CAP_CHESS],
             ))
         return chat_models
 

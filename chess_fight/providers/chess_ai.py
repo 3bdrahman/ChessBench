@@ -11,6 +11,7 @@ import chess
 from chess_fight.common.common_types import ChatMessage, CompletionResult
 from chess_fight.common.exceptions import (
     MoveValidationError,
+    MoveFormatError,
     ProviderError,
     RateLimitError,
     TimeoutError,
@@ -181,7 +182,7 @@ class ProviderChessAI(ChessAI):
                     raw_text=result.text,
                 )
             else:
-                raise MoveValidationError(
+                raise MoveFormatError(
                     f"Could not extract legal move from response: {result.text[:200]}...",
                     fen=fen,
                     legal_moves=[m.uci() for m in board.legal_moves],

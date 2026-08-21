@@ -37,6 +37,7 @@ class CompletionResult:
     error: str | None = None
     error_type: str | None = None
     retry_count: int = 0
+    validation_retries: int = 0
     tool_calls: list[dict[str, Any]] | None = None
 
 
@@ -148,24 +149,3 @@ class ModelProvider(ABC):
     @abstractmethod
     def validate_key(self, api_key: str) -> bool:
         """Validate an API key format (doesn't make network calls)."""
-
-    async def validate_model(self, api_key: str, model: str) -> tuple[bool, str | None]:
-        """Validate that a model is accessible and working.
-
-        Performs a minimal completion call (1 token) to verify the model exists
-        and the API key has access. Returns (is_valid, error_message).
-
-        Default implementation does a minimal completion call. Override for
-        provider-specific validation logic.
-        """
-        try:
-            result = await self.complete(
-                api_key=api_key,
-                model=model,
-                messages=[ChatMessage(role="user", content="Say OK")],
-                max_tokens=1,
-                temperature=0.0,
-            )
-            return True, None
-        except Exception as exc:
-            return False, str(exc)

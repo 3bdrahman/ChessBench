@@ -47,30 +47,17 @@ class NIMProvider(ModelProvider):
         return "NIM key"
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
-        client = AsyncOpenAI(api_key=api_key, base_url=self.base_url, timeout=DEFAULT_HTTP_TIMEOUT)
-        try:
-            models = await client.models.list()
-        except Exception as exc:
-            _log.warning("NIM list_models failed: %s", exc)
-            return []
-
+        verified_models = [
+            "google/gemma-4-31b-it",
+            "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "stepfun-ai/step-3.7-flash",
+            "deepseek-ai/deepseek-v4-flash-0731",
+            "mistralai/mistral-nemotron"
+        ]
+        
         chat_models: list[ModelInfo] = []
-        for model in models.data:
-            model_id = model.id
-            mid = model_id.lower()
-            # NIM publishes embedding, image, and asr models alongside chat.
-            if any(tok in mid for tok in (
-                "embed", "rerank", "asr", "tts", "sd-", "flux",
-                "clip", "vision-cnt", "cosmos", "vila",
-            )):
-                continue
-            if not any(tok in mid for tok in (
-                "llama", "qwen", "mistral", "mixtral", "deepseek",
-                "phi", "gemma", "nemotron", "starcoder", "codestral",
-                "meta/", "microsoft/", "google/",
-            )):
-                continue
-
+        for model_id in verified_models:
             chat_models.append(ModelInfo(
                 id=model_id,
                 name=model_id,

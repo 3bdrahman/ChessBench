@@ -191,6 +191,9 @@ code, .stCodeBlock, pre {
     color: #0a0c14 !important;
     box-shadow: 0 0 0 1px rgba(240,180,33,0.4), 0 8px 20px rgba(240,180,33,0.25) !important;
 }
+.stButton > button[kind="primary"] *, .stButton > button[data-kind="primary"] * {
+    color: #0a0c14 !important;
+}
 .stButton > button[kind="primary"]:hover {
     box-shadow: var(--glow-accent), 0 0 0 1px rgba(240,180,33,0.6) !important;
 }

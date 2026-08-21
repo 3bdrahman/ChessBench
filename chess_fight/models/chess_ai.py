@@ -33,6 +33,8 @@ class ChessAI(ABC):
         name: str | None = None,
         prompt_version: str = "v1_baseline",
         reasoning_level: str = "mid",
+        system_prompt: str | None = None,
+        turn_prompt: str | None = None,
     ):
         self.name = name or self.__class__.__name__
         self.move_history: list[str] = []
@@ -49,10 +51,20 @@ class ChessAI(ABC):
         # Initialize position evaluator
         self.evaluator = PositionEvaluator()
 
-        # Load prompt template from registry
-        self.prompt_template = prompt_registry.get(prompt_version)
-        if self.prompt_template is None:
-            raise ValueError(f"Unknown prompt version: {prompt_version}. Available: {prompt_registry.list_versions()}")
+        if system_prompt is not None and turn_prompt is not None:
+            from chess_fight.prompts import PromptTemplate, PromptSection
+            self.prompt_template = PromptTemplate(
+                version="custom",
+                sections=[
+                    PromptSection(name="system", content_template=system_prompt, is_system=True, priority=0),
+                    PromptSection(name="turn", content_template=turn_prompt, is_system=False, priority=1),
+                ]
+            )
+        else:
+            # Load prompt template from registry
+            self.prompt_template = prompt_registry.get(prompt_version)
+            if self.prompt_template is None:
+                raise ValueError(f"Unknown prompt version: {prompt_version}. Available: {prompt_registry.list_versions()}")
 
     def _get_piece_locations(self, board: chess.Board) -> tuple[list[str], list[str]]:
         return self.evaluator.get_piece_locations(board)

@@ -303,7 +303,7 @@ def render_provider_keys_section():
 def render_model_selectors(available_providers: list):
     """Render model selection for White and Black players."""
     st.sidebar.header("♟️ Model Selection")
-    st.sidebar.caption("💡 **Hint:** Click a dropdown and type the name of a model, or type `free` to search for free models instead of using credits.")
+
 
     all_models: dict[str, dict] = {}
     filtered_count = 0
@@ -330,7 +330,7 @@ def render_model_selectors(available_providers: list):
         )
 
     if not all_models:
-        st.sidebar.warning("No chess-capable models available. Please add API keys.")
+        st.sidebar.warning("Couldn't fetch models")
         return None, None
 
     if len(all_models) < 2:
@@ -387,6 +387,47 @@ def render_model_selectors(available_providers: list):
     if model_1 and model_2 and model_1 != model_2:
         return all_models[model_1], all_models[model_2]
     return None, None
+
+
+def render_prompt_management(model_1_config, model_2_config):
+    """Render prompt management UI in the sidebar."""
+    if not model_1_config or not model_2_config:
+        return None, None
+
+    default_system = "You are playing chess as {color}."
+    default_turn = "Position: {ascii_board}\nLegal moves:\n{forcing_moves}\n{developing_moves}\n{positional_moves}\n\nFormat:\n<think>reasoning</think>\n<move>uci_move</move>"
+
+    m1_spec = f"{model_1_config['provider']}:{model_1_config['model_id']}"
+    m2_spec = f"{model_2_config['provider']}:{model_2_config['model_id']}"
+
+    # Initialize defaults in session state if not present
+    if f"sys_prompt_{m1_spec}" not in st.session_state:
+        st.session_state[f"sys_prompt_{m1_spec}"] = default_system
+    if f"turn_prompt_{m1_spec}" not in st.session_state:
+        st.session_state[f"turn_prompt_{m1_spec}"] = default_turn
+    if f"sys_prompt_{m2_spec}" not in st.session_state:
+        st.session_state[f"sys_prompt_{m2_spec}"] = default_system
+    if f"turn_prompt_{m2_spec}" not in st.session_state:
+        st.session_state[f"turn_prompt_{m2_spec}"] = default_turn
+
+    with st.sidebar.expander("📝 Prompt Management"):
+        st.caption("Customize the system and turn prompts for each player. Available variables: `{color}`, `{ascii_board}`, `{forcing_moves}`, `{developing_moves}`, `{positional_moves}`.")
+        
+        st.markdown(f"**Player 1:** `{m1_spec}`")
+        sys_1 = st.text_area("System Prompt (P1)", value=st.session_state[f"sys_prompt_{m1_spec}"], height=100, key=f"ui_sys_1_{m1_spec}")
+        turn_1 = st.text_area("Turn Prompt (P1)", value=st.session_state[f"turn_prompt_{m1_spec}"], height=200, key=f"ui_turn_1_{m1_spec}")
+        
+        st.markdown(f"**Player 2:** `{m2_spec}`")
+        sys_2 = st.text_area("System Prompt (P2)", value=st.session_state[f"sys_prompt_{m2_spec}"], height=100, key=f"ui_sys_2_{m2_spec}")
+        turn_2 = st.text_area("Turn Prompt (P2)", value=st.session_state[f"turn_prompt_{m2_spec}"], height=200, key=f"ui_turn_2_{m2_spec}")
+
+    # Save edits back to session state to persist them
+    st.session_state[f"sys_prompt_{m1_spec}"] = sys_1
+    st.session_state[f"turn_prompt_{m1_spec}"] = turn_1
+    st.session_state[f"sys_prompt_{m2_spec}"] = sys_2
+    st.session_state[f"turn_prompt_{m2_spec}"] = turn_2
+
+    return {m1_spec: sys_1, m2_spec: sys_2}, {m1_spec: turn_1, m2_spec: turn_2}
 
 
 def create_provider_ai(white_config: dict, black_config: dict):
@@ -746,6 +787,8 @@ def run_in_process_benchmark(
     games: int = 3,
     colors: str = "alternating",
     reasoning_level: str = "mid",
+    system_prompts: dict[str, str] | None = None,
+    turn_prompts: dict[str, str] | None = None,
 ):
     """Run the benchmark runner in-process and render live results."""
     white_spec = f"{white_config['provider']}:{white_config['model_id']}"
@@ -774,6 +817,8 @@ def run_in_process_benchmark(
         reasoning_level=reasoning_level,
         api_keys=api_keys,
         colors=colors,
+        system_prompts=system_prompts or {},
+        turn_prompts=turn_prompts or {},
     )
 
     # Immersive Theater Mode: hide the sidebar ONLY while a benchmark is
@@ -1205,6 +1250,9 @@ def main():
     # Sidebar: API Keys and Model Selection
     available_providers = render_provider_keys_section()
     model_1_config, model_2_config = render_model_selectors(available_providers)
+    
+    # Prompt Management
+    system_prompts, turn_prompts = render_prompt_management(model_1_config, model_2_config)
 
     st.sidebar.markdown("---")
     st.sidebar.header("🎮 Game Controls")
@@ -1246,17 +1294,21 @@ def main():
                 "games": int(games),
                 "colors": colors_mode,
                 "reasoning_level": reasoning_level,
+                "system_prompts": system_prompts,
+                "turn_prompts": turn_prompts,
             }
             st.rerun()
 
     if st.session_state.get("game_running", False) and st.session_state.get("active_match_config"):
-        match_cfg = st.session_state.active_match_config
+        config = st.session_state.active_match_config
         run_in_process_benchmark(
-            match_cfg["white_config"],
-            match_cfg["black_config"],
-            games=match_cfg["games"],
-            colors=match_cfg["colors"],
-            reasoning_level=match_cfg.get("reasoning_level", "mid"),
+            white_config=config["white_config"],
+            black_config=config["black_config"],
+            games=config["games"],
+            colors=config["colors"],
+            reasoning_level=config["reasoning_level"],
+            system_prompts=config.get("system_prompts"),
+            turn_prompts=config.get("turn_prompts"),
         )
         return
 
@@ -1297,13 +1349,14 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.header("📊 Benchmark History")
 
-    if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
-        st.session_state.show_history = True
-        st.rerun()
-
-    if st.sidebar.button("✕ Close Benchmark History", width="stretch", key="close_history"):
-        st.session_state.show_history = False
-        st.rerun()
+    if not show_history:
+        if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
+            st.session_state.show_history = True
+            st.rerun()
+    else:
+        if st.sidebar.button("🏠 Back to Home", width="stretch", key="close_history"):
+            st.session_state.show_history = False
+            st.rerun()
 
 
 

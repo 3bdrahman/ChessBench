@@ -13,6 +13,7 @@ from chess_fight.common.common_types import CompletionResult
 from chess_fight.common.exceptions import MoveExhaustedError
 from chess_fight.game.clock import GameClock
 from chess_fight.models import ChessAI, GameMove, GameStats
+from chess_fight.models.thinking import extract_thinking
 from chess_fight.benchmark.evaluator import StockfishEvaluator
 
 _log = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class AsyncChessGame:
         self._paused_turn: int = 0
         self._retry_current_turn = False
         self._force_move = False
+        self._rewind_turn = False
         self._loop = None
 
     def cancel(self) -> None:
@@ -95,7 +97,7 @@ class AsyncChessGame:
         self._paused_turn = len(self.moves)
         self._pause_event.clear()
 
-    def resume(self, retry_current_turn: bool = True, force_move: bool = False) -> None:
+    def resume(self, retry_current_turn: bool = True, force_move: bool = False, rewind_turn: bool = False) -> None:
         """Resume the game from pause."""
         self._paused = False
         self._pause_reason = None
@@ -104,6 +106,7 @@ class AsyncChessGame:
         self._paused_turn = 0
         self._retry_current_turn = retry_current_turn
         self._force_move = force_move
+        self._rewind_turn = rewind_turn
         self._set_pause_event()
 
     @property
@@ -173,6 +176,23 @@ class AsyncChessGame:
                 
                 # Wait for resume signal
                 await self._pause_event.wait()
+                
+                if self._rewind_turn:
+                    if self.moves and getattr(self.moves[-1], "is_illegal", False):
+                        self.moves.pop()
+                    if self.moves:
+                        popped_move = self.moves.pop()
+                        try:
+                            self.board.pop()
+                        except IndexError:
+                            pass
+                        self.stats.total_moves = max(0, self.stats.total_moves - 1)
+                        if popped_move.is_capture:
+                            self.stats.capture_moves = max(0, self.stats.capture_moves - 1)
+                        if popped_move.is_check:
+                            self.stats.check_moves = max(0, self.stats.check_moves - 1)
+                    self._rewind_turn = False
+                    continue
                 
                 # If retry is requested, we'll retry the same turn (don't advance move count)
                 if not self._retry_current_turn:
@@ -276,6 +296,23 @@ class AsyncChessGame:
                 # Wait for resume
                 await self._pause_event.wait()
                 
+                if self._rewind_turn:
+                    if self.moves and getattr(self.moves[-1], "is_illegal", False):
+                        self.moves.pop()
+                    if self.moves:
+                        popped_move = self.moves.pop()
+                        try:
+                            self.board.pop()
+                        except IndexError:
+                            pass
+                        self.stats.total_moves = max(0, self.stats.total_moves - 1)
+                        if popped_move.is_capture:
+                            self.stats.capture_moves = max(0, self.stats.capture_moves - 1)
+                        if popped_move.is_check:
+                            self.stats.check_moves = max(0, self.stats.check_moves - 1)
+                    self._rewind_turn = False
+                    continue
+                
                 if self._force_move:
                     import random
                     legal_moves = list(self.board.legal_moves)
@@ -302,6 +339,10 @@ class AsyncChessGame:
                     # User chose not to retry - cancel game
                     self._cancelled = True
                     break
+                
+                if self.moves and getattr(self.moves[-1], "is_illegal", False):
+                    # Pop the illegal move placeholder so we don't accidentally advance the turn
+                    self.moves.pop()
                 # Retry the same turn - continue loop without advancing move count
                 continue
 
@@ -362,7 +403,7 @@ class AsyncChessGame:
                     latency_ms=completion_result.latency_ms if completion_result else None,
                     tokens_in=completion_result.tokens_in if completion_result else None,
                     tokens_out=completion_result.tokens_out if completion_result else None,
-                    reasoning=completion_result.text if completion_result else None,
+                    reasoning=extract_thinking(completion_result.text) if completion_result else None,
                     validation_retries=completion_result.validation_retries if completion_result else 0
                 )
 

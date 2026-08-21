@@ -300,17 +300,16 @@ code, .stCodeBlock, pre {
     box-shadow: 0 0 0 1px rgba(240,180,33,0.4), 0 4px 18px rgba(240,180,33,0.15);
 }
 .cf-player-avatar {
-    width: 36px;
-    height: 36px;
-    border-radius: var(--r-pill);
+    width: 32px;
+    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 20px;
+    font-size: 24px;
     flex-shrink: 0;
 }
-.cf-avatar-white { background: rgba(245,240,225,0.18); color: var(--arena-text); border: 1px solid rgba(245,240,225,0.5); }
-.cf-avatar-black { background: rgba(58,45,32,0.45); color: var(--arena-text); border: 1px solid rgba(255,255,255,0.2); }
+.cf-avatar-white { background: transparent; color: var(--arena-text); border: none; }
+.cf-avatar-black { background: transparent; color: var(--arena-text); border: none; }
 .cf-player-meta { display: flex; flex-direction: column; min-width: 0; }
 .cf-player-name { font-weight: 600; color: var(--arena-text); font-size: 0.875rem; }
 .cf-player-spec { font-family: var(--font-mono); font-size: 0.75rem; color: var(--arena-text-muted); }

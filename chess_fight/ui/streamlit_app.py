@@ -54,6 +54,7 @@ from chess_fight.ui.helpers import (
     player_banner_html,
     render_board_with_evalbar,
     render_loading_card,
+    render_move_ticker_html,
     render_thinking_trace_drawer,
 )
 from chess_fight.ui.landing import render_hero, render_landing_metrics
@@ -123,8 +124,8 @@ def _draw_moves(moves_placeholder, moves: list) -> None:
                 "Move #": i + 1,
                 "Player": move.player,
                 "Move": move.move,
-                "Capture": "✓" if move.is_capture else "",
-                "Check": "✓" if move.is_check else "",
+                "Capture": 1 if move.is_capture else 0,
+                "Check": 1 if move.is_check else 0,
                 "Reasoning": (move.reasoning.replace("<", "&lt;").replace(">", "&gt;") if move.reasoning else ""),
             }
             for i, move in enumerate(moves)
@@ -221,33 +222,6 @@ async def fetch_models_for_provider(provider_name: str, api_key: str) -> list:
         return []
 
 
-def _test_model_async(model_config: dict) -> None:
-    """Test a model with a minimal completion (1 token) in a background thread."""
-    import threading
-    
-    def run_test():
-        import asyncio
-        provider_name = model_config["provider"]
-        model_id = model_config["model_id"]
-        api_key = model_config["api_key"]
-        
-        provider = get_provider(provider_name)
-        if not provider:
-            st.toast(f"❌ Provider {provider_name} not found", icon="❌")
-            return
-        
-        try:
-            is_valid, error = asyncio.run(provider.validate_model(api_key, model_id))
-            if is_valid:
-                st.toast(f"✅ {model_id} is working!", icon="✅")
-            else:
-                st.toast(f"❌ {model_id} failed: {error}", icon="❌")
-        except Exception as exc:
-            st.toast(f"❌ {model_id} error: {exc}", icon="❌")
-    
-    thread = threading.Thread(target=run_test, daemon=True)
-    add_script_run_ctx(thread)
-    thread.start()
 
 
 def _probe_local_provider(provider_name: str) -> tuple[bool, str]:
@@ -264,20 +238,6 @@ def _probe_local_provider(provider_name: str) -> tuple[bool, str]:
     except Exception as exc:  # pragma: no cover - defensive
         return False, f"Probe failed: {exc}"
     return True, f"Connected to `{base_url}`"
-
-
-def _clear_models_cache() -> int:
-    """Drop every cached provider model list from session state.
-
-    Cache keys are written by :func:`render_model_selectors` as
-    ``models_<provider>_<key_hash>``. Returning the count keeps the sidebar
-    message honest — visitors can see how many (if any) lists were dropped.
-    """
-    keys = [k for k in list(st.session_state.keys()) if k.startswith("models_")]
-    for k in keys:
-        st.session_state.pop(k, None)
-    return len(keys)
-
 
 def render_provider_keys_section():
     """Render API key inputs for each provider in sidebar."""
@@ -349,26 +309,8 @@ def render_model_selectors(available_providers: list):
     filtered_count = 0
 
     for provider_name, api_key in available_providers:
-        import hashlib
-        key_hash = hashlib.md5(api_key.encode()).hexdigest()[:8]
-        cache_key = f"models_{provider_name}_{key_hash}"
-
-        # If cache miss, set loading flag and defer fetch to next rerun
-        if cache_key not in st.session_state or not st.session_state[cache_key]:
-            loading_flag = f"loading_{provider_name}"
-            if not st.session_state.get(loading_flag, False):
-                st.session_state[loading_flag] = True
-                st.rerun()
-            # On this rerun, we're in loading state — show staged card and do fetch
-            render_loading_card("Fetching models", "Connecting to provider", provider_name, st.sidebar)
+        with st.spinner(f"Fetching models from {provider_name}..."):
             models = asyncio.run(fetch_models_for_provider(provider_name, api_key))
-            if models:
-                st.session_state[cache_key] = models
-            st.session_state[loading_flag] = False
-            st.rerun()
-
-        # Cache hit — use models normally
-        models = st.session_state[cache_key]
 
         for model in models:
             if not is_chess_capable(model):
@@ -511,11 +453,8 @@ def render_live_game_screen(
     - Right column (panels): player banners stacked, metrics 2x3, last completion drawer, thinking trace drawer
     - Below: completed games stack as cf-cards
     """
-    # Progress bar at top
-    if state is not None and not is_paused:
-        frac = min(1.0, game_idx / max(1, total_games))
-        st.progress(frac, text=f"Game {game_idx + 1} / {total_games} in progress")
-    elif is_paused:
+    # Handle paused state
+    if is_paused:
         st.warning(f"⏸ Paused — {pause_reason or 'Unknown reason'}")
         if getattr(state, "pause_error", None):
             st.error(f"**Error:** {state.pause_error}")
@@ -575,16 +514,15 @@ def render_live_game_screen(
     </script>
     """, unsafe_allow_html=True)
 
-    # Two-column arena frame: left=board (fixed ~560px), right=panels
-    left, right = st.columns([0.55, 0.45], gap="large")
+    # Two-column arena frame: left=board, right=panels
+    if state is not None:
+        left, right = st.columns([0.55, 0.45], gap="large")
 
-    with left:
-        # Move ticker ABOVE board (DESIGN.md §3)
-        if state is not None:
-            st.caption(f"Move History ({len(state.moves)} plys)")
-
-        # Board + eval bar (board centered, fixed width via CSS)
-        if state is not None:
+        with left:
+            # Move ticker ABOVE board (DESIGN.md §3)
+            st.markdown(render_move_ticker_html(state.moves), unsafe_allow_html=True)
+    
+            # Board + eval bar (board centered, fixed width via CSS)
             king = state.board.king(state.board.turn)
             check_sq = king if state.board.is_check() and king is not None else None
             last_mv = state.board.peek() if state.board.move_stack else None
@@ -601,12 +539,8 @@ def render_live_game_screen(
                 cp_score=cp,
                 mate_in=mate,
             )
-        else:
-            board = chess.Board()
-            render_board_with_evalbar(board, size=560)
-
-    with right:
-        if state is not None:
+            
+        with right:
             white_name = state.moves[0].player if state.moves else white_spec
             black_name = state.moves[1].player if len(state.moves) >= 2 else black_spec
             is_white_turn = state.board.turn == chess.WHITE
@@ -678,7 +612,7 @@ def render_live_game_screen(
             render_thinking_trace_drawer(state)
 
             if state.moves:
-                with st.expander("Move History Data", expanded=True):
+                with st.expander("Move History Data", expanded=False):
                     df_rows = []
                     ply_idx = 0
                     for m in state.moves:
@@ -689,12 +623,12 @@ def render_live_game_screen(
                         df_rows.append({
                             "Turn": ply_idx + 1,
                             "Color": "White" if is_white_turn else "Black",
-                            "Player": m.player.split(":")[0],
+                            "Player": m.player.split(":", 1)[-1],
                             "Move": f"{m.move_san or m.move}{cap_suffix}",
-                            "Capture": "✅" if m.is_capture else "",
-                            "Check": "✅" if m.is_check else "",
-                            "Checkmate": "✅" if m.is_checkmate else "",
-                            "Illegal": "❌" if is_illegal else "",
+                            "Capture": 1 if m.is_capture else 0,
+                            "Check": 1 if m.is_check else 0,
+                            "Checkmate": 1 if m.is_checkmate else 0,
+                            "Illegal": 1 if is_illegal else 0,
                             "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
                             "Latency": format_duration_ms(m.latency_ms),
                             "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",
@@ -704,10 +638,10 @@ def render_live_game_screen(
                             ply_idx += 1
                     df = pd.DataFrame(df_rows)
                     column_config = {
-                        "Capture": st.column_config.TextColumn("Capture", width="small"),
-                        "Check": st.column_config.TextColumn("Check", width="small"),
-                        "Checkmate": st.column_config.TextColumn("Checkmate", width="small"),
-                        "Illegal": st.column_config.TextColumn("Illegal", width="small"),
+                        "Capture": st.column_config.NumberColumn("Capture", width="small", format="%d"),
+                        "Check": st.column_config.NumberColumn("Check", width="small", format="%d"),
+                        "Checkmate": st.column_config.NumberColumn("Checkmate", width="small", format="%d"),
+                        "Illegal": st.column_config.NumberColumn("Illegal", width="small", format="%d"),
                         "Reasoning": st.column_config.TextColumn(
                             "Reasoning",
                             help="Click a cell to read the LLM's full reasoning for this move.",
@@ -762,6 +696,7 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
 
         # Move history as pills
         if state.moves:
+            st.markdown(render_move_ticker_html(state.moves), unsafe_allow_html=True)
             with st.expander("Move History Data", expanded=False):
                 df_rows = []
                 ply_idx = 0
@@ -769,11 +704,16 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
                     is_white_turn = (ply_idx % 2 == 0)
                     piece_map = {'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛'}
                     cap_suffix = f" ({piece_map.get(m.captured_piece, m.captured_piece)})" if m.captured_piece else ""
+                    is_illegal = getattr(m, "is_illegal", False)
                     df_rows.append({
                         "Turn": ply_idx + 1,
                         "Color": "White" if is_white_turn else "Black",
-                        "Player": m.player.split(":")[0],
-                        "Move": (f"{m.move_san or m.move}{cap_suffix}") if not m.is_illegal else f"❌ {m.move}",
+                        "Player": m.player.split(":", 1)[-1],
+                        "Move": f"{m.move_san or m.move}{cap_suffix}" if not is_illegal else f"Illegal: {m.move}",
+                        "Capture": 1 if m.is_capture else 0,
+                        "Check": 1 if m.is_check else 0,
+                        "Checkmate": 1 if m.is_checkmate else 0,
+                        "Illegal": 1 if is_illegal else 0,
                         "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
                         "Latency": format_duration_ms(m.latency_ms),
                         "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",
@@ -783,6 +723,10 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
                         ply_idx += 1
                 df = pd.DataFrame(df_rows)
                 column_config = {
+                    "Capture": st.column_config.NumberColumn("Capture", width="small", format="%d"),
+                    "Check": st.column_config.NumberColumn("Check", width="small", format="%d"),
+                    "Checkmate": st.column_config.NumberColumn("Checkmate", width="small", format="%d"),
+                    "Illegal": st.column_config.NumberColumn("Illegal", width="small", format="%d"),
                     "Reasoning": st.column_config.TextColumn(
                         "Reasoning",
                         help="Click a cell to read the LLM's full reasoning for this move.",
@@ -892,7 +836,8 @@ def run_in_process_benchmark(
                     completed_game = copy.deepcopy(state)
                     st.session_state.benchmark_completed_games.append(completed_game)
                     st.session_state.benchmark_game_index += 1
-                    # Don't update benchmark_state for completed games - keep it for live game
+                    # Clear the live state so it doesn't repeat in the UI
+                    st.session_state.benchmark_state = None
                 else:
                     st.session_state.benchmark_state = state
             except BaseException:
@@ -1027,7 +972,7 @@ def render_benchmark_history(*, expanded: bool = False) -> None:
             )
             return
 
-        st.markdown(f"**{len(runs)} real run(s)** loaded from `{RUNS_ROOT}`:")
+        st.markdown(f"**{len(runs)} real benchmark(s)** loaded from `{RUNS_ROOT}`:")
 
         # Aggregated leaderboard across all runs.
         leaderboard = aggregate_leaderboard(runs)
@@ -1225,18 +1170,18 @@ def render_game_viewer(run) -> None:
                 "Color": m.color.title(),
                 "Player": game.white_player if m.color == "white" else game.black_player,
                 "Move": san,
-                "Capture": "✅" if "x" in san else "",
-                "Check": "✅" if "+" in san else "",
-                "Checkmate": "✅" if "#" in san else "",
+                "Capture": 1 if "x" in san else 0,
+                "Check": 1 if "+" in san else 0,
+                "Checkmate": 1 if "#" in san else 0,
                 "Reasoning": m.thinking_trace.replace("<", "&lt;").replace(">", "&gt;") if m.thinking_trace else "",
             })
 
         df = pd.DataFrame(df_rows)
 
         column_config = {
-            "Capture": st.column_config.TextColumn("Capture", width="small"),
-            "Check": st.column_config.TextColumn("Check", width="small"),
-            "Checkmate": st.column_config.TextColumn("Checkmate", width="small"),
+            "Capture": st.column_config.NumberColumn("Capture", width="small", format="%d"),
+            "Check": st.column_config.NumberColumn("Check", width="small", format="%d"),
+            "Checkmate": st.column_config.NumberColumn("Checkmate", width="small", format="%d"),
             "Reasoning": st.column_config.TextColumn(
                 "Reasoning",
                 help="Click a cell to read the LLM's full reasoning for this move.",
@@ -1321,7 +1266,7 @@ def main():
     if st.session_state.get("show_analytics", False):
         render_analytical_dashboard()
         st.sidebar.markdown("---")
-        st.sidebar.header("🗂 History & Cache")
+        st.sidebar.header("📊 Benchmark History")
         if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
             st.session_state.show_analytics = False
             st.session_state.show_history = True
@@ -1354,7 +1299,7 @@ def main():
         render_benchmark_history(expanded=False)
 
     st.sidebar.markdown("---")
-    st.sidebar.header("🗂 History & Cache")
+    st.sidebar.header("📊 Benchmark History")
 
     if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
         st.session_state.show_history = True
@@ -1364,23 +1309,7 @@ def main():
         st.session_state.show_history = False
         st.rerun()
 
-    if st.sidebar.button("🧹 Clear Created Models Cache", width="stretch", key="clear_cache"):
-        cleared = _clear_models_cache()
-        try:
-            st.cache_data.clear()
-        except Exception:
-            pass
-        msg = (
-            f"Cleared {cleared} cached model list(s) — next refresh will re-fetch from the providers."
-            if cleared
-            else "Model cache was empty — nothing to clear."
-        )
-        st.session_state.cache_cleared_msg = msg
-        st.rerun()
 
-    if st.session_state.get("cache_cleared_msg"):
-        st.sidebar.success(st.session_state.cache_cleared_msg)
-        st.session_state.cache_cleared_msg = None
 
 
 def render_analytical_dashboard():

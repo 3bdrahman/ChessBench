@@ -145,6 +145,30 @@ def render_board_with_evalbar(
     st.markdown(html, unsafe_allow_html=True)
 
 
+def render_move_ticker_html(moves: list) -> str:
+    """Render the move ticker as a horizontal scroller of SAN pills."""
+    if not moves:
+        return '<div class="cf-move-ticker"></div>'
+    
+    pills = []
+    for i, m in enumerate(moves):
+        is_current = " cf-move-current" if i == len(moves) - 1 else ""
+        # Check for illegal moves
+        is_illegal = getattr(m, "is_illegal", False)
+        san = getattr(m, "move_san", m.move) if not is_illegal else f"Illegal: {m.move}"
+        piece_map = {'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛'}
+        cap = getattr(m, "captured_piece", None)
+        cap_suffix = f" ({piece_map.get(cap, cap)})" if cap else ""
+        
+        turn_num = (i // 2) + 1
+        prefix = f"{turn_num}. " if i % 2 == 0 else ""
+        
+        # We can add quality classes later if evaluated, for now just standard pill
+        pills.append(f'<span class="cf-move-pill{is_current}">{prefix}{san}{cap_suffix}</span>')
+    
+    return f'<div class="cf-move-ticker">{"".join(pills)}</div>'
+
+
 def render_skeleton_rows(n: int = 3) -> None:
     """Render `n` shimmering skeleton rows for a loading state."""
     rows = "".join('<div class="cf-skeleton"></div>' for _ in range(n))
@@ -217,7 +241,7 @@ def headline_metric_row(runs_root: str = "runs") -> None:
     runs = list_runs(runs_root)
     if not runs:
         cards = [
-            ("Runs", "—"),
+            ("Benchmarks", "—"),
             ("Games played", "—"),
             ("Moves recorded", "—"),
             ("Models benchmarked", "—"),
@@ -228,7 +252,7 @@ def headline_metric_row(runs_root: str = "runs") -> None:
         total_moves = sum(r.total_moves for r in runs)
         leaderboard = aggregate_leaderboard(runs)
         cards = [
-            ("Runs", f"{total_runs}"),
+            ("Benchmarks", f"{total_runs}"),
             ("Games played", f"{total_games}"),
             ("Moves recorded", f"{total_moves}"),
             ("Models benchmarked", f"{len(leaderboard)}"),
@@ -319,5 +343,6 @@ __all__ = [
     "render_board_with_evalbar",
     "render_html_card",
     "render_loading_card",
+    "render_move_ticker_html",
     "render_skeleton_rows",
 ]

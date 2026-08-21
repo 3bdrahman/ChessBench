@@ -23,6 +23,8 @@ class GameMove:
     tokens_out: int | None = None
     reasoning: str | None = None
     is_illegal: bool = False
+    is_format_error: bool = False
+    validation_retries: int = 0
 
 
 @dataclass
@@ -53,6 +55,9 @@ class GameSummary:
     timestamp_utc: str = ""
     moves: list[Any] = field(default_factory=list)
     termination_reason: str = "unknown"
+    temperature: float = 0.0
+    max_tokens: int | None = None
+    reasoning_level: str = "mid"
 
 
 @dataclass

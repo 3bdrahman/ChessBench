@@ -16,6 +16,7 @@ import chess
 from chess_fight.common.common_types import CompletionResult
 from chess_fight.common.exceptions import (
     MoveExhaustedError,
+    MoveFormatError,
     MoveValidationError,
     ProviderError,
     is_retryable,
@@ -358,7 +359,7 @@ class ChessAI(ABC):
                     raw_text=move_str,
                 )
             else:
-                raise MoveValidationError(
+                raise MoveFormatError(
                     f"Could not extract legal move from response: {move_str[:100]}...",
                     fen=board.fen(),
                     legal_moves=[m.uci() for m in board.legal_moves],
@@ -468,13 +469,15 @@ class ChessAI(ABC):
                 current_fen = board.fen().split(' ')[0]
                 self.move_history.append(current_fen)
 
-                return validated_move, self.last_completion_result or CompletionResult(
+                cr = self.last_completion_result or CompletionResult(
                     text=move_str,
                     tokens_in=None,
                     tokens_out=None,
                     latency_ms=0,
                     raw_response=None,
                 )
+                cr.validation_retries = validation_attempts
+                return validated_move, cr
             except ProviderError as exc:
                 if is_retryable(exc):
                     network_attempts += 1
@@ -491,7 +494,7 @@ class ChessAI(ABC):
                     raise exc
             except MoveValidationError as exc:
                 validation_attempts += 1
-                errors.append(f"Validation Attempt {validation_attempts}: MoveValidationError: {exc}")
+                errors.append(f"Validation Attempt {validation_attempts}: {type(exc).__name__}: {exc}")
             except Exception as exc:
                 if is_retryable(exc):
                     network_attempts += 1

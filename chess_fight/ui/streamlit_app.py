@@ -244,6 +244,9 @@ def render_provider_keys_section():
     st.sidebar.header("🔑 API Keys")
 
     providers = list_providers()
+    if "nim" in providers:
+        providers.remove("nim")
+        providers.insert(0, "nim")
     available_providers = []
 
     demo_api_key = None
@@ -303,7 +306,6 @@ def render_provider_keys_section():
 def render_model_selectors(available_providers: list):
     """Render model selection for White and Black players."""
     st.sidebar.header("♟️ Model Selection")
-    st.sidebar.caption("💡 **Hint:** Click a dropdown and type the name of a model, or type `free` to search for free models instead of using credits.")
 
     all_models: dict[str, dict] = {}
     filtered_count = 0

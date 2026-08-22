@@ -1,13 +1,75 @@
-"""Structured prompt system with versioning and A/B testing."""
+"""Structured prompt system with validation, prompt injection defense, and fallbacks."""
 
 from __future__ import annotations
 
 import hashlib
+import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+_log = logging.getLogger(__name__)
+
+# Default Fallback Prompts (guaranteed to be safe, valid, and contains all required variables)
+DEFAULT_SYSTEM_PROMPT = "You are a professional chess engine playing as {color}."
+
+DEFAULT_TURN_PROMPT = """Position:
+{ascii_board}
+
+Board FEN: {fen}
+
+Legal Moves:
+Forcing: {forcing_moves}
+Developing: {developing_moves}
+Positional: {positional_moves}
+
+Select the best move for {color}.
+You MUST format your response EXACTLY like this:
+<think>
+(Your reasoning here)
+</think>
+<move>
+(Your chosen move in purely lower-case UCI notation, e.g. e2e4)
+</move>"""
+
+# Required variable placeholder groups
+REQUIRED_BOARD_VARS = {"fen", "ascii_board", "board", "color"}
+REQUIRED_MOVE_VARS = {
+    "legal_moves",
+    "legal_moves_uci",
+    "legal_moves_annotated",
+    "forcing_moves",
+    "developing_moves",
+    "positional_moves",
+    "forcing_uci",
+    "developing_uci",
+    "positional_uci",
+}
+
+# Prompt injection threat patterns
+PROMPT_INJECTION_PATTERNS = [
+    (r"ignore\s+(?:all\s+)?previous\s+instructions", "Instruction override attempt detected"),
+    (r"disregard\s+(?:all\s+)?prior\s+instructions", "Instruction disregard attempt detected"),
+    (r"you\s+are\s+no\s+longer\s+playing\s+chess", "Role hijacking attempt detected"),
+    (r"override\s+system\s+prompt", "System prompt override attempt detected"),
+    (r"system\s*:\s*you\s+are", "Role injection attempt detected"),
+    (r"<\/move>\s*<move>", "Tag breakout injection attempt detected"),
+]
+
+
+@dataclass
+class PromptValidationResult:
+    """Result of validating custom user prompts."""
+    is_valid: bool
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    used_fallback: bool = False
+    fallback_reason: str | None = None
+    sanitized_system_prompt: str = ""
+    sanitized_turn_prompt: str = ""
 
 
 @dataclass
@@ -23,8 +85,10 @@ class PromptSection:
         """Render the section with the given context."""
         try:
             return self.content_template.format(**context)
-        except KeyError:
-            return f"[MISSING CONTEXT: {self.name}]"
+        except KeyError as err:
+            return f"[MISSING CONTEXT: {err}]"
+        except Exception as err:
+            return f"[FORMAT ERROR: {err}]"
 
 
 @dataclass
@@ -34,15 +98,11 @@ class PromptTemplate:
     version: str
     model_hints: dict[str, Any] = field(default_factory=dict)
     max_tokens: int | None = None
+    used_fallback: bool = False
+    fallback_reason: str | None = None
 
     def referenced_variables(self) -> set[str]:
-        """Return the set of variable names referenced by all sections.
-
-        Parses ``{name}`` placeholders from every section's
-        ``content_template`` so callers can compute only the context
-        variables the template actually uses.
-        """
-        import re
+        """Return the set of variable names referenced by all sections."""
         variables: set[str] = set()
         for section in self.sections:
             variables.update(re.findall(r"\{(\w+)\}", section.content_template))
@@ -53,28 +113,25 @@ class PromptTemplate:
         rendered_parts = []
         total_estimated_tokens = 0
 
-        # Sort sections by priority (lower first)
         sorted_sections = sorted(self.sections, key=lambda s: s.priority)
 
         for section in sorted_sections:
             rendered = section.render(context)
-            estimated_tokens = len(rendered) // 4  # Rough estimate: 4 chars per token
+            estimated_tokens = len(rendered) // 4
 
             if truncate and self.max_tokens and total_estimated_tokens + estimated_tokens > self.max_tokens:
                 if section.required:
-                    # Required section - truncate it instead of dropping
                     remaining = self.max_tokens - total_estimated_tokens
-                    if remaining > 50:  # Only include if we have meaningful space
+                    if remaining > 50:
                         rendered = rendered[:remaining * 4] + "... [TRUNCATED]"
                         rendered_parts.append(rendered)
-                # Skip optional sections when over budget
             else:
                 rendered_parts.append(rendered)
                 total_estimated_tokens += estimated_tokens
 
         return "\n\n".join(rendered_parts)
 
-    def render_messages(self, context: dict[str, Any], truncate: bool = True) -> list[ChatMessage]:
+    def render_messages(self, context: dict[str, Any], truncate: bool = True) -> list[Any]:
         """Render prompt split into system and user ChatMessage objects."""
         from chessbench.common.common_types import ChatMessage
 
@@ -103,6 +160,170 @@ class PromptTemplate:
             for s in self.sections
         )
         return hashlib.sha256(content.encode()).hexdigest()[:16]
+
+
+def sanitize_prompt_text(text: str) -> tuple[str, list[str]]:
+    """Sanitize prompt text against known prompt injection patterns.
+    
+    Returns (sanitized_text, list_of_warnings).
+    """
+    if not text:
+        return "", []
+
+    warnings: list[str] = []
+    sanitized = text
+
+    for pattern, desc in PROMPT_INJECTION_PATTERNS:
+        if re.search(pattern, sanitized, re.IGNORECASE):
+            warnings.append(f"Prompt injection warning: {desc}")
+            # Neutralize the suspicious injection phrase by wrapping in quotes
+            sanitized = re.sub(
+                pattern,
+                lambda m: f'"[SANITIZED: {m.group(0)}]"',
+                sanitized,
+                flags=re.IGNORECASE,
+            )
+
+    return sanitized, warnings
+
+
+def validate_prompt_text(
+    system_prompt: str | None,
+    turn_prompt: str | None,
+) -> PromptValidationResult:
+    """Validate system and turn prompts against safety, placeholders, and syntax rules."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    sys_text = (system_prompt or "").strip()
+    turn_text = (turn_prompt or "").strip()
+
+    if not sys_text:
+        errors.append("System prompt cannot be empty.")
+
+    if not turn_text:
+        errors.append("Turn prompt cannot be empty.")
+
+    # Sanitize inputs
+    sanitized_sys, sys_warns = sanitize_prompt_text(sys_text)
+    sanitized_turn, turn_warns = sanitize_prompt_text(turn_text)
+    warnings.extend(sys_warns)
+    warnings.extend(turn_warns)
+
+    # Check variable placeholders
+    sys_vars = set(re.findall(r"\{(\w+)\}", sys_text))
+    turn_vars = set(re.findall(r"\{(\w+)\}", turn_text))
+    all_vars = sys_vars | turn_vars
+
+    # Must contain at least one board position variable
+    if not (all_vars & REQUIRED_BOARD_VARS):
+        errors.append(
+            f"Prompt must include at least one board position placeholder: {', '.join('{' + v + '}' for v in sorted(REQUIRED_BOARD_VARS))}"
+        )
+
+    # Must contain at least one legal moves variable
+    if not (all_vars & REQUIRED_MOVE_VARS):
+        errors.append(
+            f"Prompt must include at least one legal moves placeholder: {', '.join('{' + v + '}' for v in sorted(REQUIRED_MOVE_VARS))}"
+        )
+
+    # Check for formatting syntax errors (unmatched single braces or invalid format keys)
+    dummy_context = {
+        "color": "White",
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "ascii_board": "r n b q k b n r\np p p p p p p p\n. . . . . . . .\n. . . . . . . .\n. . . . . . . .\n. . . . . . . .\nP P P P P P P P\nR N B Q K B N R",
+        "board": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "legal_moves": "e2e4, d2d4",
+        "legal_moves_uci": "e2e4 d2d4",
+        "legal_moves_annotated": "1. e2e4",
+        "forcing_moves": "e2e4",
+        "developing_moves": "g1f3",
+        "positional_moves": "d2d4",
+        "forcing_uci": "e2e4",
+        "developing_uci": "g1f3",
+        "positional_uci": "d2d4",
+        "reasoning_level": "mid",
+        "last_move_san": "None",
+        "move_history_san": "",
+        "white_pieces": "",
+        "black_pieces": "",
+        "stagnation_status": "Normal",
+        "position_progress": "0.0",
+        "material_tension": "None",
+        "position_dynamism": "Low",
+    }
+
+    try:
+        sanitized_sys.format(**dummy_context)
+    except (KeyError, ValueError, IndexError) as exc:
+        errors.append(f"System prompt template format error: {exc}")
+
+    try:
+        sanitized_turn.format(**dummy_context)
+    except (KeyError, ValueError, IndexError) as exc:
+        errors.append(f"Turn prompt template format error: {exc}")
+
+    # Check for required output format instructions in turn prompt
+    if "<move>" not in sanitized_turn.lower():
+        warnings.append("Turn prompt lacks <move> tag specification. Auto-appending move output instructions.")
+        sanitized_turn += "\n\nFormat your final move inside <move>uci_move</move> tags."
+
+    is_valid = len(errors) == 0
+
+    if not is_valid:
+        fallback_reason = "; ".join(errors)
+        _log.warning("Prompt validation failed: %s. Using default fallback prompt.", fallback_reason)
+        return PromptValidationResult(
+            is_valid=False,
+            errors=errors,
+            warnings=warnings,
+            used_fallback=True,
+            fallback_reason=fallback_reason,
+            sanitized_system_prompt=DEFAULT_SYSTEM_PROMPT,
+            sanitized_turn_prompt=DEFAULT_TURN_PROMPT,
+        )
+
+    return PromptValidationResult(
+        is_valid=True,
+        errors=[],
+        warnings=warnings,
+        used_fallback=False,
+        fallback_reason=None,
+        sanitized_system_prompt=sanitized_sys,
+        sanitized_turn_prompt=sanitized_turn,
+    )
+
+
+def create_safe_prompt_template(
+    system_prompt: str | None = None,
+    turn_prompt: str | None = None,
+) -> tuple[PromptTemplate, PromptValidationResult]:
+    """Validate prompt inputs and return a safe PromptTemplate alongside its validation result."""
+    validation = validate_prompt_text(system_prompt, turn_prompt)
+
+    sections = [
+        PromptSection(
+            name="system",
+            content_template=validation.sanitized_system_prompt,
+            is_system=True,
+            priority=0,
+        ),
+        PromptSection(
+            name="turn",
+            content_template=validation.sanitized_turn_prompt,
+            is_system=False,
+            priority=1,
+        ),
+    ]
+
+    template = PromptTemplate(
+        sections=sections,
+        version="custom_safe" if validation.is_valid else "fallback",
+        used_fallback=validation.used_fallback,
+        fallback_reason=validation.fallback_reason,
+    )
+
+    return template, validation
 
 
 class PromptRegistry:
@@ -146,91 +367,14 @@ class PromptRegistry:
                 if template:
                     self.register(template.version, template)
 
-        # Fallback: if no YAML templates found, use hardcoded defaults
         if not self._templates:
             self._register_hardcoded_defaults()
 
     def _register_hardcoded_defaults(self) -> None:
         """Register hardcoded defaults as fallback."""
-        # v1_baseline - Original prompt structure
-        self.register("v1_baseline", PromptTemplate(
-            sections=DEFAULT_SECTIONS,
-            version="v1_baseline",
-            model_hints={"description": "Original baseline prompt"},
-            max_tokens=2000,
-        ))
-
-        # v2_tactical_focus - Emphasize tactical patterns
-        tactical_sections = [
-            PromptSection(
-                name="role",
-                content_template="You are playing chess as {color}. Focus on tactical precision.",
-                required=True,
-                priority=0,
-            ),
-            PromptSection(
-                name="tactical_priority",
-                content_template="""CRITICAL TACTICAL PRIORITIES:
-1. CHECKMATE threats (immediate or forced)
-2. WINNING MATERIAL sequences
-3. FORCING moves (checks, captures, threats)
-4. DEFEND against opponent's tactics""",
-                required=True,
-                priority=1,
-            ),
-            PromptSection(
-                name="position_analysis",
-                content_template="""Current position:
-Stagnation: {stagnation_status} | Progress: {position_progress}
-Tension: {material_tension} | Dynamism: {position_dynamism}""",
-                required=True,
-                priority=2,
-            ),
-        ] + [s for s in DEFAULT_SECTIONS if s.name in ("legal_moves", "instructions")]
-
-        self.register("v2_tactical_focus", PromptTemplate(
-            sections=tactical_sections,
-            version="v2_tactical_focus",
-            model_hints={"description": "Tactical emphasis, shorter context"},
-            max_tokens=1500,
-        ))
-
-        # v3_minimal - Minimal prompt for fast inference
-        minimal_sections = [
-            PromptSection(
-                name="role",
-                content_template="You are {color}. Respond with UCI move only.",
-                required=True,
-                priority=0,
-            ),
-            PromptSection(
-                name="board",
-                content_template="Position: {ascii_board}",
-                required=True,
-                priority=1,
-            ),
-            PromptSection(
-                name="legal_moves",
-                content_template="Legal: {forcing_moves}\n{developing_moves}\n{positional_moves}",
-                required=True,
-                priority=2,
-            ),
-            PromptSection(
-                name="instructions",
-                content_template="""Format:
-<think>reasoning</think>
-<move>uci_move</move>""",
-                required=True,
-                priority=0,
-            ),
-        ]
-
-        self.register("v3_minimal", PromptTemplate(
-            sections=minimal_sections,
-            version="v3_minimal",
-            model_hints={"description": "Minimal prompt for fast models"},
-            max_tokens=800,
-        ))
+        default_template, _ = create_safe_prompt_template(DEFAULT_SYSTEM_PROMPT, DEFAULT_TURN_PROMPT)
+        default_template.version = "v1_baseline"
+        self.register("v1_baseline", default_template)
 
     def register(self, name: str, template: PromptTemplate) -> None:
         """Register a prompt template."""
@@ -243,42 +387,6 @@ Tension: {material_tension} | Dynamism: {position_dynamism}""",
     def list_versions(self) -> list[str]:
         """List all registered versions."""
         return list(self._templates.keys())
-
-
-# Built-in prompt sections (kept as fallback if YAML files are missing)
-DEFAULT_SECTIONS = [
-    PromptSection(
-        name="role",
-        content_template="You are a professional chess engine playing as {color}.",
-        required=True,
-        priority=0,
-    ),
-    PromptSection(
-        name="board_state",
-        content_template="""[GAME STATE]
-FEN: {fen}
-Turn: {color}""",
-        required=True,
-        priority=1,
-    ),
-    PromptSection(
-        name="instructions",
-        content_template="""[INSTRUCTIONS]
-Analyze the position and select the best move. Keep your reasoning concise (under 200 words).
-
-You must format your response EXACTLY like this:
-<think>
-(Your reasoning here)
-</think>
-<move>
-(Your chosen move in purely lower-case UCI notation, e.g. e2e4)
-</move>
-
-Failure to follow this exact format will result in disqualification.""",
-        required=True,
-        priority=0,
-    ),
-]
 
 
 # Global registry instance

@@ -8,9 +8,13 @@ htmlcov/
 .coverage
 .pytest_cache/
 
-# Environments
+# Environments & Secrets
 .env
-.venv
+.env.*
+!.env.example
+.venv/
+venv/
+env/
 .streamlit/secrets.toml
 
 # IDE

@@ -464,60 +464,6 @@ def config(output: Path, players: tuple[str, ...]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Suite Command
-# ---------------------------------------------------------------------------
-
-@cli.command()
-@click.option("--list", "list_suites", is_flag=True, help="List available benchmark suites")
-@click.option("--run", "suite_name", help="Run a predefined suite by name")
-def suite(list_suites: bool, suite_name: str | None) -> None:
-    """Manage and run predefined benchmark suites."""
-
-    configs_dir = Path(__file__).parent.parent.parent / "configs"
-
-    if list_suites:
-        if not configs_dir.exists():
-            click.echo("No configs directory found.")
-            return
-
-        suites = list(configs_dir.glob("*.yaml"))
-        if not suites:
-            click.echo("No benchmark suites found.")
-            return
-
-        click.echo("Available benchmark suites:\n")
-        for suite_file in suites:
-            try:
-                with open(suite_file) as f:
-                    data = yaml.safe_load(f)
-                name = data.get("name", suite_file.stem)
-                desc = data.get("description", "No description")
-                click.echo(f"  {suite_file.stem}")
-                click.echo(f"    {name}: {desc}")
-            except Exception:
-                click.echo(f"  {suite_file.stem} (invalid)")
-        return
-
-    if suite_name:
-        suite_file = configs_dir / f"{suite_name}.yaml"
-        if not suite_file.exists():
-            click.echo(f"Suite not found: {suite_name}", err=True)
-            click.echo("Run 'chessbench suite --list' to see available suites.")
-            sys.exit(1)
-
-        click.echo(f"Running suite: {suite_name}")
-        # Delegate to run command
-        ctx = click.get_current_context()
-        ctx.invoke(run, config=suite_file, players=None, games=None, parallel=None,
-                   opening_book=None, time_control=None, temperature=None, max_tokens=None,
-                   reasoning_level=None, move_timeout=None, game_timeout=None,
-                   output=Path("runs"), name=None, seed=None, colors=None)
-        return
-
-    click.echo("Use --list to see suites or --run <name> to execute one.")
-
-
-# ---------------------------------------------------------------------------
 # Entry Point
 # ---------------------------------------------------------------------------
 

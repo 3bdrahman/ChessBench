@@ -44,7 +44,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["chessbench*", "demos*"]
+include = ["chessbench*"]
 
 [project.scripts]
 chessbench = "chessbench.cli:main"

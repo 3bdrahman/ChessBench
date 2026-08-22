@@ -29,7 +29,7 @@ git push origin main
 ```toml
 # Streamlit secrets.toml
 OPENROUTER_API_KEY = "sk-or-v1-..."  # Shared key for demo visitors
-CHESS_FIGHT_HOSTED_PROVIDERS = "openrouter,nim,ollama"
+CHESS_FIGHT_HOSTED_PROVIDERS = "openrouter,nim"
 ```
 
 > [!TIP]
@@ -92,7 +92,7 @@ services:
       - DEEPINFRA_API_KEY=${DEEPINFRA_API_KEY}
       - GROQ_API_KEY=${GROQ_API_KEY}
       - NIM_API_KEY=${NIM_API_KEY}
-      - CHESS_FIGHT_HOSTED_PROVIDERS=openrouter,nim,ollama
+      - CHESS_FIGHT_HOSTED_PROVIDERS=openrouter,nim
       - CHESS_FIGHT_RUNS_ROOT=/app/runs
     restart: unless-stopped
     resources:

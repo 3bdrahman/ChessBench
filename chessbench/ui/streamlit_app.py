@@ -41,8 +41,6 @@ from chessbench.common.exceptions import (
 # Providers surfaced in the hosted Streamlit UI.
 # OpenRouter: aggregated API, server-side demo key, free tier for visitors.
 # NIM: NVIDIA's hosted inference API, server-side key.
-# Ollama: local-only — works when running the app locally against an Ollama server.
-# Stockfish: real local engine — only shown when the binary is on PATH.
 from chessbench.constants import HOSTED_PROVIDERS
 from chessbench.game.async_game import GameState
 from chessbench.providers import get_provider, list_providers
@@ -454,9 +452,6 @@ def render_prompt_management(model_1_config, model_2_config):
 def create_provider_ai(white_config: dict, black_config: dict):
     """Create ProviderChessAI instances for both players."""
     params: dict = {"temperature": 0.1, "max_tokens": 1500}
-    if white_config["provider"] == "stockfish":
-        params["depth"] = st.session_state.get("stockfish_depth", 8)
-        params["think_time"] = st.session_state.get("stockfish_think", 1.0)
     white_ai = ProviderChessAI(
         provider_name=white_config["provider"],
         model_id=white_config["model_id"],
@@ -464,9 +459,6 @@ def create_provider_ai(white_config: dict, black_config: dict):
         **params,
     )
     black_params: dict = dict(params)
-    if black_config["provider"] == "stockfish":
-        black_params["depth"] = st.session_state.get("stockfish_depth", 8)
-        black_params["think_time"] = st.session_state.get("stockfish_think", 1.0)
     black_ai = ProviderChessAI(
         provider_name=black_config["provider"],
         model_id=black_config["model_id"],
@@ -822,11 +814,6 @@ def run_in_process_benchmark(
     ):
         if key:
             api_keys[provider_name] = key
-    # Local providers don't need keys but accept an empty string.
-    if white_config["provider"] == "stockfish":
-        api_keys.setdefault("stockfish", "")
-    if black_config["provider"] == "stockfish":
-        api_keys.setdefault("stockfish", "")
 
     config = BenchmarkConfig(
         players=[white_spec, black_spec],

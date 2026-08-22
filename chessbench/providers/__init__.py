@@ -13,10 +13,8 @@ _PROVIDER_MODULES = (
     "google",
     "groq",
     "nim",
-    "ollama",
     "openai",
     "openrouter",
-    "stockfish",
     "together",
 )
 
@@ -53,5 +51,4 @@ __all__ = [
     "get_provider",
     "list_providers",
     "register_provider",
-    "stockfish",
 ]

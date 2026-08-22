@@ -26,7 +26,7 @@ move_timeout_seconds: 120
 game_timeout_seconds: 7200
 
 # Players: list of "provider:model_id"
-# Available providers: openai, anthropic, google, nim, openrouter, ollama
+# Available providers: openai, anthropic, google, nim, openrouter, deepinfra, fireworks, together, generic_openai, groq
 # Use `python -m benchmark.runner --players openai:gpt-4o anthropic:claude-3-5-sonnet` to override
 players:
   - "openai:gpt-4o"

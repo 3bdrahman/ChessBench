@@ -97,7 +97,7 @@ class YourProvider(ModelProvider):
 Then register module `"yourprovider"` in `_PROVIDER_MODULES` inside [`chessbench/providers/__init__.py`](file:///var/home/usef/coding/chessbench/chessbench/providers/__init__.py).
 
 Existing supported providers include:
-`anthropic`, `deepinfra`, `fireworks`, `generic_openai`, `google`, `groq`, `nim`, `openai`, `openrouter`, `stockfish`, `together`, `ollama`.
+`anthropic`, `deepinfra`, `fireworks`, `generic_openai`, `google`, `groq`, `nim`, `openai`, `openrouter`, `together`.
 
 ### Benchmark Core & Analytics
 

@@ -48,8 +48,7 @@ def render_error(st: Any, exc: BaseException) -> None:
     ``st`` is the Streamlit module (or a duck-typed mock for tests).
     """
     if isinstance(exc, NoProvidersConfiguredError):
-        st.error("**No providers configured** — add API keys in the sidebar or enable Stockfish.")
-        st.info("Tip: Enable Stockfish for instant local play (no API key required).")
+        st.error("**No providers configured** — add API keys in the sidebar.")
         return
 
     if isinstance(exc, InvalidApiKeyError):

@@ -100,7 +100,7 @@ docker run -it --rm \
 
 ## ✨ Core Capabilities
 
-### 🔌 11 Integrated LLM & Engine Backends
+### 🔌 Integrated LLM Backends
 Test models across providers through a unified async interface:
 - **OpenAI**: GPT-4o, o1, o3-mini, GPT-4.1
 - **Anthropic**: Claude 3.5 Sonnet, Claude 3.7 Sonnet (with Thinking budget)
@@ -108,8 +108,6 @@ Test models across providers through a unified async interface:
 - **OpenRouter**: 100+ open-weights and commercial models
 - **NVIDIA NIM**: Hosted Llama, Qwen, Mistral endpoints
 - **Groq**: Ultra-low-latency Llama & Mixtral inference
-- **Ollama**: Local open-weights execution (zero API cost)
-- **Stockfish**: Local engine for adversarial calibration and ground truth
 - **Together AI / Fireworks AI / DeepInfra**: Fast open-source provider backends
 
 ### 🏆 Bayesian ELO Ratings (Glicko-2)
@@ -135,7 +133,7 @@ flowchart TD
     A[Benchmark Runner] -->|Load Config| B[Opening Book ECO / Custom FEN]
     A -->|Spawn Async Games| C[Async Game Loop]
     C -->|Request Move| D[Provider Abstraction Layer]
-    D -->|API Call| E[LLM Provider / Ollama / Stockfish]
+    D -->|API Call| E[LLM Provider API]
     E -->|Raw Response| F[Move Parser & Validation]
     F -->|Legal Move| G[Stockfish Ground Truth Evaluator]
     G -->|CP Loss & Top 3 Moves| H[Benchmark Logger]

@@ -249,25 +249,15 @@ def _probe_local_provider(provider_name: str) -> tuple[bool, str]:
     return True, f"Connected to `{base_url}`"
 
 
-def _get_secret_or_env(provider_name: str) -> str | None:
-    """Lookup API key from environment variable or Streamlit secrets."""
-    env_key = os.getenv(f"{provider_name.upper()}_API_KEY")
-    if env_key:
-        return env_key
-    try:
-        if hasattr(st, "secrets"):
-            return (
-                st.secrets.get(f"{provider_name.lower()}_api_key")
-                or st.secrets.get(f"{provider_name.upper()}_API_KEY")
-            )
-    except Exception:
-        pass
-    return None
+def _get_env_key(provider_name: str) -> str | None:
+    """Lookup API key from environment variable."""
+    return os.getenv(f"{provider_name.upper()}_API_KEY")
 
 
 def render_provider_keys_section():
-    """Render API key inputs for each provider in sidebar with secrets auto-detection."""
+    """Render manual API key input fields for each provider in the sidebar."""
     st.sidebar.header("🔑 API Keys")
+    st.sidebar.caption("Manually enter your API key for each provider you wish to benchmark.")
 
     providers = list_providers()
     if "nim" in providers:
@@ -298,20 +288,20 @@ def render_provider_keys_section():
                         st.error(f"✗ {message}")
             continue
 
-        secret_key = _get_secret_or_env(provider_name)
-        is_preconfigured = bool(secret_key and provider.validate_key(secret_key))
+        env_key = _get_env_key(provider_name)
+        is_preconfigured = bool(env_key and provider.validate_key(env_key))
 
         with st.sidebar.expander(f"{provider_name.capitalize()}", expanded=is_preconfigured):
             api_key = st.text_input(
                 f"{provider_name.capitalize()} API Key",
                 type="password",
-                value=secret_key if secret_key else "",
+                value=env_key if env_key else "",
                 key=f"api_key_{provider_name}",
-                help=f"Enter your {provider_name} API key",
+                help=f"Manually enter your {provider_name} API key",
             )
             if api_key:
                 if provider.validate_key(api_key):
-                    st.success("✓ Valid key format" if not secret_key else "✓ Pre-configured key active")
+                    st.success("✓ Valid key format")
                     available_providers.append((provider_name, api_key))
                 else:
                     st.error("✗ Invalid key format")

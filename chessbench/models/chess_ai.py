@@ -64,6 +64,12 @@ class ChessAI(ABC):
             if self.prompt_template is None:
                 raise ValueError(f"Unknown prompt version: {prompt_version}. Available: {prompt_registry.list_versions()}")
 
+    def reset_game(self) -> None:
+        """Reset per-game history (move_history, position_history, last_completion_result)."""
+        self.move_history.clear()
+        self.position_history.clear()
+        self.last_completion_result = None
+
     def _get_piece_locations(self, board: chess.Board) -> tuple[list[str], list[str]]:
         return self.evaluator.get_piece_locations(board)
 

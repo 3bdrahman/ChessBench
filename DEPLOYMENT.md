@@ -24,16 +24,16 @@ git push origin main
 ### 2. Connect to Streamlit Cloud
 1. Sign in to [share.streamlit.io](https://share.streamlit.io).
 2. Click **New app**, select `3bdrahman/chessbench`, branch `main`, and set main file to `streamlit_app.py`.
-3. Configure environment secrets in **Settings → Secrets**:
+3. Configure environment variables in **Settings → Advanced Settings / Environment Variables**:
 
-```toml
-# Streamlit secrets.toml
-OPENROUTER_API_KEY = "sk-or-v1-..."  # Shared key for demo visitors
-CHESS_FIGHT_HOSTED_PROVIDERS = "openrouter,nim"
+```bash
+# Environment variables (optional server defaults)
+OPENROUTER_API_KEY="sk-or-v1-..."
+CHESS_FIGHT_HOSTED_PROVIDERS="openrouter,nim"
 ```
 
-> [!TIP]
-> `CHESS_FIGHT_HOSTED_PROVIDERS` controls which provider dropdowns are pre-enabled for demo users without requiring them to supply an API key.
+> [!NOTE]
+> Users manually enter their own API keys directly into the sidebar password fields when running matches.
 
 ---
 

@@ -337,12 +337,17 @@ code, .stCodeBlock, pre {
 
 /* Hero */
 .cf-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
     position: relative;
     padding: 64px 24px 80px;
     text-align: center;
     background: radial-gradient(circle at center, rgba(240, 180, 33, 0.05) 0%, transparent 60%);
     border-radius: var(--r-lg);
     margin-bottom: 32px;
+    width: 100%;
 }
 .cf-hero-title {
     font-size: 4rem;
@@ -350,11 +355,13 @@ code, .stCodeBlock, pre {
     letter-spacing: -0.025em;
     line-height: 1.05;
     margin: 0 auto 16px;
+    text-align: center;
     background: linear-gradient(135deg, #f5f0e1 0%, #f0b421 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     text-shadow: 0 8px 32px rgba(240, 180, 33, 0.25);
     animation: cf-title-float 4s ease-in-out infinite alternate;
+    width: 100%;
 }
 @keyframes cf-title-float {
     0% { transform: translateY(0); }
@@ -367,6 +374,7 @@ code, .stCodeBlock, pre {
     margin: 0 auto 40px;
     line-height: 1.6;
     text-align: center;
+    width: 100%;
 }
 .cf-hero-board {
     display: flex;
@@ -379,7 +387,7 @@ code, .stCodeBlock, pre {
     filter: drop-shadow(0 24px 48px rgba(0,0,0,0.5));
     transition: transform var(--dur-med) var(--ease-out);
 }
-.cf-chip-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin: 32px 0; }
+.cf-chip-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; align-items: center; margin: 32px auto 0; width: 100%; }
 .cf-chip {
     display: inline-flex;
     align-items: center;

@@ -1,10 +1,8 @@
 """Rigorous test suite for Glicko-2 and Bayesian ELO rating mathematical invariants."""
 
-import math
-import random
 import pytest
 
-from chessbench.benchmark.elo import BayesianElo, GameResult, Glicko2
+from chessbench.benchmark.elo import GameResult, Glicko2
 
 
 class TestRigorousEloMath:
@@ -63,7 +61,7 @@ class TestRigorousEloMath:
     def test_bayesian_elo_winrate_conversion_roundtrip(self):
         """Invariant: Expected score calculated from Elo diff via sigmoid must invert correctly."""
         glicko = Glicko2()
-        
+
         for rating_diff in [-400, -200, -100, 0, 100, 200, 400]:
             winrate = glicko.expected_score(1500 + rating_diff, 1500)
             assert 0.0 < winrate < 1.0

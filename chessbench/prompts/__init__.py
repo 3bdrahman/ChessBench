@@ -1,4 +1,4 @@
-"""Structured prompt system with validation, prompt injection defense, and fallbacks."""
+"""Structured 10x Prompt Engineering Engine with validation, injection defense, variable analytics, presets, and background output contract enforcement."""
 
 from __future__ import annotations
 
@@ -13,7 +13,21 @@ import yaml
 
 _log = logging.getLogger(__name__)
 
-# Default Fallback Prompts (guaranteed to be safe, valid, and contains all required variables)
+# System Output Contract appended in the background by the engine
+SYSTEM_OUTPUT_CONTRACT = """
+
+[SYSTEM OUTPUT FORMAT CONTRACT]
+You MUST format your output response strictly as follows:
+<think>
+(Include your tactical calculations and strategic reasoning here)
+</think>
+<move>
+(Your chosen move in purely lower-case UCI notation, e.g. e2e4)
+</move>
+
+Failure to follow this exact format will result in move disqualification. The move inside <move> MUST be one of the legal moves provided."""
+
+# Default Fallback Prompts (guaranteed safe, valid, and containing all required variables)
 DEFAULT_SYSTEM_PROMPT = "You are a professional chess engine playing as {color}."
 
 DEFAULT_TURN_PROMPT = """Position:
@@ -26,18 +40,36 @@ Forcing: {forcing_moves}
 Developing: {developing_moves}
 Positional: {positional_moves}
 
-Select the best move for {color}.
-You MUST format your response EXACTLY like this:
-<think>
-(Your reasoning here)
-</think>
-<move>
-(Your chosen move in purely lower-case UCI notation, e.g. e2e4)
-</move>"""
+Select the best move for {color}."""
 
-# Required variable placeholder groups
-REQUIRED_BOARD_VARS = {"fen", "ascii_board", "board", "color"}
-REQUIRED_MOVE_VARS = {
+# Categorized Variable Registry
+KNOWN_VARIABLES: dict[str, dict[str, str]] = {
+    "color": {"category": "Mandatory Player Side", "description": "Side to move ('White' or 'Black')"},
+    "fen": {"category": "Mandatory Board State", "description": "Standard Forsyth-Edwards Notation string"},
+    "ascii_board": {"category": "Mandatory Board State", "description": "8x8 ASCII grid of the current board"},
+    "board": {"category": "Mandatory Board State", "description": "Alias for FEN board representation"},
+    "forcing_moves": {"category": "Mandatory Legal Moves", "description": "Checks and captures categorized"},
+    "developing_moves": {"category": "Mandatory Legal Moves", "description": "Piece development moves"},
+    "positional_moves": {"category": "Mandatory Legal Moves", "description": "Pawn structure & positional moves"},
+    "legal_moves_uci": {"category": "Mandatory Legal Moves", "description": "Space-separated raw UCI legal moves"},
+    "legal_moves_annotated": {"category": "Mandatory Legal Moves", "description": "Legal moves with SAN annotations"},
+    "legal_moves": {"category": "Mandatory Legal Moves", "description": "Comma-separated legal move list"},
+    "forcing_uci": {"category": "Mandatory Legal Moves", "description": "UCI forcing moves string"},
+    "developing_uci": {"category": "Mandatory Legal Moves", "description": "UCI developing moves string"},
+    "positional_uci": {"category": "Mandatory Legal Moves", "description": "UCI positional moves string"},
+    "last_move_san": {"category": "Rich Context", "description": "Opponent's last move in SAN notation"},
+    "move_history_san": {"category": "Rich Context", "description": "Full game move history in SAN"},
+    "white_pieces": {"category": "Rich Context", "description": "Square list of White pieces"},
+    "black_pieces": {"category": "Rich Context", "description": "Square list of Black pieces"},
+    "stagnation_status": {"category": "Rich Context", "description": "Repetition & draw stagnation flag"},
+    "position_progress": {"category": "Rich Context", "description": "Progress score towards game resolution"},
+    "material_tension": {"category": "Rich Context", "description": "Material tension evaluation"},
+    "position_dynamism": {"category": "Rich Context", "description": "Positional dynamism rating"},
+}
+
+MANDATORY_COLOR_VARS = {"color"}
+MANDATORY_BOARD_VARS = {"fen", "ascii_board", "board"}
+MANDATORY_MOVE_VARS = {
     "legal_moves",
     "legal_moves_uci",
     "legal_moves_annotated",
@@ -57,15 +89,20 @@ PROMPT_INJECTION_PATTERNS = [
     (r"override\s+system\s+prompt", "System prompt override attempt detected"),
     (r"system\s*:\s*you\s+are", "Role injection attempt detected"),
     (r"<\/move>\s*<move>", "Tag breakout injection attempt detected"),
+    (r"allow\s+illegal\s+move", "Rule degradation attack detected"),
 ]
 
 
 @dataclass
 class PromptValidationResult:
-    """Result of validating custom user prompts."""
+    """Detailed result of prompt AST & safety validation."""
     is_valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    missing_variables: list[str] = field(default_factory=list)
+    unrecognized_variables: list[str] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
+    estimated_tokens: int = 0
     used_fallback: bool = False
     fallback_reason: str | None = None
     sanitized_system_prompt: str = ""
@@ -132,7 +169,7 @@ class PromptTemplate:
         return "\n\n".join(rendered_parts)
 
     def render_messages(self, context: dict[str, Any], truncate: bool = True) -> list[Any]:
-        """Render prompt split into system and user ChatMessage objects."""
+        """Render prompt split into system and user ChatMessage objects with background structured I/O contract."""
         from chessbench.common.common_types import ChatMessage
 
         system_parts = []
@@ -149,8 +186,14 @@ class PromptTemplate:
         messages = []
         if system_parts:
             messages.append(ChatMessage(role="system", content="\n\n".join(system_parts)))
-        if user_parts:
-            messages.append(ChatMessage(role="user", content="\n\n".join(user_parts)))
+        
+        user_content = "\n\n".join(user_parts) if user_parts else ""
+        # Background structured I/O contract enforcement
+        if SYSTEM_OUTPUT_CONTRACT.strip() not in user_content:
+            user_content += SYSTEM_OUTPUT_CONTRACT
+
+        if user_content:
+            messages.append(ChatMessage(role="user", content=user_content))
         return messages
 
     def hash(self) -> str:
@@ -163,10 +206,7 @@ class PromptTemplate:
 
 
 def sanitize_prompt_text(text: str) -> tuple[str, list[str]]:
-    """Sanitize prompt text against known prompt injection patterns.
-    
-    Returns (sanitized_text, list_of_warnings).
-    """
+    """Sanitize prompt text against known prompt injection patterns."""
     if not text:
         return "", []
 
@@ -175,11 +215,10 @@ def sanitize_prompt_text(text: str) -> tuple[str, list[str]]:
 
     for pattern, desc in PROMPT_INJECTION_PATTERNS:
         if re.search(pattern, sanitized, re.IGNORECASE):
-            warnings.append(f"Prompt injection warning: {desc}")
-            # Neutralize the suspicious injection phrase by wrapping in quotes
+            warnings.append(f"Prompt injection threat: {desc}")
             sanitized = re.sub(
                 pattern,
-                lambda m: f'"[SANITIZED: {m.group(0)}]"',
+                lambda m: f'"[SANITIZED_INJECTION: {m.group(0)}]"',
                 sanitized,
                 flags=re.IGNORECASE,
             )
@@ -187,13 +226,25 @@ def sanitize_prompt_text(text: str) -> tuple[str, list[str]]:
     return sanitized, warnings
 
 
+def _find_closest_variable(typo: str) -> str | None:
+    """Find closest known variable name for typo suggestions."""
+    typo_lower = typo.lower()
+    for known in KNOWN_VARIABLES:
+        if known.startswith(typo_lower[:3]) or typo_lower in known:
+            return known
+    return None
+
+
 def validate_prompt_text(
     system_prompt: str | None,
     turn_prompt: str | None,
 ) -> PromptValidationResult:
-    """Validate system and turn prompts against safety, placeholders, and syntax rules."""
+    """Strictly validate system and turn prompts against safety, mandatory variables, typos, and syntax rules."""
     errors: list[str] = []
     warnings: list[str] = []
+    missing_vars: list[str] = []
+    unrecognized_vars: list[str] = []
+    suggestions: list[str] = []
 
     sys_text = (system_prompt or "").strip()
     turn_text = (turn_prompt or "").strip()
@@ -210,24 +261,40 @@ def validate_prompt_text(
     warnings.extend(sys_warns)
     warnings.extend(turn_warns)
 
-    # Check variable placeholders
+    # Parse variable placeholders
     sys_vars = set(re.findall(r"\{(\w+)\}", sys_text))
     turn_vars = set(re.findall(r"\{(\w+)\}", turn_text))
     all_vars = sys_vars | turn_vars
 
-    # Must contain at least one board position variable
-    if not (all_vars & REQUIRED_BOARD_VARS):
-        errors.append(
-            f"Prompt must include at least one board position placeholder: {', '.join('{' + v + '}' for v in sorted(REQUIRED_BOARD_VARS))}"
-        )
+    # Check for unrecognized variables / typos
+    for v in sorted(all_vars):
+        if v not in KNOWN_VARIABLES:
+            unrecognized_vars.append(f"{{{v}}}")
+            closest = _find_closest_variable(v)
+            if closest:
+                suggestions.append(f"Unrecognized placeholder `{{{v}}}` — did you mean `{{{closest}}}`?")
+            else:
+                suggestions.append(f"Unrecognized placeholder `{{{v}}}`")
 
-    # Must contain at least one legal moves variable
-    if not (all_vars & REQUIRED_MOVE_VARS):
-        errors.append(
-            f"Prompt must include at least one legal moves placeholder: {', '.join('{' + v + '}' for v in sorted(REQUIRED_MOVE_VARS))}"
-        )
+    # Mandatory Category 1: Player Color ({color})
+    if not (all_vars & MANDATORY_COLOR_VARS):
+        missing_vars.append("{color}")
+        errors.append("Missing mandatory player color placeholder: `{color}`")
 
-    # Check for formatting syntax errors (unmatched single braces or invalid format keys)
+    # Mandatory Category 2: Board Position ({fen} or {ascii_board} or {board})
+    if not (all_vars & MANDATORY_BOARD_VARS):
+        missing_vars.append("{fen} or {ascii_board}")
+        errors.append("Missing mandatory board position placeholder: `{fen}` or `{ascii_board}`")
+
+    # Mandatory Category 3: Legal Moves ({forcing_moves}, {legal_moves_uci}, etc.)
+    if not (all_vars & MANDATORY_MOVE_VARS):
+        missing_vars.append("{forcing_moves} or {legal_moves_uci}")
+        errors.append("Missing mandatory legal moves placeholder: `{forcing_moves}` or `{legal_moves_uci}`")
+
+    # Estimate token count (chars / 4)
+    estimated_tokens = (len(sanitized_sys) + len(sanitized_turn)) // 4
+
+    # Syntax test against dummy context
     dummy_context = {
         "color": "White",
         "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -253,20 +320,20 @@ def validate_prompt_text(
         "position_dynamism": "Low",
     }
 
+    # Add dummy entries for unrecognized variables to check python formatting syntax
+    for unk in unrecognized_vars:
+        key = unk.strip("{}")
+        dummy_context[key] = f"[{key}_value]"
+
     try:
         sanitized_sys.format(**dummy_context)
     except (KeyError, ValueError, IndexError) as exc:
-        errors.append(f"System prompt template format error: {exc}")
+        errors.append(f"System prompt syntax format error: {exc}")
 
     try:
         sanitized_turn.format(**dummy_context)
     except (KeyError, ValueError, IndexError) as exc:
-        errors.append(f"Turn prompt template format error: {exc}")
-
-    # Check for required output format instructions in turn prompt
-    if "<move>" not in sanitized_turn.lower():
-        warnings.append("Turn prompt lacks <move> tag specification. Auto-appending move output instructions.")
-        sanitized_turn += "\n\nFormat your final move inside <move>uci_move</move> tags."
+        errors.append(f"Turn prompt syntax format error: {exc}")
 
     is_valid = len(errors) == 0
 
@@ -277,6 +344,10 @@ def validate_prompt_text(
             is_valid=False,
             errors=errors,
             warnings=warnings,
+            missing_variables=missing_vars,
+            unrecognized_variables=unrecognized_vars,
+            suggestions=suggestions,
+            estimated_tokens=estimated_tokens,
             used_fallback=True,
             fallback_reason=fallback_reason,
             sanitized_system_prompt=DEFAULT_SYSTEM_PROMPT,
@@ -287,6 +358,10 @@ def validate_prompt_text(
         is_valid=True,
         errors=[],
         warnings=warnings,
+        missing_variables=[],
+        unrecognized_variables=unrecognized_vars,
+        suggestions=suggestions,
+        estimated_tokens=estimated_tokens,
         used_fallback=False,
         fallback_reason=None,
         sanitized_system_prompt=sanitized_sys,
@@ -327,7 +402,7 @@ def create_safe_prompt_template(
 
 
 class PromptRegistry:
-    """Registry of named prompt templates for A/B testing."""
+    """Registry of named prompt templates for A/B testing and presets."""
 
     def __init__(self) -> None:
         self._templates: dict[str, PromptTemplate] = {}
@@ -359,10 +434,10 @@ class PromptRegistry:
             return None
 
     def _register_defaults(self) -> None:
-        """Register the built-in prompt versions from YAML files."""
+        """Register built-in prompt versions from YAML files."""
         templates_dir = Path(__file__).parent / "templates"
         if templates_dir.exists():
-            for yaml_file in templates_dir.glob("*.yaml"):
+            for yaml_file in sorted(templates_dir.glob("*.yaml")):
                 template = self._load_template_from_yaml(yaml_file)
                 if template:
                     self.register(template.version, template)
@@ -385,8 +460,22 @@ class PromptRegistry:
         return self._templates.get(name)
 
     def list_versions(self) -> list[str]:
-        """List all registered versions."""
+        """List all registered version names."""
         return list(self._templates.keys())
+
+    def get_preset_prompts(self, version_name: str) -> tuple[str, str]:
+        """Convert a registered preset template into a (system_prompt, turn_prompt) tuple."""
+        tmpl = self.get(version_name)
+        if not tmpl:
+            return DEFAULT_SYSTEM_PROMPT, DEFAULT_TURN_PROMPT
+
+        sys_parts = [s.content_template for s in tmpl.sections if s.is_system]
+        turn_parts = [s.content_template for s in tmpl.sections if not s.is_system]
+
+        sys_str = "\n\n".join(sys_parts) if sys_parts else DEFAULT_SYSTEM_PROMPT
+        turn_str = "\n\n".join(turn_parts) if turn_parts else DEFAULT_TURN_PROMPT
+
+        return sys_str, turn_str
 
 
 # Global registry instance

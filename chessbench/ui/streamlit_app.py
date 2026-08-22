@@ -409,16 +409,24 @@ def render_model_selectors(available_providers: list):
 
 
 def render_prompt_management(model_1_config, model_2_config):
-    """Render prompt management UI in the sidebar."""
+    """Render 10x Prompt Engineering Workbench in Streamlit sidebar with live AST validation, preset loader, and render sandbox."""
     if not model_1_config or not model_2_config:
         return None, None
 
-    from chessbench.prompts import DEFAULT_SYSTEM_PROMPT, DEFAULT_TURN_PROMPT, validate_prompt_text
+    import chess
+
+    from chessbench.prompts import (
+        DEFAULT_SYSTEM_PROMPT,
+        DEFAULT_TURN_PROMPT,
+        create_safe_prompt_template,
+        prompt_registry,
+        validate_prompt_text,
+    )
 
     m1_spec = f"{model_1_config['provider']}:{model_1_config['model_id']}"
     m2_spec = f"{model_2_config['provider']}:{model_2_config['model_id']}"
 
-    # Initialize defaults in session state if not present
+    # Initialize defaults in session state if missing
     if f"sys_prompt_{m1_spec}" not in st.session_state:
         st.session_state[f"sys_prompt_{m1_spec}"] = DEFAULT_SYSTEM_PROMPT
     if f"turn_prompt_{m1_spec}" not in st.session_state:
@@ -428,28 +436,157 @@ def render_prompt_management(model_1_config, model_2_config):
     if f"turn_prompt_{m2_spec}" not in st.session_state:
         st.session_state[f"turn_prompt_{m2_spec}"] = DEFAULT_TURN_PROMPT
 
-    with st.sidebar.expander("📝 Prompt Management"):
-        st.caption("Customize the system and turn prompts. Required variables: `{color}` or `{board}`, plus `{forcing_moves}` or `{legal_moves_uci}`.")
-        
-        st.markdown(f"**Player 1:** `{m1_spec}`")
-        sys_1 = st.text_area("System Prompt (P1)", value=st.session_state[f"sys_prompt_{m1_spec}"], height=90, key=f"ui_sys_1_{m1_spec}")
-        turn_1 = st.text_area("Turn Prompt (P1)", value=st.session_state[f"turn_prompt_{m1_spec}"], height=180, key=f"ui_turn_1_{m1_spec}")
-        
-        v1 = validate_prompt_text(sys_1, turn_1)
-        if not v1.is_valid:
-            st.warning(f"⚠️ P1 Prompt Validation Failed: {v1.fallback_reason}. **Default fallback prompt will be used.**")
-        else:
-            st.caption("✅ P1 Custom Prompt Validated")
+    with st.sidebar.expander("⚡ Prompt Engineering Workbench", expanded=False):
+        st.markdown("#### 🎯 Benchmark Strategy Presets")
+        preset_versions = prompt_registry.list_versions()
+        selected_preset = st.selectbox(
+            "Load Tested Preset Strategy",
+            options=preset_versions,
+            index=0,
+            key="preset_selector_dropdown",
+        )
+        if st.button("🚀 Apply Preset to Both Players", key="btn_apply_preset_both"):
+            sys_p, turn_p = prompt_registry.get_preset_prompts(selected_preset)
+            st.session_state[f"sys_prompt_{m1_spec}"] = sys_p
+            st.session_state[f"turn_prompt_{m1_spec}"] = turn_p
+            st.session_state[f"sys_prompt_{m2_spec}"] = sys_p
+            st.session_state[f"turn_prompt_{m2_spec}"] = turn_p
+            st.success(f"Loaded preset strategy `{selected_preset}`!")
+            st.rerun()
 
-        st.markdown(f"**Player 2:** `{m2_spec}`")
-        sys_2 = st.text_area("System Prompt (P2)", value=st.session_state[f"sys_prompt_{m2_spec}"], height=90, key=f"ui_sys_2_{m2_spec}")
-        turn_2 = st.text_area("Turn Prompt (P2)", value=st.session_state[f"turn_prompt_{m2_spec}"], height=180, key=f"ui_turn_2_{m2_spec}")
+        st.markdown("#### 🛠️ Interactive Variable Palette")
+        with st.popover("📖 Variable Documentation & Reference"):
+            st.markdown("**Mandatory Placeholders (3 Required Categories):**")
+            st.markdown("- `{color}` — Side to move ('White' or 'Black')")
+            st.markdown("- `{fen}` or `{ascii_board}` — Current board state")
+            st.markdown("- `{forcing_moves}` or `{legal_moves_uci}` — Legal moves")
+            st.markdown("**Rich Positional & Evaluation Context:**")
+            st.markdown("- `{last_move_san}` — Opponent's previous move")
+            st.markdown("- `{move_history_san}` — Full game move history")
+            st.markdown("- `{white_pieces}` / `{black_pieces}` — Piece square locations")
+            st.markdown("- `{material_tension}` / `{stagnation_status}` / `{position_progress}`")
 
-        v2 = validate_prompt_text(sys_2, turn_2)
-        if not v2.is_valid:
-            st.warning(f"⚠️ P2 Prompt Validation Failed: {v2.fallback_reason}. **Default fallback prompt will be used.**")
-        else:
-            st.caption("✅ P2 Custom Prompt Validated")
+        st.divider()
+
+        tab_p1, tab_p2 = st.tabs([f"P1: {m1_spec[:16]}", f"P2: {m2_spec[:16]}"])
+
+        # --- Player 1 ---
+        with tab_p1:
+            st.markdown(f"**Player 1:** `{m1_spec}`")
+            sys_1 = st.text_area(
+                "System Prompt (P1)",
+                value=st.session_state[f"sys_prompt_{m1_spec}"],
+                height=80,
+                key=f"ui_sys_1_{m1_spec}",
+            )
+            turn_1 = st.text_area(
+                "Turn Prompt (P1)",
+                value=st.session_state[f"turn_prompt_{m1_spec}"],
+                height=160,
+                key=f"ui_turn_1_{m1_spec}",
+            )
+
+            v1 = validate_prompt_text(sys_1, turn_1)
+            st.caption(f"Estimated Token Budget: ~`{v1.estimated_tokens}` tokens")
+
+            if not v1.is_valid:
+                st.error("❌ P1 Prompt Invalid:\n\n" + "\n".join(f"- {e}" for e in v1.errors))
+                st.info("⚠️ *System will fall back to recommended default prompt during benchmark.*")
+            else:
+                st.success("✅ P1 Prompt Validated (All 3 mandatory categories present)")
+
+            if v1.suggestions:
+                for sug in v1.suggestions:
+                    st.warning(f"💡 {sug}")
+
+            if v1.warnings:
+                for w in v1.warnings:
+                    st.info(f"ℹ️ {w}")
+
+            if st.button("🔄 Reset P1 to Default Prompt", key=f"reset_p1_{m1_spec}"):
+                st.session_state[f"sys_prompt_{m1_spec}"] = DEFAULT_SYSTEM_PROMPT
+                st.session_state[f"turn_prompt_{m1_spec}"] = DEFAULT_TURN_PROMPT
+                st.rerun()
+
+            with st.expander("👁️ Live Render Sandbox (P1)"):
+                tmpl1, _ = create_safe_prompt_template(sys_1, turn_1)
+                sample_board = chess.Board()
+                sample_ctx = {
+                    "color": "White",
+                    "fen": sample_board.fen(),
+                    "ascii_board": str(sample_board),
+                    "forcing_moves": "e2e4, d2d4",
+                    "developing_moves": "g1f3, b1c3",
+                    "positional_moves": "c2c4",
+                    "legal_moves_uci": "e2e4 d2d4 g1f3 b1c3",
+                    "legal_moves_annotated": "1. e2e4",
+                    "last_move_san": "None",
+                    "move_history_san": "",
+                    "stagnation_status": "Normal",
+                }
+                msgs1 = tmpl1.render_messages(sample_ctx)
+                for msg in msgs1:
+                    st.markdown(f"**[{msg.role.upper()}]**")
+                    st.code(msg.content, language="text")
+
+        # --- Player 2 ---
+        with tab_p2:
+            st.markdown(f"**Player 2:** `{m2_spec}`")
+            sys_2 = st.text_area(
+                "System Prompt (P2)",
+                value=st.session_state[f"sys_prompt_{m2_spec}"],
+                height=80,
+                key=f"ui_sys_2_{m2_spec}",
+            )
+            turn_2 = st.text_area(
+                "Turn Prompt (P2)",
+                value=st.session_state[f"turn_prompt_{m2_spec}"],
+                height=160,
+                key=f"ui_turn_2_{m2_spec}",
+            )
+
+            v2 = validate_prompt_text(sys_2, turn_2)
+            st.caption(f"Estimated Token Budget: ~`{v2.estimated_tokens}` tokens")
+
+            if not v2.is_valid:
+                st.error("❌ P2 Prompt Invalid:\n\n" + "\n".join(f"- {e}" for e in v2.errors))
+                st.info("⚠️ *System will fall back to recommended default prompt during benchmark.*")
+            else:
+                st.success("✅ P2 Prompt Validated (All 3 mandatory categories present)")
+
+            if v2.suggestions:
+                for sug in v2.suggestions:
+                    st.warning(f"💡 {sug}")
+
+            if v2.warnings:
+                for w in v2.warnings:
+                    st.info(f"ℹ️ {w}")
+
+            if st.button("🔄 Reset P2 to Default Prompt", key=f"reset_p2_{m2_spec}"):
+                st.session_state[f"sys_prompt_{m2_spec}"] = DEFAULT_SYSTEM_PROMPT
+                st.session_state[f"turn_prompt_{m2_spec}"] = DEFAULT_TURN_PROMPT
+                st.rerun()
+
+            with st.expander("👁️ Live Render Sandbox (P2)"):
+                tmpl2, _ = create_safe_prompt_template(sys_2, turn_2)
+                sample_board = chess.Board()
+                sample_ctx = {
+                    "color": "Black",
+                    "fen": sample_board.fen(),
+                    "ascii_board": str(sample_board),
+                    "forcing_moves": "e7e5, c7c5",
+                    "developing_moves": "g8f6, b8c6",
+                    "positional_moves": "d7d6",
+                    "legal_moves_uci": "e7e5 c7c5 g8f6 b8c6",
+                    "legal_moves_annotated": "1... e5",
+                    "last_move_san": "e4",
+                    "move_history_san": "1. e4",
+                    "stagnation_status": "Normal",
+                }
+                msgs2 = tmpl2.render_messages(sample_ctx)
+                for msg in msgs2:
+                    st.markdown(f"**[{msg.role.upper()}]**")
+                    st.code(msg.content, language="text")
 
     # Save edits back to session state to persist them
     st.session_state[f"sys_prompt_{m1_spec}"] = sys_1
@@ -1269,7 +1406,7 @@ def main():
     # Sidebar: API Keys and Model Selection
     available_providers = render_provider_keys_section()
     model_1_config, model_2_config = render_model_selectors(available_providers)
-    
+
     # Prompt Management
     system_prompts, turn_prompts = render_prompt_management(model_1_config, model_2_config)
 

@@ -343,7 +343,7 @@ class ChessAI(ABC):
         assert self.prompt_template is not None, "Prompt template should be initialized"
         board = chess.Board(fen)
         context = self._get_prompt_context(board)
-        
+
         try:
             messages = self.prompt_template.render_messages(context)
         except Exception as exc:
@@ -356,9 +356,7 @@ class ChessAI(ABC):
             messages = self.prompt_template.render_messages(context)
 
         reasoning_directive = self._get_reasoning_directive()
-        if messages and messages[0].role == "system":
-            messages[0].content += reasoning_directive
-        elif messages:
+        if (messages and messages[0].role == "system") or messages:
             messages[0].content += reasoning_directive
 
         return messages

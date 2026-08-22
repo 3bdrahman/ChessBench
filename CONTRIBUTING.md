@@ -110,18 +110,6 @@ New benchmark components live under [`chessbench/benchmark/`](file:///var/home/u
 
 ---
 
-## Adding a Benchmark Suite
-
-1. Create a suite YAML file in [`configs/your_suite.yaml`](file:///var/home/usef/coding/chessbench/configs/).
-2. Specify model pairings, opening book selection, time controls, and temperature parameters.
-3. Test locally via CLI:
-   ```bash
-   chessbench suite --run your_suite
-   ```
-4. Verify results export cleanly and update repository documentation.
-
----
-
 ## Pull Request Checklist
 
 - [ ] `ruff check chessbench/` passes without warnings.

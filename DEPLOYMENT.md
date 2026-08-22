@@ -191,10 +191,10 @@ jobs:
           python-version: '3.11'
       - run: sudo apt-get update && sudo apt-get install -y stockfish
       - run: pip install -e ".[dev]"
-      - name: Run Frontier Benchmark Suite
+      - name: Run Benchmark Tournament
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          chessbench suite --run frontier_models
+          chessbench run --players openai:gpt-4o anthropic:claude-3-5-sonnet-20241022 --games 10
 ```

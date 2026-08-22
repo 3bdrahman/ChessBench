@@ -153,10 +153,8 @@ chessbench/
 │   ├── game/               # Async chess game engine with real-time clock tracking
 │   ├── models/             # Position features, board analysis & thinking parser
 │   ├── prompts/            # Demand-driven prompt templates
-│   ├── providers/          # 11 provider abstractions (OpenAI, Anthropic, Gemini, etc.)
+│   ├── providers/          # Provider abstractions (OpenAI, Anthropic, Gemini, etc.)
 │   └── ui/                 # Streamlit Battle Arena UI & analytical dashboard
-├── configs/                # Pre-configured benchmark suites (frontier, budget, reasoning)
-├── demos/                  # Showcase demo dataset generator
 ├── tests/                  # 295 automated unit and integration tests
 ├── Dockerfile              # Production multi-stage Docker build
 ├── pyproject.toml          # Package configuration & tool settings
@@ -180,7 +178,6 @@ The `chessbench` command-line utility powers all automated benchmarking workflow
 | `chessbench history` | `chessbench history` | List and browse completed benchmark runs |
 | `chessbench models` | `chessbench models -p openai` | Query available models across providers |
 | `chessbench config` | `chessbench config -o custom.yaml` | Generate benchmark YAML configuration file |
-| `chessbench suite` | `chessbench suite --list` | Manage and execute pre-configured benchmark suites |
 
 ### Usage Examples
 
@@ -193,11 +190,6 @@ chessbench run \
   --opening-book eco_balanced \
   --output runs/frontier_tournament \
   --name "frontier_v1"
-```
-
-#### Run Pre-configured Suite
-```bash
-chessbench suite --run frontier_models
 ```
 
 #### Adversarial Stockfish Depth Calibration
@@ -215,30 +207,6 @@ chessbench report runs/frontier_tournament --format parquet --output analytics/
 ```
 
 ---
-
-## 🎯 Benchmark Suites
-
-Pre-built suites are available in [`configs/`](file:///var/home/usef/coding/chessbench/configs/):
-
-```bash
-# Frontier models (GPT-4o, Claude 3.5 Sonnet, Gemini 1.5 Pro)
-chessbench suite --run frontier_models
-
-# Open-weights models via Ollama
-chessbench suite --run open_weights
-
-# Reasoning models (o1, o3-mini, Claude 3.7 thinking)
-chessbench suite --run reasoning_models
-
-# Budget & free-tier model comparison
-chessbench suite --run budget_models
-
-# Critical thinking & complex position stress test
-chessbench suite --run critical_thinking
-
-# Stockfish depth calibration
-chessbench suite --run stockfish_calibration
-```
 
 ---
 

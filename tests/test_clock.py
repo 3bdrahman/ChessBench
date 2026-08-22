@@ -1,8 +1,8 @@
 """Tests for GameClock time management."""
 
-from datetime import timedelta
 import time
-import pytest
+from datetime import timedelta
+
 import chess.engine
 
 from chessbench.game.clock import GameClock

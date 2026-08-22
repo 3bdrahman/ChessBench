@@ -2,10 +2,11 @@
 
 import random
 import string
+
 import chess
 import pytest
 
-from chessbench.move_parser import extract_move, parse_move, validate_move
+from chessbench.move_parser import extract_move, parse_move
 
 
 def _generate_random_board(depth: int = 15) -> chess.Board:
@@ -26,7 +27,7 @@ def _generate_noisy_llm_text(move_str: str, format_type: str = "tagged") -> str:
     """Wrap a move string in realistic, noisy LLM output noise."""
     garbage_before = "".join(random.choices(string.ascii_letters + " \n\t.,;:?!", k=random.randint(20, 100)))
     garbage_after = "".join(random.choices(string.ascii_letters + " \n\t.,;:?!", k=random.randint(20, 100)))
-    
+
     if format_type == "tagged":
         return f"{garbage_before}\n<thinking>\nAnalyzing board...\n</thinking>\n<move>{move_str}</move>\n{garbage_after}"
     elif format_type == "san":
@@ -62,15 +63,15 @@ class TestRigorousMoveParser:
             board = _generate_random_board(depth=15)
             if board.is_game_over() or not list(board.legal_moves):
                 continue
-            
+
             legal_moves = list(board.legal_moves)
             chosen_move = random.choice(legal_moves)
-            
+
             # Format in random noise style
             format_style = random.choice(["tagged", "markdown_code", "bold"])
             move_repr = chosen_move.uci()
             noisy_text = _generate_noisy_llm_text(move_repr, format_type=format_style)
-            
+
             result = parse_move(noisy_text, board)
             if result.uci is not None:
                 parsed_move = chess.Move.from_uci(result.uci)
@@ -81,24 +82,24 @@ class TestRigorousMoveParser:
     def test_move_tags_always_take_precedence(self):
         """Property: Explicit <move>UCI</move> tags MUST override earlier distractor text."""
         board = chess.Board()
-        
+
         distractor = "e2e4"
         actual = "d2d4"
-        
+
         text = f"I am considering playing {distractor} because it controls e5. However, after deep analysis, my final decision is:\n<move>{actual}</move>"
         result = parse_move(text, board)
-        
+
         assert result.uci == actual
 
     def test_extract_move_legal_filter_boundary(self):
         """Property: extract_move with legal_moves filter never returns illegal move."""
         board = chess.Board()
         legal_moves = list(board.legal_moves)
-        
+
         # 'e2e5' is an invalid/illegal move on initial board
         result = extract_move("I play e2e5", legal_moves)
         assert result is None
-        
+
         # 'e2e4' is legal
         result = extract_move("I play e2e4", legal_moves)
         assert result == "e2e4"
@@ -107,7 +108,7 @@ class TestRigorousMoveParser:
         """Property: Pawn promotion to Queen, Rook, Bishop, and Knight parses correctly."""
         promotion_fen = "8/P7/8/8/8/8/8/8 w - - 0 1"
         board = chess.Board(promotion_fen)
-        
+
         for piece in ["q", "r", "b", "n"]:
             text = f"I will promote my pawn: <move>a7a8{piece}</move>"
             result = parse_move(text, board)

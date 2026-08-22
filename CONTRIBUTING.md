@@ -97,13 +97,13 @@ class YourProvider(ModelProvider):
 Then register module `"yourprovider"` in `_PROVIDER_MODULES` inside [`chessbench/providers/__init__.py`](file:///var/home/usef/coding/chessbench/chessbench/providers/__init__.py).
 
 Existing supported providers include:
-`anthropic`, `deepinfra`, `fireworks`, `generic_openai`, `google`, `groq`, `nim`, `openai`, `openrouter`, `together`.
+`anthropic`, `deepinfra`, `fireworks`, `google`, `groq`, `nim`, `openai`, `openrouter`, `together`.
 
 ### Benchmark Core & Analytics
 
 New benchmark components live under [`chessbench/benchmark/`](file:///var/home/usef/coding/chessbench/chessbench/benchmark/):
 - [`runner.py`](file:///var/home/usef/coding/chessbench/chessbench/benchmark/runner.py) — Core async tournament execution engine
-- [`adversarial.py`](file:///var/home/usef/coding/chessbench/chessbench/benchmark/adversarial.py) — LLM vs Stockfish calibration suite
+- [`adversarial.py`](file:///var/home/usef/coding/chessbench/chessbench/benchmark/adversarial.py) — LLM vs Stockfish calibration module
 - [`evaluator.py`](file:///var/home/usef/coding/chessbench/chessbench/benchmark/evaluator.py) — Ground-truth Stockfish move evaluation
 - [`statistics.py`](file:///var/home/usef/coding/chessbench/chessbench/benchmark/statistics.py) — Glicko-2 ratings & statistical metrics
 - [`export.py`](file:///var/home/usef/coding/chessbench/chessbench/benchmark/export.py) — Multi-format dataset exporters (Parquet, CSV, PGN, HTML, JSON)

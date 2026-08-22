@@ -20,7 +20,6 @@
 - [Core Capabilities](#-core-capabilities)
 - [Architecture & Workflow](#-architecture--workflow)
 - [CLI Reference](#-cli-reference)
-- [Benchmark Suites](#-benchmark-suites)
 - [Statistical Methodology & ELO](#-statistical-methodology--elo)
 - [Configuration & Environment](#-configuration--environment)
 - [Export Formats](#-export-formats)

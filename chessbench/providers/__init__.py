@@ -9,7 +9,6 @@ _PROVIDER_MODULES = (
     "anthropic",
     "deepinfra",
     "fireworks",
-    "generic_openai",
     "google",
     "groq",
     "nim",

@@ -413,32 +413,43 @@ def render_prompt_management(model_1_config, model_2_config):
     if not model_1_config or not model_2_config:
         return None, None
 
-    default_system = "You are playing chess as {color}."
-    default_turn = "Position: {ascii_board}\nLegal moves:\n{forcing_moves}\n{developing_moves}\n{positional_moves}\n\nFormat:\n<think>reasoning</think>\n<move>uci_move</move>"
+    from chessbench.prompts import DEFAULT_SYSTEM_PROMPT, DEFAULT_TURN_PROMPT, validate_prompt_text
 
     m1_spec = f"{model_1_config['provider']}:{model_1_config['model_id']}"
     m2_spec = f"{model_2_config['provider']}:{model_2_config['model_id']}"
 
     # Initialize defaults in session state if not present
     if f"sys_prompt_{m1_spec}" not in st.session_state:
-        st.session_state[f"sys_prompt_{m1_spec}"] = default_system
+        st.session_state[f"sys_prompt_{m1_spec}"] = DEFAULT_SYSTEM_PROMPT
     if f"turn_prompt_{m1_spec}" not in st.session_state:
-        st.session_state[f"turn_prompt_{m1_spec}"] = default_turn
+        st.session_state[f"turn_prompt_{m1_spec}"] = DEFAULT_TURN_PROMPT
     if f"sys_prompt_{m2_spec}" not in st.session_state:
-        st.session_state[f"sys_prompt_{m2_spec}"] = default_system
+        st.session_state[f"sys_prompt_{m2_spec}"] = DEFAULT_SYSTEM_PROMPT
     if f"turn_prompt_{m2_spec}" not in st.session_state:
-        st.session_state[f"turn_prompt_{m2_spec}"] = default_turn
+        st.session_state[f"turn_prompt_{m2_spec}"] = DEFAULT_TURN_PROMPT
 
     with st.sidebar.expander("📝 Prompt Management"):
-        st.caption("Customize the system and turn prompts for each player. Available variables: `{color}`, `{ascii_board}`, `{forcing_moves}`, `{developing_moves}`, `{positional_moves}`.")
+        st.caption("Customize the system and turn prompts. Required variables: `{color}` or `{board}`, plus `{forcing_moves}` or `{legal_moves_uci}`.")
         
         st.markdown(f"**Player 1:** `{m1_spec}`")
-        sys_1 = st.text_area("System Prompt (P1)", value=st.session_state[f"sys_prompt_{m1_spec}"], height=100, key=f"ui_sys_1_{m1_spec}")
-        turn_1 = st.text_area("Turn Prompt (P1)", value=st.session_state[f"turn_prompt_{m1_spec}"], height=200, key=f"ui_turn_1_{m1_spec}")
+        sys_1 = st.text_area("System Prompt (P1)", value=st.session_state[f"sys_prompt_{m1_spec}"], height=90, key=f"ui_sys_1_{m1_spec}")
+        turn_1 = st.text_area("Turn Prompt (P1)", value=st.session_state[f"turn_prompt_{m1_spec}"], height=180, key=f"ui_turn_1_{m1_spec}")
         
+        v1 = validate_prompt_text(sys_1, turn_1)
+        if not v1.is_valid:
+            st.warning(f"⚠️ P1 Prompt Validation Failed: {v1.fallback_reason}. **Default fallback prompt will be used.**")
+        else:
+            st.caption("✅ P1 Custom Prompt Validated")
+
         st.markdown(f"**Player 2:** `{m2_spec}`")
-        sys_2 = st.text_area("System Prompt (P2)", value=st.session_state[f"sys_prompt_{m2_spec}"], height=100, key=f"ui_sys_2_{m2_spec}")
-        turn_2 = st.text_area("Turn Prompt (P2)", value=st.session_state[f"turn_prompt_{m2_spec}"], height=200, key=f"ui_turn_2_{m2_spec}")
+        sys_2 = st.text_area("System Prompt (P2)", value=st.session_state[f"sys_prompt_{m2_spec}"], height=90, key=f"ui_sys_2_{m2_spec}")
+        turn_2 = st.text_area("Turn Prompt (P2)", value=st.session_state[f"turn_prompt_{m2_spec}"], height=180, key=f"ui_turn_2_{m2_spec}")
+
+        v2 = validate_prompt_text(sys_2, turn_2)
+        if not v2.is_valid:
+            st.warning(f"⚠️ P2 Prompt Validation Failed: {v2.fallback_reason}. **Default fallback prompt will be used.**")
+        else:
+            st.caption("✅ P2 Custom Prompt Validated")
 
     # Save edits back to session state to persist them
     st.session_state[f"sys_prompt_{m1_spec}"] = sys_1

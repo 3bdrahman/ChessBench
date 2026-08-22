@@ -73,6 +73,13 @@ class Glicko2:
         """Expected score against opponent."""
         return 1 / (1 + math.exp(-self._g(phi_j) * (mu - mu_j)))
 
+    def expected_score(self, rating1: float, rating2: float, rd2: float = 350.0) -> float:
+        """Calculate expected win probability of player 1 against player 2."""
+        mu1 = (rating1 - 1500) / 173.7178
+        mu2 = (rating2 - 1500) / 173.7178
+        phi2 = rd2 / 173.7178
+        return self._E(mu1, mu2, phi2)
+
     def update_ratings(self, results: list[GameResult]) -> None:
         """Update ratings based on game results."""
         # Group results by player
@@ -243,6 +250,9 @@ class BayesianElo:
 
     def get_rating(self, name: str) -> Rating:
         return self.glicko.get_rating(name)
+
+    def expected_score(self, rating1: float, rating2: float, rd2: float = 350.0) -> float:
+        return self.glicko.expected_score(rating1, rating2, rd2)
 
     def leaderboard(self) -> list[dict[str, Any]]:
         return self.glicko.get_leaderboard()

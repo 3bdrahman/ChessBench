@@ -5,10 +5,6 @@ Renders the immersive hero from DESIGN.md § 3 (Landing):
 2. Display title + subtitle value proposition
 3. Provider/feature chip row
 4. Headline metric strip pulled from real run aggregates (no fabrication)
-
-The hero is purely visual — it never blocks the sidebar or the model
-selectors. Selecting two models and clicking Start Match still does what
-it always did; the hero just reframes that surface with intent.
 """
 
 from __future__ import annotations
@@ -25,13 +21,13 @@ def render_hero() -> None:
     """Render the arena hero on the main page."""
     import textwrap
     hero_html = textwrap.dedent("""
-        <section class="cf-hero">
-            <div class="cf-hero-title">ChessBench Arena</div>
-            <p class="cf-hero-sub" style="text-align: center;">
+        <section class="cf-hero" style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; width: 100%;">
+            <div class="cf-hero-title" style="text-align: center; width: 100%; margin: 0 auto 16px auto;">ChessBench Arena</div>
+            <p class="cf-hero-sub" style="text-align: center; margin: 0 auto 40px auto; width: 100%; max-width: 680px;">
                 Benchmark Large Language Models through structured chess tournaments — with
                 Stockfish ground-truth move quality, thinking trace analysis, and Glicko-2 ratings.
             </p>
-            <div class="cf-chip-row">
+            <div class="cf-chip-row" style="display: flex; justify-content: center; align-items: center; width: 100%; margin: 0 auto;">
                 <span class="cf-chip"><strong>Stockfish 18</strong>&nbsp;ground-truth evals</span>
                 <span class="cf-chip"><strong>Glicko-2</strong>&nbsp;Bayesian ELO</span>
                 <span class="cf-chip"><strong>295 ECO</strong>&nbsp;opening positions</span>
@@ -42,11 +38,7 @@ def render_hero() -> None:
 
 
 def render_landing_metrics(runs_root: str = "runs") -> None:
-    """Render the headline metric strip below the hero.
-
-    Pulls real numbers from `runs/` via the existing `list_runs` reader. When
-    no runs exist, each card honestly reads "—" instead of fabricating.
-    """
+    """Render the headline metric strip below the hero."""
     headline_metric_row(runs_root)
 
 
@@ -56,11 +48,7 @@ def card(
     *,
     compact: bool = False,
 ) -> None:
-    """Render an arena card.
-
-    Wraps content in the `.cf-card` container from the theme so every card
-    across the app shares the same surface, border, padding, and depth.
-    """
+    """Render an arena card."""
     klass = "cf-card cf-card-compact" if compact else "cf-card"
     render_html_card(klass, title, body_html)
 

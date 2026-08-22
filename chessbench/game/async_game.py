@@ -55,6 +55,10 @@ class AsyncChessGame:
         self.board = chess.Board(starting_fen) if starting_fen else chess.Board()
         self.player1 = player1
         self.player2 = player2
+        if hasattr(self.player1, "reset_game"):
+            self.player1.reset_game()
+        if hasattr(self.player2, "reset_game"):
+            self.player2.reset_game()
         self.evaluator = evaluator
         self.moves: list[GameMove] = []
         self.stats = GameStats()
@@ -152,7 +156,7 @@ class AsyncChessGame:
         if self.clock:
             self.clock.start_turn(True, 0)
 
-        while (not self.board.is_game_over(claim_draw=False)
+        while (not self.board.is_game_over(claim_draw=True)
                and not self._cancelled
                and len(self.moves) < self.max_moves):
             # Handle pause/resume - wait if paused
@@ -431,7 +435,7 @@ class AsyncChessGame:
 
         # Final state
         self.stats.game_duration = time.time() - self.start_time
-        if self._cancelled and not self.board.is_game_over(claim_draw=False):
+        if self._cancelled and not self.board.is_game_over(claim_draw=True):
             self.stats.winner = "Cancelled"
             self.stats.termination_reason = "cancelled"
         elif len(self.moves) >= self.max_moves:
@@ -440,7 +444,7 @@ class AsyncChessGame:
         else:
             self.stats.winner = self._determine_winner()
             # Determine clean chess termination reason
-            outcome = self.board.outcome(claim_draw=False)
+            outcome = self.board.outcome(claim_draw=True)
             if outcome is not None:
                 if outcome.termination == chess.Termination.CHECKMATE:
                     self.stats.termination_reason = "checkmate"
@@ -489,9 +493,9 @@ class AsyncChessGame:
             self.stats.check_moves += 1
 
     def _determine_winner(self) -> str:
-        # claim_draw=False enforces the strict FIDE rules (75-move rule / 5-fold repetition)
-        # since our engines don't explicitly claim draws.
-        outcome = self.board.outcome(claim_draw=False)
+        # claim_draw=True automatically scores 3-fold repetition and 50-move rule draws
+        # for automated AI engine matches.
+        outcome = self.board.outcome(claim_draw=True)
         if outcome is None:
             return "Unknown"
         if outcome.winner is None:

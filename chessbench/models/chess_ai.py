@@ -52,16 +52,14 @@ class ChessAI(ABC):
         self.evaluator = PositionEvaluator()
 
         if system_prompt is not None and turn_prompt is not None:
-            from chess_fight.prompts import PromptTemplate, PromptSection
-            self.prompt_template = PromptTemplate(
-                version="custom",
-                sections=[
-                    PromptSection(name="system", content_template=system_prompt, is_system=True, priority=0),
-                    PromptSection(name="turn", content_template=turn_prompt, is_system=False, priority=1),
-                ]
-            )
+            from chessbench.prompts import create_safe_prompt_template
+            template, validation = create_safe_prompt_template(system_prompt, turn_prompt)
+            self.prompt_template = template
+            self.used_fallback_prompt = validation.used_fallback
+            self.fallback_reason = validation.fallback_reason
         else:
-            # Load prompt template from registry
+            self.used_fallback_prompt = False
+            self.fallback_reason = None
             self.prompt_template = prompt_registry.get(prompt_version)
             if self.prompt_template is None:
                 raise ValueError(f"Unknown prompt version: {prompt_version}. Available: {prompt_registry.list_versions()}")
@@ -345,10 +343,22 @@ class ChessAI(ABC):
         assert self.prompt_template is not None, "Prompt template should be initialized"
         board = chess.Board(fen)
         context = self._get_prompt_context(board)
-        messages = self.prompt_template.render_messages(context)
+        
+        try:
+            messages = self.prompt_template.render_messages(context)
+        except Exception as exc:
+            _log.warning("Prompt rendering failed: %s. Using default fallback prompt.", exc)
+            from chessbench.prompts import create_safe_prompt_template
+            fallback_template, _ = create_safe_prompt_template(None, None)
+            self.prompt_template = fallback_template
+            self.used_fallback_prompt = True
+            self.fallback_reason = f"Runtime rendering error: {exc}"
+            messages = self.prompt_template.render_messages(context)
 
         reasoning_directive = self._get_reasoning_directive()
-        if (messages and messages[0].role == "system") or messages:
+        if messages and messages[0].role == "system":
+            messages[0].content += reasoning_directive
+        elif messages:
             messages[0].content += reasoning_directive
 
         return messages

@@ -24,6 +24,7 @@ Thumbs.db
 # Tooling
 .ruff_cache/
 .mypy_cache/
+.codegraph
 
 # Build
 dist/

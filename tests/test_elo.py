@@ -2,7 +2,7 @@
 
 import pytest
 
-from chess_fight.benchmark.elo import BayesianElo, GameResult, Glicko2
+from chessbench.benchmark.elo import BayesianElo, GameResult, Glicko2
 
 
 class TestGlicko2:

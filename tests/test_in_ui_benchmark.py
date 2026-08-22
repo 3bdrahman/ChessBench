@@ -8,10 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
-from chess_fight.benchmark.results_view import load_run
-from chess_fight.benchmark.runner import BenchmarkConfig, BenchmarkRunner
-from chess_fight.providers.chess_ai import ProviderChessAI
-from chess_fight.providers.stockfish import StockfishProvider
+from chessbench.benchmark.results_view import load_run
+from chessbench.benchmark.runner import BenchmarkConfig, BenchmarkRunner
+from chessbench.providers.chess_ai import ProviderChessAI
+from chessbench.providers.stockfish import StockfishProvider
 
 _STUB_ENGINE = str((Path(__file__).parent / "fixtures" / "uci_stub_engine.py").resolve())
 _FULL_CMD = f"{sys.executable} {_STUB_ENGINE}"
@@ -43,13 +43,13 @@ def stockfish_stub_provider():
 @pytest.fixture
 def patched_provider(stockfish_stub_provider):
     """Patch get_provider where ProviderChessAI uses it."""
-    from chess_fight.providers import chess_ai as providers_chess_ai
+    from chessbench.providers import chess_ai as providers_chess_ai
     original = providers_chess_ai.get_provider
     def _patched(name: str):
         if name == "stockfish":
             return stockfish_stub_provider
         return original(name)
-    with patch("chess_fight.providers.chess_ai.get_provider", side_effect=_patched):
+    with patch("chessbench.providers.chess_ai.get_provider", side_effect=_patched):
         yield
 
 
@@ -237,7 +237,7 @@ class TestInProcessBenchmark:
 
     def test_single_player_raises_setup_error(self, tmp_path):
         """Passing fewer than 2 players raises SetupError during initialization."""
-        from chess_fight.common.exceptions import SetupError
+        from chessbench.common.exceptions import SetupError
 
         config = BenchmarkConfig(
             players=["stockfish:depth-4"],
@@ -260,7 +260,7 @@ class TestPerGameTimeoutNonFatal:
     async def test_one_game_timeout_does_not_abort_benchmark(
         self, tmp_path, patched_provider
     ):
-        from chess_fight.common.exceptions import GameTimeoutError
+        from chessbench.common.exceptions import GameTimeoutError
 
         config = BenchmarkConfig(
             players=["stockfish:depth-4", "stockfish:depth-8"],

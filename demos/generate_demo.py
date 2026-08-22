@@ -36,9 +36,9 @@ from typing import Any
 
 import chess
 
-from chess_fight.benchmark.evaluator import StockfishEvaluator
-from chess_fight.benchmark.logging import BenchmarkLogger
-from chess_fight.benchmark.openings import OpeningBook
+from chessbench.benchmark.evaluator import StockfishEvaluator
+from chessbench.benchmark.logging import BenchmarkLogger
+from chessbench.benchmark.openings import OpeningBook
 
 _log = logging.getLogger(__name__)
 

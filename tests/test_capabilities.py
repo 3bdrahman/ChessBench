@@ -1,6 +1,6 @@
 """Tests for the centralized model capability filters."""
 
-from chess_fight.common.common_types import (
+from chessbench.common.common_types import (
     CAP_CHESS,
     ModelInfo,
     is_chess_capable,

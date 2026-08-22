@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "chess_fight"
+name = "chessbench"
 version = "0.1.0"
-description = "AI Chess Benchmark - Provider-agnostic LLM chess evaluation"
+description = "ChessBench — LLM Critical Thinking & Reasoning Benchmark via Chess"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -24,6 +24,12 @@ dependencies = [
     "click>=8.1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/3bdrahman/chessbench"
+Documentation = "https://github.com/3bdrahman/chessbench#readme"
+Repository = "https://github.com/3bdrahman/chessbench.git"
+Issues = "https://github.com/3bdrahman/chessbench/issues"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
@@ -38,10 +44,10 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["chess_fight*", "demos*"]
+include = ["chessbench*", "demos*"]
 
 [project.scripts]
-chessbench = "chess_fight.cli:main"
+chessbench = "chessbench.cli:main"
 
 [tool.ruff]
 line-length = 100
@@ -131,7 +137,7 @@ addopts = [
     "-v",
     "--strict-markers",
     "--strict-config",
-    "--cov=chess_fight",
+    "--cov=chessbench",
     "--cov-report=term-missing",
     "--cov-report=html",
 ]
@@ -141,7 +147,7 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["chess_fight"]
+source = ["chessbench"]
 omit = ["tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]

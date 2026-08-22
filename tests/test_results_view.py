@@ -2,7 +2,7 @@
 
 All assertions exercise real JSONL / summary.json files written to a real
 temporary directory by the test itself — no `MagicMock` patching of
-:mod:`chess_fight.benchmark.results_view`. The fixtures are written in the
+:mod:`chessbench.benchmark.results_view`. The fixtures are written in the
 exact format the :class:`BenchmarkLogger` produces, so the reader is being
 exercised the same way it will be in production.
 """
@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from chess_fight.benchmark.logging import BenchmarkLogger
-from chess_fight.benchmark.results_view import (
+from chessbench.benchmark.logging import BenchmarkLogger
+from chessbench.benchmark.results_view import (
     aggregate_leaderboard,
     list_run_dirs,
     list_runs,

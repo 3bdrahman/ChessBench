@@ -3,7 +3,7 @@
 import chess
 import pytest
 
-from chess_fight.models.chess_ai import ChessAI
+from chessbench.models.chess_ai import ChessAI
 
 
 class MockChessAI(ChessAI):

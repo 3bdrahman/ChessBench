@@ -1,6 +1,6 @@
-# Chess Battle Arena — Design System
+# ChessBench Arena — Design System
 
-> The visual contract for AI Chess Battle. Every color, font size, spacing value, and motion curve in the app traces back to a token here. No UI code invents values.
+> The visual contract for ChessBench Arena. Every color, font size, spacing value, and motion curve in the app traces back to a token here. No UI code invents values.
 
 ## 0. Research Log
 

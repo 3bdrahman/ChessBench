@@ -3,13 +3,13 @@
 
 import pytest
 
-from chess_fight.common.exceptions import (
+from chessbench.common.exceptions import (
     AuthenticationError,
     ConnectionError,
     RateLimitError,
     TimeoutError,
 )
-from chess_fight.common.retry import (
+from chessbench.common.retry import (
     RETRY_MOVE_PARSE,
     RETRY_RATE_LIMIT,
     RETRY_TRANSIENT,
@@ -158,7 +158,7 @@ class TestPresetPolicies:
         assert result == "ok"
 
     async def test_retry_move_parse_does_not_delay(self):
-        from chess_fight.common.exceptions import MoveValidationError
+        from chessbench.common.exceptions import MoveValidationError
 
         calls = []
 

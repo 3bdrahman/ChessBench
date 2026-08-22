@@ -16,9 +16,9 @@ from pathlib import Path
 import chess
 import pytest
 
-from chess_fight.common.common_types import ChatMessage
-from chess_fight.common.exceptions import ProviderUnavailableError
-from chess_fight.providers.stockfish import StockfishProvider
+from chessbench.common.common_types import ChatMessage
+from chessbench.common.exceptions import ProviderUnavailableError
+from chessbench.providers.stockfish import StockfishProvider
 
 _STUB_ENGINE = str((Path(__file__).parent / "fixtures" / "uci_stub_engine.py").resolve())
 _FULL_CMD = f"{sys.executable} {_STUB_ENGINE}"
@@ -95,7 +95,7 @@ class TestStockfishProviderHonestAbsence:
         provider = StockfishProvider()
         monkeypatch.setenv("STOCKFISH_PATH", "/nonexistent/path/please")
         monkeypatch.setattr(
-            "chess_fight.providers.stockfish._default_search_paths", lambda: ["/nope"]
+            "chessbench.providers.stockfish._default_search_paths", lambda: ["/nope"]
         )
         assert provider.find_binary() is None
         assert provider.is_available() is False
@@ -105,7 +105,7 @@ class TestStockfishProviderHonestAbsence:
         provider = StockfishProvider()
         monkeypatch.setenv("STOCKFISH_PATH", "/nonexistent/path/please")
         monkeypatch.setattr(
-            "chess_fight.providers.stockfish._default_search_paths", lambda: ["/nope"]
+            "chessbench.providers.stockfish._default_search_paths", lambda: ["/nope"]
         )
         with pytest.raises(ProviderUnavailableError):
             await provider.list_models("")
@@ -115,7 +115,7 @@ class TestStockfishProviderHonestAbsence:
         provider = StockfishProvider()
         monkeypatch.setenv("STOCKFISH_PATH", "/nonexistent/path/please")
         monkeypatch.setattr(
-            "chess_fight.providers.stockfish._default_search_paths", lambda: ["/nope"]
+            "chessbench.providers.stockfish._default_search_paths", lambda: ["/nope"]
         )
         with pytest.raises(ProviderUnavailableError):
             await provider.complete(

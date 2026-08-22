@@ -3,7 +3,7 @@
 import chess
 import pytest
 
-from chess_fight.move_parser import extract_move, validate_move
+from chessbench.move_parser import extract_move, validate_move
 from tests.fixtures.llm_outputs import LLM_OUTPUTS
 
 
@@ -75,7 +75,7 @@ class TestExtractMove:
             "I will play d7d6\n"
             "<move>d7d6</move>"
         )
-        from chess_fight.move_parser import parse_move
+        from chessbench.move_parser import parse_move
         parsed = parse_move(text, board)
         assert parsed.uci == "d7d6"
 
@@ -83,21 +83,21 @@ class TestExtractMove:
         """Test parsing SAN inside move tag."""
         board = chess.Board("Q1bqkbnr/p2p1pp1/8/4p3/4P2p/2P2N2/P1P2PPP/RNBQKB1R b KQk - 0 8")
         text = "Thinking about the game...\n<move>d6</move>"
-        from chess_fight.move_parser import parse_move
+        from chessbench.move_parser import parse_move
         parsed = parse_move(text, board)
         assert parsed.uci == "d7d6"
 
     def test_parse_move_prefer_first_legal_uci(self):
         """First legal UCI mention wins over later alternatives mentioned."""
         board = chess.Board()
-        from chess_fight.move_parser import parse_move
+        from chessbench.move_parser import parse_move
         result = parse_move("I think the best move would be e2e4, but I could also play d2d4", board)
         assert result.uci == "e2e4"
 
     def test_parse_move_rejects_alternative_clause_in_header(self):
         """The 'could also play X' clause must not steal the move-header slot."""
         board = chess.Board()
-        from chess_fight.move_parser import parse_move
+        from chessbench.move_parser import parse_move
         text = "I'm confident in e2e4 but I could also play d2d4 as an alternative."
         result = parse_move(text, board)
         assert result.uci == "e2e4"
@@ -108,7 +108,7 @@ class TestExtractMove:
         still extracted."""
         board = chess.Board()
         board.push_uci("e2e4")  # Black to move
-        from chess_fight.move_parser import parse_move
+        from chessbench.move_parser import parse_move
         text = "<thinking> analysis </thinking><move>final answer: e7e5</move>"
         result = parse_move(text, board)
         assert result.uci == "e7e5"
@@ -117,7 +117,7 @@ class TestExtractMove:
         r"""`O-O-O` (queenside) and `O-O` (kingside) must produce the right
         castling UCI. The kingside regex `\bO[-\s]?O\b` matches inside `O-O-O`,
         so checking queenside first is required."""
-        from chess_fight.move_parser import parse_move
+        from chessbench.move_parser import parse_move
         board = chess.Board('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1')  # both castles available
         result = parse_move('O-O-O', board)
         assert result.uci == 'e1c1'

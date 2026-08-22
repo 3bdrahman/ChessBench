@@ -1,0 +1,49 @@
+version: "v4_chain_of_thought"
+model_hints:
+  description: "Chain-of-Thought tree calculation prompt for high-reasoning models"
+max_tokens: 2500
+sections:
+  - name: "role"
+    content_template: "You are a World Champion Chess Grandmaster playing as {color}. Analyze positions with deep tactical calculation."
+    required: true
+    priority: 0
+    is_system: true
+  - name: "instructions"
+    content_template: |
+      [GRANDMASTER ANALYSIS WORKFLOW]
+      Perform a systematic step-by-step calculation before deciding your move:
+      1. THREAT ANALYSIS: Evaluate opponent's last move ({last_move_san}) and immediate threats.
+      2. CANDIDATE MOVES: Select 3 candidate moves from the legal moves list.
+      3. DEEP TACTICAL CALCULATION: Calculate variations 2-3 moves ahead for each candidate.
+      4. POSITION EVALUATION: Check material balance ({material_tension}) and king safety.
+      5. FINAL DECISION: Choose the single best move.
+
+      You MUST format your output strictly as:
+      <think>
+      (Detailed candidate move calculation and tree analysis)
+      </think>
+      <move>
+      (Your final chosen move in UCI notation, e.g. e2e4)
+      </move>
+    required: true
+    priority: 0
+    is_system: true
+  - name: "board_state"
+    content_template: |
+      [BOARD POSITION]
+      FEN: {fen}
+      Side to Move: {color}
+      Opponent's Last Move: {last_move_san}
+      Move History: {move_history_san}
+      Stagnation Status: {stagnation_status}
+
+      [BOARD GRID]
+      {ascii_board}
+
+      [LEGAL CANDIDATE MOVES]
+      Forcing (Checks/Captures): {forcing_moves}
+      Developing (Piece Activity): {developing_moves}
+      Positional (Structure/Control): {positional_moves}
+      All Legal UCI Moves: {legal_moves_uci}
+    required: true
+    priority: 1

@@ -9,11 +9,10 @@ Run explicitly with:
 """
 
 import os
+
 import chess
 import pytest
 
-from chessbench.common.common_types import ChatMessage
-from chessbench.providers import list_providers
 from chessbench.providers.chess_ai import ProviderChessAI
 
 

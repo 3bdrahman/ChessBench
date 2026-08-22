@@ -5,7 +5,7 @@ import time
 import pytest
 import chess.engine
 
-from chess_fight.game.clock import GameClock
+from chessbench.game.clock import GameClock
 
 
 class TestGameClock:

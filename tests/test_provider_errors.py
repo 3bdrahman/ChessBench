@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from chess_fight.common.common_types import ChatMessage
-from chess_fight.common.exceptions import (
+from chessbench.common.common_types import ChatMessage
+from chessbench.common.exceptions import (
     AuthenticationError,
     ConnectionError,
     InvalidApiKeyError,
@@ -13,10 +13,10 @@ from chess_fight.common.exceptions import (
     RateLimitError,
     TimeoutError,
 )
-from chess_fight.providers.anthropic import AnthropicProvider
-from chess_fight.providers.nim import NIMProvider
-from chess_fight.providers.ollama import OllamaProvider
-from chess_fight.providers.openai import OpenAIProvider
+from chessbench.providers.anthropic import AnthropicProvider
+from chessbench.providers.nim import NIMProvider
+from chessbench.providers.ollama import OllamaProvider
+from chessbench.providers.openai import OpenAIProvider
 
 
 class TestOpenAIErrorHandling:
@@ -33,7 +33,7 @@ class TestOpenAIErrorHandling:
             response=MagicMock(status_code=401),
             body=None,
         )
-        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
             mock_client.chat.completions.create = AsyncMock(side_effect=err)
@@ -58,7 +58,7 @@ class TestOpenAIErrorHandling:
             response=response,
             body=None,
         )
-        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
             mock_client.chat.completions.create = AsyncMock(side_effect=err)
@@ -76,7 +76,7 @@ class TestOpenAIErrorHandling:
     async def test_timeout_raises_typed_exception(self, provider):
         from openai import APITimeoutError
 
-        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
             mock_client.chat.completions.create = AsyncMock(side_effect=APITimeoutError(MagicMock()))
@@ -99,7 +99,7 @@ class TestOpenAIErrorHandling:
             response=response,
             body=None,
         )
-        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
             mock_client.chat.completions.create = AsyncMock(side_effect=err)
@@ -128,7 +128,7 @@ class TestAnthropicErrorHandling:
             response=MagicMock(status_code=401),
             body=None,
         )
-        with patch("chess_fight.providers.anthropic.AsyncAnthropic") as mock_client_class:
+        with patch("chessbench.providers.anthropic.AsyncAnthropic") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
             mock_client.messages.create = AsyncMock(side_effect=err)
@@ -151,12 +151,12 @@ class TestOllamaErrorHandling:
     async def test_connection_error_raises_provider_unavailable(self, provider):
         import httpx
 
-        with patch("chess_fight.providers.ollama.httpx.AsyncClient") as mock_client_class:
+        with patch("chessbench.providers.ollama.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
             mock_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
 
-            from chess_fight.common.exceptions import ProviderUnavailableError
+            from chessbench.common.exceptions import ProviderUnavailableError
             with pytest.raises(ProviderUnavailableError) as exc_info:
                 await provider.complete(
                     "",
@@ -169,7 +169,7 @@ class TestOllamaErrorHandling:
     async def test_timeout_raises_typed_exception(self, provider):
         import httpx
 
-        with patch("chess_fight.providers.ollama.httpx.AsyncClient") as mock_client_class:
+        with patch("chessbench.providers.ollama.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
             mock_client.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
@@ -193,7 +193,7 @@ class TestOllamaErrorHandling:
             request=MagicMock(),
             response=mock_response,
         )
-        with patch("chess_fight.providers.ollama.httpx.AsyncClient") as mock_client_class:
+        with patch("chessbench.providers.ollama.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
             mock_client.post = AsyncMock(side_effect=http_error)
@@ -222,7 +222,7 @@ class TestNIMErrorHandling:
             response=response,
             body=None,
         )
-        with patch("chess_fight.providers.nim.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.nim.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
             mock_client.chat.completions.create = AsyncMock(side_effect=err)
@@ -247,7 +247,7 @@ class TestProviderRetryBehavior:
         import httpx
         from openai import APIConnectionError
 
-        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
             mock_client.chat.completions.create = AsyncMock(

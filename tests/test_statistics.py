@@ -3,7 +3,7 @@
 
 import pytest
 
-from chess_fight.benchmark.statistics import (
+from chessbench.benchmark.statistics import (
     binom_confidence_interval,
     binomial_test,
     bootstrap_ci,

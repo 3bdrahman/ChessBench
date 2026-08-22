@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python dependencies
 WORKDIR /app
 COPY pyproject.toml README.md ./
-COPY chess_fight/ ./chess_fight/
+COPY chessbench/ ./chessbench/
 COPY configs/ ./configs/
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
@@ -45,7 +45,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 WORKDIR /app
-COPY --from=builder /app/chess_fight ./chess_fight
+COPY --from=builder /app/chessbench ./chessbench
 COPY --from=builder /app/configs ./configs
 COPY streamlit_app.py ./
 COPY benchmark.yaml ./
@@ -77,4 +77,4 @@ LABEL org.opencontainers.image.title="ChessBench" \
       org.opencontainers.image.description="LLM Critical Thinking Benchmark via Chess" \
       org.opencontainers.image.vendor="ChessBench Contributors" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.source="https://github.com/yourorg/chessbench"
+      org.opencontainers.image.source="https://github.com/3bdrahman/chessbench"

@@ -2,7 +2,7 @@
 
 import pytest
 
-from chess_fight.common.exceptions import (
+from chessbench.common.exceptions import (
     AuthenticationError,
     AuthError,
     BenchmarkError,
@@ -29,7 +29,7 @@ from chess_fight.common.exceptions import (
 
 
 class TestExceptionHierarchy:
-    def test_all_inherit_from_chess_fight_error(self):
+    def test_all_inherit_from_chessbench_error(self):
         for cls in (
             ProviderError,
             NoProvidersConfiguredError,

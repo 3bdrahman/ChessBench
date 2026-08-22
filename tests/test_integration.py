@@ -5,15 +5,15 @@ from unittest.mock import AsyncMock, patch
 import chess
 import pytest
 
-from chess_fight.benchmark.elo import BayesianElo, GameResult, Glicko2
-from chess_fight.benchmark.logging import BenchmarkLogger
-from chess_fight.benchmark.openings import OpeningBook
-from chess_fight.benchmark.runner import BenchmarkConfig, BenchmarkRunner
-from chess_fight.common.common_types import ChatMessage, CompletionResult, ModelInfo, ModelProvider
-from chess_fight.game.async_game import AsyncChessGame, GameState
-from chess_fight.move_parser import extract_move, validate_move
-from chess_fight.providers.chess_ai import ProviderChessAI
-from chess_fight.providers.registry import get_provider, list_providers, register_provider
+from chessbench.benchmark.elo import BayesianElo, GameResult, Glicko2
+from chessbench.benchmark.logging import BenchmarkLogger
+from chessbench.benchmark.openings import OpeningBook
+from chessbench.benchmark.runner import BenchmarkConfig, BenchmarkRunner
+from chessbench.common.common_types import ChatMessage, CompletionResult, ModelInfo, ModelProvider
+from chessbench.game.async_game import AsyncChessGame, GameState
+from chessbench.move_parser import extract_move, validate_move
+from chessbench.providers.chess_ai import ProviderChessAI
+from chessbench.providers.registry import get_provider, list_providers, register_provider
 
 
 class MockProvider(ModelProvider):
@@ -74,7 +74,7 @@ def _mock_provider_registration():
     register_provider(MockProviderRegistered)
     yield
     # Clean up: remove the mock provider from registry
-    from chess_fight.providers.registry import PROVIDER_REGISTRY
+    from chessbench.providers.registry import PROVIDER_REGISTRY
     if "mock_registered" in PROVIDER_REGISTRY:
         del PROVIDER_REGISTRY["mock_registered"]
 
@@ -452,7 +452,7 @@ class TestProviderChessAI:
 
         # Just mock get_move_from_model to simulate the provider doing its thing
         async def mock_invoke(*args, **kwargs):
-            from chess_fight.common.common_types import CompletionResult
+            from chessbench.common.common_types import CompletionResult
             ai.last_completion_result = CompletionResult(
                 text="<thinking>plan</thinking>\ne2e4",
                 tokens_in=1234,
@@ -472,7 +472,7 @@ class TestProviderChessAI:
 
     @pytest.mark.asyncio
     async def test_get_move_with_result_falls_back_when_no_completion(self):
-        from chess_fight.providers.chess_ai import ProviderChessAI
+        from chessbench.providers.chess_ai import ProviderChessAI
 
         ai = ProviderChessAI("mock_registered", "mock", "sk-test")
 
@@ -534,7 +534,7 @@ class TestRunnerMetricsEndToEnd:
         )
         runner = BenchmarkRunner(config)
 
-        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -571,13 +571,13 @@ class TestBenchmarkRunnerOllamaNoKey:
 
     @pytest.mark.asyncio
     async def test_runner_initializes_with_ollama_no_key(self, tmp_path):
-        from chess_fight.common.common_types import (
+        from chessbench.common.common_types import (
             ChatMessage,
             CompletionResult,
             ModelInfo,
             ModelProvider,
         )
-        from chess_fight.providers.registry import register_provider
+        from chessbench.providers.registry import register_provider
 
         @register_provider
         class OllamaMockProvider(ModelProvider):
@@ -626,36 +626,36 @@ class TestDeadCodeRemoval:
     def test_common_chess_ai_module_removed(self):
         """Verify dead common/chess_ai.py is not importable."""
         import importlib.util
-        assert importlib.util.find_spec("chess_fight.common.chess_ai") is None
+        assert importlib.util.find_spec("chessbench.common.chess_ai") is None
 
     def test_game_sync_game_module_removed(self):
         """Verify dead game/sync_game.py is not importable."""
         import importlib.util
-        assert importlib.util.find_spec("chess_fight.game.sync_game") is None
+        assert importlib.util.find_spec("chessbench.game.sync_game") is None
 
     def test_providers_base_module_removed(self):
         """Verify dead providers/base.py is not importable."""
         import importlib.util
-        assert importlib.util.find_spec("chess_fight.providers.base") is None
+        assert importlib.util.find_spec("chessbench.providers.base") is None
 
     def test_canonical_import_paths(self):
         """Verify canonical import paths work."""
-        from chess_fight.common.common_types import (
+        from chessbench.common.common_types import (
             ChatMessage,
             CompletionResult,
             ModelInfo,
             ModelProvider,
         )
-        from chess_fight.providers import (
+        from chessbench.providers import (
             ChatMessage as PChatMessage,
         )
-        from chess_fight.providers import (
+        from chessbench.providers import (
             CompletionResult as PCompletionResult,
         )
-        from chess_fight.providers import (
+        from chessbench.providers import (
             ModelInfo as PModelInfo,
         )
-        from chess_fight.providers import (
+        from chessbench.providers import (
             ModelProvider as PModelProvider,
         )
 
@@ -701,7 +701,7 @@ class TestStockfishEvaluatorPovScore:
 
     @pytest.mark.asyncio
     async def test_evaluator_handles_mate_score(self):
-        from chess_fight.benchmark.evaluator import StockfishEvaluator
+        from chessbench.benchmark.evaluator import StockfishEvaluator
 
         evaluator = StockfishEvaluator()
         evaluator._available = True

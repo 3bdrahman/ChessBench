@@ -1,6 +1,6 @@
 """Demo-game generation for the hosted Streamlit experience.
 
-The hosted demo lives at https://chess-fight.streamlit.app and must show the
+The hosted demo on Streamlit Cloud must show the product at its best — even when
 product at its best — even when the visitor has no API key. The genuine replay
 material comes from real benchmark runs in ``runs/`` (auto-generated), but a
 fresh deploy may land without any real run yet. This module seeds one

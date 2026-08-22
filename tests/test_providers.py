@@ -4,14 +4,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from chess_fight.common.common_types import ChatMessage, CompletionResult, ModelInfo, ModelProvider
-from chess_fight.providers.anthropic import AnthropicProvider
-from chess_fight.providers.google import GoogleProvider
-from chess_fight.providers.nim import NIMProvider
-from chess_fight.providers.ollama import OllamaProvider
-from chess_fight.providers.openai import OpenAIProvider
-from chess_fight.providers.openrouter import OpenRouterProvider
-from chess_fight.providers.registry import (
+from chessbench.common.common_types import ChatMessage, CompletionResult, ModelInfo, ModelProvider
+from chessbench.providers.anthropic import AnthropicProvider
+from chessbench.providers.google import GoogleProvider
+from chessbench.providers.nim import NIMProvider
+from chessbench.providers.ollama import OllamaProvider
+from chessbench.providers.openai import OpenAIProvider
+from chessbench.providers.openrouter import OpenRouterProvider
+from chessbench.providers.registry import (
     PROVIDER_REGISTRY,
     get_provider,
     list_providers,
@@ -93,7 +93,7 @@ class TestOpenAIProvider:
 
     @pytest.mark.asyncio
     async def test_list_models(self, provider):
-        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -115,7 +115,7 @@ class TestOpenAIProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("chess_fight.providers.openai.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.openai.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -150,7 +150,7 @@ class TestAnthropicProvider:
 
     @pytest.mark.asyncio
     async def test_list_models(self, provider):
-        with patch("chess_fight.providers.anthropic.AsyncAnthropic") as mock_client_class:
+        with patch("chessbench.providers.anthropic.AsyncAnthropic") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -172,7 +172,7 @@ class TestAnthropicProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("chess_fight.providers.anthropic.AsyncAnthropic") as mock_client_class:
+        with patch("chessbench.providers.anthropic.AsyncAnthropic") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -209,7 +209,7 @@ class TestGoogleProvider:
 
     @pytest.mark.asyncio
     async def test_list_models(self, provider):
-        with patch("chess_fight.providers.google.genai.Client") as mock_client_class:
+        with patch("chessbench.providers.google.genai.Client") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -237,7 +237,7 @@ class TestGoogleProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("chess_fight.providers.google.genai.Client") as mock_client_class:
+        with patch("chessbench.providers.google.genai.Client") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -274,7 +274,7 @@ class TestNIMProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("chess_fight.providers.nim.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.nim.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -311,7 +311,7 @@ class TestOpenRouterProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("chess_fight.providers.openrouter.AsyncOpenAI") as mock_client_class:
+        with patch("chessbench.providers.openrouter.AsyncOpenAI") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -345,7 +345,7 @@ class TestOllamaProvider:
 
     @pytest.mark.asyncio
     async def test_list_models(self, provider):
-        with patch("chess_fight.providers.ollama.httpx.AsyncClient") as mock_client_class:
+        with patch("chessbench.providers.ollama.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
 
@@ -368,7 +368,7 @@ class TestOllamaProvider:
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):
-        with patch("chess_fight.providers.ollama.httpx.AsyncClient") as mock_client_class:
+        with patch("chessbench.providers.ollama.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value.__aenter__.return_value = mock_client
 

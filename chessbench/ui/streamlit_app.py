@@ -463,14 +463,22 @@ def render_model_selectors(available_providers: list):
         unsafe_allow_html=True,
     )
 
+    def _swap_player_models():
+        p1 = st.session_state.get("player_model_1")
+        p2 = st.session_state.get("player_model_2")
+        if p1 and p2:
+            st.session_state["player_model_1"] = p2
+            st.session_state["player_model_2"] = p1
+
     # Swap Button
     _, col_swap, _ = st.sidebar.columns([1, 3, 1])
-    if col_swap.button("⇄ Swap White & Black", key="btn_swap_players", help="Swap White and Black model assignments", width="stretch"):
-        st.session_state["player_model_1"], st.session_state["player_model_2"] = (
-            st.session_state.get("player_model_2"),
-            st.session_state.get("player_model_1"),
-        )
-        st.rerun()
+    col_swap.button(
+        "⇄ Swap White & Black",
+        key="btn_swap_players",
+        help="Swap White and Black model assignments",
+        width="stretch",
+        on_click=_swap_player_models,
+    )
 
     # Player 2 (Black) Card
     m2_options = [m for m in model_options if m != model_1]

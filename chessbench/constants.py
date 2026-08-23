@@ -55,6 +55,8 @@ STOCKFISH_SEARCH_PATHS: tuple[str, ...] = (
     "/usr/bin/stockfish",
     "/usr/local/bin/stockfish",
     "/opt/homebrew/bin/stockfish",
+    "/var/home/linuxbrew/.linuxbrew/bin/stockfish",
+    "/home/linuxbrew/.linuxbrew/bin/stockfish",
     "/usr/games/stockfish",
     "C:/Program Files/Stockfish/stockfish.exe",
     "C:/Stockfish/stockfish.exe",
@@ -68,8 +70,8 @@ DEFAULT_TIME_CONTROL_SECONDS_PER_MOVE: int = 30
 DEFAULT_OPENING_BOOK: str = "eco_balanced"
 DEFAULT_GAMES_PER_PAIRING: int = 10
 DEFAULT_COLORS_MODE: str = "alternating"
-DEFAULT_MAX_PARALLEL_GAMES: int = 4
-DEFAULT_MOVE_TIMEOUT_SECONDS: int = 450
+DEFAULT_MAX_PARALLEL_GAMES: int = 1
+DEFAULT_MOVE_TIMEOUT_SECONDS: int = 120
 # ^ MUST exceed the worst-case move cycle inside get_move_with_result
 # (every retry × (DEFAULT_HTTP_TIMEOUT + DEFAULT_MAX_BACKOFF)).
 # If this falls below that ceiling, asyncio.wait_for cancels the move coroutine

@@ -2,8 +2,6 @@
 
 Evaluate Large Language Models (LLMs) on tactical calculation, strategic planning, and position evaluation through chess matches.
 
-🌐 **Live Web App**: [https://chessbench.streamlit.app/](https://chessbench.streamlit.app/)
-
 ---
 
 ## ⚡ Quick Start

@@ -48,7 +48,7 @@ def render_error(st: Any, exc: BaseException) -> None:
     ``st`` is the Streamlit module (or a duck-typed mock for tests).
     """
     if isinstance(exc, NoProvidersConfiguredError):
-        st.error("**No providers configured** — add API keys in the sidebar.")
+        st.error("**No providers configured** — please configure provider keys in Streamlit Secrets.")
         return
 
     if isinstance(exc, InvalidApiKeyError):

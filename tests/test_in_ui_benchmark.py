@@ -308,3 +308,17 @@ class TestPerGameTimeoutNonFatal:
         # One timed out, so completed-game count < scheduled count.
         assert run.total_games < 2
         assert run.total_games >= 1  # at least one game actually finished
+
+
+def test_test_model_async_invokes_provider(stockfish_stub_provider):
+    from chessbench.ui.streamlit_app import _test_model_async
+
+    model_info = {
+        "provider": "stockfish",
+        "model_id": "depth-4",
+        "api_key": "",
+        "context_window": 16384,
+    }
+
+    with patch("chessbench.ui.streamlit_app.get_provider", return_value=stockfish_stub_provider):
+        _test_model_async(model_info)

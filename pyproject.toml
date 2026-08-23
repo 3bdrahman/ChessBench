@@ -25,8 +25,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/3bdrahman/chessbench"
-Documentation = "https://github.com/3bdrahman/chessbench#readme"
+Homepage = "https://chessbench.streamlit.app/"
 Repository = "https://github.com/3bdrahman/chessbench.git"
 Issues = "https://github.com/3bdrahman/chessbench/issues"
 

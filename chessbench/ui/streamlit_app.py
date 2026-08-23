@@ -265,35 +265,60 @@ def _get_secret_or_env(provider_name: str) -> str | None:
     return None
 
 
+def _test_model_async(model_info: dict):
+    """Test a model with a 1-token query to verify connectivity and measure latency."""
+    import time
+
+    provider_name = model_info.get("provider", "")
+    model_id = model_info.get("model_id", "")
+    api_key = model_info.get("api_key", "")
+
+    provider = get_provider(provider_name)
+    if not provider:
+        st.sidebar.error(f"Provider {provider_name} not available.")
+        return
+
+    start_t = time.perf_counter()
+    try:
+        with st.spinner(f"Testing {model_id}..."):
+            _ = asyncio.run(
+                provider.complete(
+                    model_id=model_id,
+                    prompt="Test",
+                    system_prompt="Respond with 'OK'.",
+                    api_key=api_key,
+                    temperature=0.0,
+                    max_tokens=5,
+                )
+            )
+        elapsed_ms = int((time.perf_counter() - start_t) * 1000)
+        if hasattr(st, "toast"):
+            st.toast(f"✅ {model_id} connected in {elapsed_ms}ms!", icon="⚡")
+        else:
+            st.sidebar.success(f"✅ {model_id} connected in {elapsed_ms}ms!")
+    except Exception as exc:
+        st.sidebar.error(f"❌ {model_id} test failed: {exc}")
+
+
+def render_sidebar_header_and_nav():
+    """Render top brand header and segmented surface switcher in sidebar."""
+    st.sidebar.markdown(
+        '<div class="sb-brand-container">'
+        '  <div class="sb-brand-title">♟️ CHESSBENCH</div>'
+        '  <div class="sb-brand-tag">v1.0</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_provider_keys_section():
     """Render provider status badges in sidebar based on Streamlit Secrets / Env Vars."""
-    st.sidebar.header("🔑 Provider Status")
-    st.sidebar.caption("API keys are loaded automatically from Streamlit Secrets or Environment Variables.")
-
-    with st.sidebar.expander("📋 Streamlit Secrets Template (Copy & Paste)", expanded=False):
-        st.markdown(
-            "Copy the template below into **App Settings → Secrets** on Streamlit Cloud, "
-            "or into `.streamlit/secrets.toml` locally:"
-        )
-        st.code(
-            '# Streamlit Secrets Template\n'
-            'OPENAI_API_KEY = "your_openai_key_here"\n'
-            'ANTHROPIC_API_KEY = "your_anthropic_key_here"\n'
-            'GOOGLE_API_KEY = "your_google_key_here"\n'
-            'GROQ_API_KEY = "your_groq_key_here"\n'
-            'NIM_API_KEY = "your_nvidia_nim_key_here"\n'
-            'OPENROUTER_API_KEY = "your_openrouter_key_here"\n'
-            'TOGETHER_API_KEY = "your_together_key_here"\n'
-            'FIREWORKS_API_KEY = "your_fireworks_key_here"\n'
-            'DEEPINFRA_API_KEY = "your_deepinfra_key_here"\n',
-            language="toml",
-        )
-
     providers = list_providers()
     if "nim" in providers:
         providers.remove("nim")
         providers.insert(0, "nim")
     available_providers = []
+    status_list = []
 
     for provider_name in providers:
         if HOSTED_PROVIDERS and provider_name not in HOSTED_PROVIDERS:
@@ -303,29 +328,63 @@ def render_provider_keys_section():
             continue
 
         if not provider.requires_api_key:
-            reachable, message = _probe_local_provider(provider_name)
+            reachable, _ = _probe_local_provider(provider_name)
             if reachable:
-                st.sidebar.success(f"✓ {provider_name.capitalize()} (local connected)")
                 available_providers.append((provider_name, ""))
+                status_list.append((provider_name, True, "local active"))
             else:
-                st.sidebar.caption(f"🖥️ {provider_name.capitalize()} (local — not running)")
+                status_list.append((provider_name, False, "local offline"))
             continue
 
         secret_key = _get_secret_or_env(provider_name)
         env_var_name = f"{provider_name.upper()}_API_KEY"
         if secret_key and provider.validate_key(secret_key):
-            st.sidebar.success(f"✓ {provider_name.capitalize()} Active")
             available_providers.append((provider_name, secret_key))
+            status_list.append((provider_name, True, "Active"))
         else:
-            st.sidebar.caption(f"🔒 {provider_name.capitalize()} (Needs `{env_var_name}`)")
+            status_list.append((provider_name, False, f"Needs {env_var_name}"))
+
+    active_count = len(available_providers)
+    total_count = len(status_list)
+
+    expander_title = f"🔑 Provider Keys ({active_count}/{total_count} Active)"
+    with st.sidebar.expander(expander_title, expanded=False):
+        st.caption("API keys are loaded automatically from Streamlit Secrets or Environment Variables.")
+
+        grid_html = '<div class="sb-provider-grid">'
+        for pname, is_active, label in status_list:
+            if is_active:
+                grid_html += f'<div class="sb-provider-badge-active"><span>✓ {pname.capitalize()}</span><span style="font-size:0.64rem; opacity:0.85;">{label}</span></div>'
+            else:
+                grid_html += f'<div class="sb-provider-badge-inactive"><span>🔒 {pname.capitalize()}</span><span style="font-size:0.64rem; opacity:0.65;">{label}</span></div>'
+        grid_html += '</div>'
+        st.markdown(grid_html, unsafe_allow_html=True)
+
+        with st.popover("📋 Streamlit Secrets Template"):
+            st.markdown(
+                "Copy the template below into **App Settings → Secrets** on Streamlit Cloud, "
+                "or into `.streamlit/secrets.toml` locally:"
+            )
+            st.code(
+                '# Streamlit Secrets Template\n'
+                'OPENAI_API_KEY = "your_openai_key_here"\n'
+                'ANTHROPIC_API_KEY = "your_anthropic_key_here"\n'
+                'GOOGLE_API_KEY = "your_google_key_here"\n'
+                'GROQ_API_KEY = "your_groq_key_here"\n'
+                'NIM_API_KEY = "your_nvidia_nim_key_here"\n'
+                'OPENROUTER_API_KEY = "your_openrouter_key_here"\n'
+                'TOGETHER_API_KEY = "your_together_key_here"\n'
+                'FIREWORKS_API_KEY = "your_fireworks_key_here"\n'
+                'DEEPINFRA_API_KEY = "your_deepinfra_key_here"\n',
+                language="toml",
+            )
 
     return available_providers
 
 
 def render_model_selectors(available_providers: list):
     """Render model selection for White and Black players."""
-    st.sidebar.header("♟️ Model Selection")
-
+    st.sidebar.markdown('<div style="font-weight:650; font-size:0.95rem; margin-bottom:8px; color:var(--arena-text);">⚔️ Player Matchup</div>', unsafe_allow_html=True)
 
     all_models: dict[str, dict] = {}
     filtered_count = 0
@@ -348,7 +407,7 @@ def render_model_selectors(available_providers: list):
 
     if filtered_count:
         st.sidebar.caption(
-            f"ⓘ {filtered_count} non-chat model(s) hidden (embedding, audio, image, etc.)"
+            f"ⓘ {filtered_count} non-chat model(s) hidden"
         )
 
     if not all_models:
@@ -379,32 +438,68 @@ def render_model_selectors(available_providers: list):
     m1_options = [m for m in model_options if m != cur_2]
     m1_idx = m1_options.index(sel_1) if sel_1 in m1_options else 0
 
-    st.sidebar.subheader("Model 1")
-    col_m1, col_t1 = st.sidebar.columns([3, 1])
+    # Player 1 (White) Card
+    st.sidebar.markdown(
+        '<div class="sb-player-card sb-player-card-white">'
+        '  <div class="sb-player-header"><span>Player 1</span><span class="sb-player-badge-white">♔ WHITE</span></div>',
+        unsafe_allow_html=True,
+    )
+    col_m1, col_t1 = st.sidebar.columns([4, 1])
     model_1 = col_m1.selectbox(
         "Select First Model",
         options=m1_options,
         index=m1_idx,
         key="player_model_1",
+        label_visibility="collapsed",
     )
-    if col_t1.button("🔬", key="test_model_1", help="Test model with 1 token"):
+    if col_t1.button("🔬", key="test_model_1", help="Test model latency & connectivity"):
         _test_model_async(all_models[model_1])
 
-    # Filter options for Model 2 (exclude currently selected Model 1)
+    m1_info = all_models[model_1]
+    ctx1 = f"{m1_info['context_window']//1024}k ctx" if m1_info.get('context_window') else "standard"
+    st.sidebar.markdown(
+        f'<div class="sb-model-meta"><span class="sb-tag">{m1_info["provider"]}</span><span class="sb-tag">{ctx1}</span></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Swap Button
+    _, col_swap, _ = st.sidebar.columns([1, 3, 1])
+    if col_swap.button("⇄ Swap White & Black", key="btn_swap_players", help="Swap White and Black model assignments", use_container_width=True):
+        st.session_state["player_model_1"], st.session_state["player_model_2"] = (
+            st.session_state.get("player_model_2"),
+            st.session_state.get("player_model_1"),
+        )
+        st.rerun()
+
+    # Player 2 (Black) Card
     m2_options = [m for m in model_options if m != model_1]
     cur_2_val = st.session_state.get("player_model_2")
     m2_idx = m2_options.index(cur_2_val) if cur_2_val in m2_options else 0
 
-    st.sidebar.subheader("Model 2")
-    col_m2, col_t2 = st.sidebar.columns([3, 1])
+    st.sidebar.markdown(
+        '<div class="sb-player-card sb-player-card-black">'
+        '  <div class="sb-player-header"><span>Player 2</span><span class="sb-player-badge-black">♚ BLACK</span></div>',
+        unsafe_allow_html=True,
+    )
+    col_m2, col_t2 = st.sidebar.columns([4, 1])
     model_2 = col_m2.selectbox(
         "Select Second Model",
         options=m2_options,
         index=m2_idx,
         key="player_model_2",
+        label_visibility="collapsed",
     )
-    if col_t2.button("🔬", key="test_model_2", help="Test model with 1 token"):
+    if col_t2.button("🔬", key="test_model_2", help="Test model latency & connectivity"):
         _test_model_async(all_models[model_2])
+
+    m2_info = all_models[model_2]
+    ctx2 = f"{m2_info['context_window']//1024}k ctx" if m2_info.get('context_window') else "standard"
+    st.sidebar.markdown(
+        f'<div class="sb-model-meta"><span class="sb-tag">{m2_info["provider"]}</span><span class="sb-tag">{ctx2}</span></div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     if model_1 and model_2 and model_1 != model_2:
         return all_models[model_1], all_models[model_2]
@@ -439,43 +534,37 @@ def render_prompt_management(model_1_config, model_2_config):
     if f"turn_prompt_{m2_spec}" not in st.session_state:
         st.session_state[f"turn_prompt_{m2_spec}"] = DEFAULT_TURN_PROMPT
 
-    with st.sidebar.expander("⚡ Prompt Engineering Workbench", expanded=False):
-        st.markdown("#### 🎯 Benchmark Strategy Presets")
+    with st.sidebar.expander("⚡ Prompt Strategy Workbench", expanded=False):
+        st.markdown("**🎯 Benchmark Strategy Presets**")
         preset_versions = prompt_registry.list_versions()
-        selected_preset = st.selectbox(
-            "Load Tested Preset Strategy",
+        col_pr1, col_pr2 = st.columns([3, 2])
+        selected_preset = col_pr1.selectbox(
+            "Load Tested Strategy Preset",
             options=preset_versions,
             index=0,
             key="preset_selector_dropdown",
+            label_visibility="collapsed",
         )
-        if st.button("🚀 Apply Preset to Both Players", key="btn_apply_preset_both"):
+        if col_pr2.button("Apply Both", key="btn_apply_preset_both", help="Apply preset to both White & Black"):
             sys_p, turn_p = prompt_registry.get_preset_prompts(selected_preset)
             st.session_state[f"sys_prompt_{m1_spec}"] = sys_p
             st.session_state[f"turn_prompt_{m1_spec}"] = turn_p
             st.session_state[f"sys_prompt_{m2_spec}"] = sys_p
             st.session_state[f"turn_prompt_{m2_spec}"] = turn_p
-            st.success(f"Loaded preset strategy `{selected_preset}`!")
+            st.success(f"Preset `{selected_preset}` loaded!")
             st.rerun()
 
-        st.markdown("#### 🛠️ Interactive Variable Palette")
-        with st.popover("📖 Variable Documentation & Reference"):
-            st.markdown("**Mandatory Placeholders (3 Required Categories):**")
-            st.markdown("- `{color}` — Side to move ('White' or 'Black')")
-            st.markdown("- `{fen}` or `{ascii_board}` — Current board state")
-            st.markdown("- `{forcing_moves}` or `{legal_moves_uci}` — Legal moves")
-            st.markdown("**Rich Positional & Evaluation Context:**")
-            st.markdown("- `{last_move_san}` — Opponent's previous move")
-            st.markdown("- `{move_history_san}` — Full game move history")
-            st.markdown("- `{white_pieces}` / `{black_pieces}` — Piece square locations")
-            st.markdown("- `{material_tension}` / `{stagnation_status}` / `{position_progress}`")
+        st.markdown(
+            '<div style="margin: 8px 0 4px 0; font-size: 0.72rem; color: var(--arena-text-muted); font-weight:600;">KEY VARIABLES</div>'
+            '<span class="sb-var-chip">{color}</span><span class="sb-var-chip">{fen}</span><span class="sb-var-chip">{forcing_moves}</span><span class="sb-var-chip">{legal_moves_uci}</span><span class="sb-var-chip">{last_move_san}</span>',
+            unsafe_allow_html=True,
+        )
 
-        st.divider()
-
-        tab_p1, tab_p2 = st.tabs([f"P1: {m1_spec[:16]}", f"P2: {m2_spec[:16]}"])
+        tab_p1, tab_p2 = st.tabs(["♔ P1 (White)", "♚ P2 (Black)"])
 
         # --- Player 1 ---
         with tab_p1:
-            st.markdown(f"**Player 1:** `{m1_spec}`")
+            st.caption(f"Strategy for `{model_1_config['model_id'][:20]}`")
             sys_1 = st.text_area(
                 "System Prompt (P1)",
                 value=st.session_state[f"sys_prompt_{m1_spec}"],
@@ -485,33 +574,23 @@ def render_prompt_management(model_1_config, model_2_config):
             turn_1 = st.text_area(
                 "Turn Prompt (P1)",
                 value=st.session_state[f"turn_prompt_{m1_spec}"],
-                height=160,
+                height=140,
                 key=f"ui_turn_1_{m1_spec}",
             )
 
             v1 = validate_prompt_text(sys_1, turn_1)
-            st.caption(f"Estimated Token Budget: ~`{v1.estimated_tokens}` tokens")
-
             if not v1.is_valid:
-                st.error("❌ P1 Prompt Invalid:\n\n" + "\n".join(f"- {e}" for e in v1.errors))
-                st.info("⚠️ *System will fall back to recommended default prompt during benchmark.*")
+                st.error("❌ P1 Prompt Invalid:\n" + "\n".join(f"- {e}" for e in v1.errors))
             else:
-                st.success("✅ P1 Prompt Validated (All 3 mandatory categories present)")
+                st.caption(f"✅ Budget: ~`{v1.estimated_tokens}` tokens")
 
-            if v1.suggestions:
-                for sug in v1.suggestions:
-                    st.warning(f"💡 {sug}")
-
-            if v1.warnings:
-                for w in v1.warnings:
-                    st.info(f"ℹ️ {w}")
-
-            if st.button("🔄 Reset P1 to Default Prompt", key=f"reset_p1_{m1_spec}"):
+            col_res1, col_prev1 = st.columns([1, 1])
+            if col_res1.button("🔄 Reset P1", key=f"reset_p1_{m1_spec}"):
                 st.session_state[f"sys_prompt_{m1_spec}"] = DEFAULT_SYSTEM_PROMPT
                 st.session_state[f"turn_prompt_{m1_spec}"] = DEFAULT_TURN_PROMPT
                 st.rerun()
 
-            with st.expander("👁️ Live Render Sandbox (P1)"):
+            with col_prev1.popover("👁️ Preview Output"):
                 tmpl1, _ = create_safe_prompt_template(sys_1, turn_1)
                 sample_board = chess.Board()
                 sample_ctx = {
@@ -534,7 +613,7 @@ def render_prompt_management(model_1_config, model_2_config):
 
         # --- Player 2 ---
         with tab_p2:
-            st.markdown(f"**Player 2:** `{m2_spec}`")
+            st.caption(f"Strategy for `{model_2_config['model_id'][:20]}`")
             sys_2 = st.text_area(
                 "System Prompt (P2)",
                 value=st.session_state[f"sys_prompt_{m2_spec}"],
@@ -544,33 +623,23 @@ def render_prompt_management(model_1_config, model_2_config):
             turn_2 = st.text_area(
                 "Turn Prompt (P2)",
                 value=st.session_state[f"turn_prompt_{m2_spec}"],
-                height=160,
+                height=140,
                 key=f"ui_turn_2_{m2_spec}",
             )
 
             v2 = validate_prompt_text(sys_2, turn_2)
-            st.caption(f"Estimated Token Budget: ~`{v2.estimated_tokens}` tokens")
-
             if not v2.is_valid:
-                st.error("❌ P2 Prompt Invalid:\n\n" + "\n".join(f"- {e}" for e in v2.errors))
-                st.info("⚠️ *System will fall back to recommended default prompt during benchmark.*")
+                st.error("❌ P2 Prompt Invalid:\n" + "\n".join(f"- {e}" for e in v2.errors))
             else:
-                st.success("✅ P2 Prompt Validated (All 3 mandatory categories present)")
+                st.caption(f"✅ Budget: ~`{v2.estimated_tokens}` tokens")
 
-            if v2.suggestions:
-                for sug in v2.suggestions:
-                    st.warning(f"💡 {sug}")
-
-            if v2.warnings:
-                for w in v2.warnings:
-                    st.info(f"ℹ️ {w}")
-
-            if st.button("🔄 Reset P2 to Default Prompt", key=f"reset_p2_{m2_spec}"):
+            col_res2, col_prev2 = st.columns([1, 1])
+            if col_res2.button("🔄 Reset P2", key=f"reset_p2_{m2_spec}"):
                 st.session_state[f"sys_prompt_{m2_spec}"] = DEFAULT_SYSTEM_PROMPT
                 st.session_state[f"turn_prompt_{m2_spec}"] = DEFAULT_TURN_PROMPT
                 st.rerun()
 
-            with st.expander("👁️ Live Render Sandbox (P2)"):
+            with col_prev2.popover("👁️ Preview Output"):
                 tmpl2, _ = create_safe_prompt_template(sys_2, turn_2)
                 sample_board = chess.Board()
                 sample_ctx = {
@@ -1406,33 +1475,54 @@ def main():
     if "game_ui" not in st.session_state:
         st.session_state.game_ui = ChessUI()
 
-    # Sidebar: API Keys and Model Selection
+    # Sidebar Header & Brand
+    render_sidebar_header_and_nav()
+
+    # Sidebar: Model Selection
     available_providers = render_provider_keys_section()
     model_1_config, model_2_config = render_model_selectors(available_providers)
 
-    # Prompt Management
+    # Prompt Strategy Workbench
     system_prompts, turn_prompts = render_prompt_management(model_1_config, model_2_config)
 
-    st.sidebar.markdown("---")
-    st.sidebar.header("🎮 Game Controls")
+    # Game Controls Section
+    st.sidebar.markdown('<div style="font-weight:650; font-size:0.95rem; margin-top:12px; margin-bottom:8px; color:var(--arena-text);">🎮 Match Settings</div>', unsafe_allow_html=True)
 
-    games = st.sidebar.number_input(
+    col_g, col_r = st.sidebar.columns([1, 1])
+    games = col_g.number_input(
         "Games to play", min_value=1, max_value=20, value=1, step=1, key="game_count"
     )
 
-    reasoning_level = st.sidebar.selectbox(
+    reasoning_level = col_r.selectbox(
         "Reasoning Level",
         options=["low", "mid", "high"],
         index=1,
-        help="Low = fast minimal thinking (256 tokens), Mid = standard tactical focus (1024 tokens), High = deep positional thinking (4096 tokens).",
+        help="Low = 256t fast, Mid = 1024t tactical, High = 4096t deep thinking",
         key="reasoning_level_select",
     )
 
-    # We always alternate colors for multiple games, but for the first game we randomly assign White/Black
-    # to avoid user bias, as playing White is an advantage.
     colors_mode = "alternating" if games > 1 else "fixed"
 
-    if st.sidebar.button("▶️ Run Benchmark", type="primary", width="stretch"):
+    # Match Preview Summary Box
+    if model_1_config and model_2_config:
+        m1_name = model_1_config['model_id'].split('/')[-1]
+        m2_name = model_2_config['model_id'].split('/')[-1]
+        st.sidebar.markdown(
+            '<div class="sb-match-summary">'
+            '  <div class="sb-match-vs">'
+            f'    <div class="sb-match-vs-model" title="{m1_name}">♔ {m1_name}</div>'
+            '    <div class="sb-match-vs-divider">VS</div>'
+            f'    <div class="sb-match-vs-model" title="{m2_name}" style="text-align:right;">♚ {m2_name}</div>'
+            '  </div>'
+            '  <div class="sb-match-details">'
+            f'    <span>{games} Game{"s" if games > 1 else ""} ({colors_mode})</span>'
+            f'    <span>Reasoning: <strong>{reasoning_level.upper()}</strong></span>'
+            '  </div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    if st.sidebar.button("⚔️ Launch AI Arena Match", type="primary", use_container_width=True):
         if not model_1_config or not model_2_config:
             st.sidebar.error("Please select two distinct models for the players.")
         elif model_1_config["provider"] == model_2_config["provider"] and model_1_config["model_id"] == model_2_config["model_id"]:
@@ -1471,12 +1561,10 @@ def main():
         )
         return
 
-
     if st.session_state.get("show_analytics", False):
         render_analytical_dashboard()
         st.sidebar.markdown("---")
-        st.sidebar.header("📊 Benchmark History")
-        if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
+        if st.sidebar.button("📊 Open Benchmark History", type="primary", use_container_width=True, key="open_history"):
             st.session_state.show_analytics = False
             st.session_state.show_history = True
             st.rerun()
@@ -1502,18 +1590,17 @@ def main():
         st.markdown("### 🎮 Get Started")
         st.markdown(
             "API keys are loaded automatically via **Streamlit Secrets**. "
-            "Select two models under **♟️ Model Selection** in the sidebar, then click **▶️ Start Match**."
+            "Select two models under **⚔️ Player Matchup** in the sidebar, then click **⚔️ Launch AI Arena Match**."
         )
 
     st.sidebar.markdown("---")
-    st.sidebar.header("📊 Benchmark History")
 
     if not show_history:
-        if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
+        if st.sidebar.button("📊 Open Benchmark History", type="primary", use_container_width=True, key="open_history"):
             st.session_state.show_history = True
             st.rerun()
     else:
-        if st.sidebar.button("🏠 Back to Home", width="stretch", key="close_history"):
+        if st.sidebar.button("🏠 Back to Home", use_container_width=True, key="close_history"):
             st.session_state.show_history = False
             st.rerun()
 

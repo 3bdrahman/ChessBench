@@ -173,7 +173,7 @@ sudo systemctl enable --now chessbench
 
 ## CI/CD Pipeline Integration (GitHub Actions)
 
-Run automated weekly benchmarks using [.github/workflows/benchmark.yml](file:///var/home/usef/coding/chessbench/.github/workflows/benchmark.yml):
+Run automated weekly benchmarks using [.github/workflows/benchmark.yml](.github/workflows/benchmark.yml):
 
 ```yaml
 name: Scheduled Benchmark

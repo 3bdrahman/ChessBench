@@ -186,7 +186,7 @@ class PromptTemplate:
         messages = []
         if system_parts:
             messages.append(ChatMessage(role="system", content="\n\n".join(system_parts)))
-        
+
         user_content = "\n\n".join(user_parts) if user_parts else ""
         # Background structured I/O contract enforcement
         if SYSTEM_OUTPUT_CONTRACT.strip() not in user_content:

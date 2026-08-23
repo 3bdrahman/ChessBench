@@ -10,8 +10,12 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import logging
+
 import click
 import yaml
+
+logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 from chessbench.benchmark.adversarial import AdversarialConfig, AdversarialEvaluator
 from chessbench.benchmark.results_view import list_runs
@@ -33,9 +37,18 @@ def _load_api_keys() -> dict[str, str]:
     return keys
 
 
-def _parse_players(ctx: click.Context, param: click.Parameter, value: tuple[str, ...]) -> list[str]:
-    """Parse player specs from command line."""
-    return list(value)
+def _parse_players(ctx: click.Context, param: click.Parameter, value: tuple[str, ...] | str | None) -> list[str]:
+    """Parse player specs from command line, supporting comma, space, or repeated flags."""
+    if not value:
+        return []
+    players: list[str] = []
+    items = value if isinstance(value, (tuple, list)) else [value]
+    for item in items:
+        for part in item.replace(",", " ").split():
+            part_str = part.strip()
+            if part_str:
+                players.append(part_str)
+    return players
 
 
 # ---------------------------------------------------------------------------
@@ -67,8 +80,9 @@ def cli() -> None:
     "-p",
     multiple=True,
     callback=_parse_players,
-    help="Player specs as provider:model (e.g., openai:gpt-4o). Can be repeated.",
+    help="Player specs as provider:model (e.g., openai:gpt-4o).",
 )
+@click.argument("extra_players", nargs=-1)
 @click.option("--games", "-g", type=int, help="Games per pairing")
 @click.option("--parallel", "-j", type=int, help="Max parallel games")
 @click.option("--opening-book", type=click.Choice(["eco_balanced", "eco_all", "startpos"]), help="Opening book to use")
@@ -85,6 +99,7 @@ def cli() -> None:
 def run(
     config: Path | None,
     players: list[str],
+    extra_players: tuple[str, ...],
     games: int | None,
     parallel: int | None,
     opening_book: str | None,
@@ -109,8 +124,9 @@ def run(
         benchmark_config = BenchmarkConfig()
 
     # Override from CLI
-    if players:
-        benchmark_config.players = players
+    all_players = list(players) + list(extra_players)
+    if all_players:
+        benchmark_config.players = all_players
     if games is not None:
         benchmark_config.games_per_pairing = games
     if parallel is not None:
@@ -401,6 +417,8 @@ def models(provider: str | None, filter: str | None, json_output: bool) -> None:
         if not prov:
             continue
         if prov_name not in api_keys and prov.requires_api_key:
+            if provider:
+                click.echo(f"Warning: {prov_name.upper()}_API_KEY environment variable is not set.", err=True)
             continue
 
         try:
@@ -468,6 +486,8 @@ def config(output: Path, players: tuple[str, ...]) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    import logging
+    logging.getLogger("streamlit").setLevel(logging.ERROR)
     cli()
 
 

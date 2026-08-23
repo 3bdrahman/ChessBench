@@ -14,6 +14,7 @@ _PROVIDER_MODULES = (
     "nim",
     "openai",
     "openrouter",
+    "stockfish",
     "together",
 )
 

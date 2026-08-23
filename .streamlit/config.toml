@@ -6,5 +6,9 @@ textColor = "#e8eaf2"
 font = "monospace"
 
 [server]
-# Use polling watcher to avoid inotify watch limit on Streamlit Cloud
-fileWatcherType = "poll"
+# Disable file watcher on Streamlit Cloud to prevent WebSocket disconnections
+# when benchmark run logs and state files are written to disk
+fileWatcherType = "none"
+headless = true
+enableCORS = false
+enableXsrfProtection = true

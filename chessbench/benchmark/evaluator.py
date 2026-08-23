@@ -54,10 +54,14 @@ class StockfishEvaluator:
         try:
             import shutil
             env_path = os.environ.get("STOCKFISH_PATH")
-            if env_path and shutil.which(env_path):
-                self.binary_path = env_path
-                self._available = True
-                return True
+            if env_path:
+                parts = env_path.strip().split()
+                if parts:
+                    bin_cmd = shutil.which(parts[0]) or parts[0]
+                    if os.path.exists(bin_cmd) or shutil.which(parts[0]):
+                        self.binary_path = env_path
+                        self._available = True
+                        return True
             if shutil.which(self.binary_path):
                 self._available = True
                 return True
@@ -66,10 +70,13 @@ class StockfishEvaluator:
                 "/usr/bin/stockfish",
                 "/usr/local/bin/stockfish",
                 "/opt/homebrew/bin/stockfish",
+                "/var/home/linuxbrew/.linuxbrew/bin/stockfish",
+                "/home/linuxbrew/.linuxbrew/bin/stockfish",
                 "/usr/games/stockfish",
+                os.path.expanduser("~/.local/bin/stockfish"),
             ]
             for path in common_paths:
-                if shutil.which(path):
+                if shutil.which(path) or os.path.exists(path):
                     self.binary_path = path
                     self._available = True
                     return True
@@ -81,7 +88,7 @@ class StockfishEvaluator:
     async def start(self) -> bool:
         """Start the Stockfish engine."""
         if not self._available:
-            _log.warning("Stockfish binary not found at %s", self.binary_path)
+            _log.info("Stockfish engine not installed on host — centipawn evaluation disabled.")
             return False
 
         try:

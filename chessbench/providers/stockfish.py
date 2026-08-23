@@ -24,7 +24,7 @@ import logging
 import os
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -76,16 +76,10 @@ def _default_search_paths() -> list[str]:
     found = shutil.which("stockfish")
     if found:
         candidates.append(found)
-    candidates.extend(
-        [
-            "/usr/bin/stockfish",
-            "/usr/local/bin/stockfish",
-            "/opt/homebrew/bin/stockfish",
-            "/usr/games/stockfish",
-            "C:/Program Files/Stockfish/stockfish.exe",
-            "C:/Stockfish/stockfish.exe",
-        ]
-    )
+    from chessbench import constants
+    for c in constants.STOCKFISH_SEARCH_PATHS:
+        if shutil.which(c) or os.path.exists(c):
+            candidates.append(c)
     seen: set[str] = set()
     result: list[str] = []
     for c in candidates:
@@ -97,26 +91,48 @@ def _default_search_paths() -> list[str]:
 
 def _is_executable_file(candidate: str) -> bool:
     try:
-        path = Path(candidate).expanduser()
-        # Commands like ["python", "stub.py"] are valid executable lists —
-        # we just need to confirm the first element is callable.
-        return path.is_file() and os.access(path, os.X_OK)
+        parts = candidate.strip().split()
+        if not parts:
+            return False
+        binary = shutil.which(parts[0]) or parts[0]
+        binary_path = Path(binary).expanduser()
+        if binary_path.is_file() and os.access(binary_path, os.X_OK):
+            return True
+        return False
     except OSError:
         return False
+
+
+def _default_stockfish_models() -> list[ModelInfo]:
+    return [
+        ModelInfo(
+            id=f"depth-{d}",
+            name=f"Stockfish (depth {d})",
+            provider="stockfish",
+            context_window=128,
+            capabilities=[CAP_CHESS],
+        )
+        for d in (4, 8, 12, 16, 20)
+    ]
 
 
 @register_provider
 class StockfishProvider(ModelProvider):
     """Local chess engine provider backed by a Stockfish subprocess.
 
-    The engine is launched lazily on first :py:meth:`complete` call via the
-    async :func:`chess.engine.popen_uci` and reused across subsequent moves.
-    The provider does not fabricate any move — every response comes from the
-    real Stockfish binary via UCI.
+    This provider spawns a Stockfish (or UCI-compliant) binary as an async
+    subprocess via ``python-chess``'s ``SimpleEngine.popen_uci``. It converts
+    prompt requests into position setups and runs Stockfish search at specified
+    depth or time limits.
     """
 
-    name = "stockfish"
-    requires_api_key = False
+    name: str = "stockfish"
+    requires_api_key: bool = False
+    models: list[ModelInfo] = field(default_factory=_default_stockfish_models)
+
+    think_time: float = 1.0  # seconds; cap so the UI never freezes
+    threads: int = 1
+    hash_mb: int = 64
 
     def __init__(self, config: StockfishConfig | None = None):
         self.config = config or StockfishConfig()
@@ -125,22 +141,17 @@ class StockfishProvider(ModelProvider):
         self._binary_used: str | None = None
         self._available_models: list[ModelInfo] = []
 
-    # ------------------------------------------------------------------ utils
-
     def is_available(self) -> bool:
         return self.find_binary() is not None
 
     def find_binary(self) -> str | None:
         """Search the host for a usable Stockfish binary.
 
-        Returns the binary path (or command list as a string, joined by
-        spaces, if it came from ``STOCKFISH_PATH`` with arguments).
+        Returns the binary path (or command string, if specified via STOCKFISH_PATH).
         """
         for candidate in _default_search_paths():
             if _is_executable_file(candidate):
-                return str(Path(candidate).expanduser().resolve())
-            # Also accept STOCKFISH_PATH values that look like
-            # "python /path/to/stub_engine.py" — keep them as-is.
+                return candidate
         return None
 
     # ------------------------------------------------------------ abstract API

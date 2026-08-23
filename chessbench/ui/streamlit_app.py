@@ -249,15 +249,26 @@ def _probe_local_provider(provider_name: str) -> tuple[bool, str]:
     return True, f"Connected to `{base_url}`"
 
 
-def _get_env_key(provider_name: str) -> str | None:
-    """Lookup API key from environment variable."""
-    return os.getenv(f"{provider_name.upper()}_API_KEY")
+def _get_secret_or_env(provider_name: str) -> str | None:
+    """Lookup API key from environment variable or Streamlit secrets."""
+    env_key = os.getenv(f"{provider_name.upper()}_API_KEY")
+    if env_key:
+        return env_key
+    try:
+        if hasattr(st, "secrets"):
+            return (
+                st.secrets.get(f"{provider_name.lower()}_api_key")
+                or st.secrets.get(f"{provider_name.upper()}_API_KEY")
+            )
+    except Exception:
+        pass
+    return None
 
 
 def render_provider_keys_section():
-    """Render manual API key input fields for each provider in the sidebar."""
-    st.sidebar.header("🔑 API Keys")
-    st.sidebar.caption("Manually enter your API key for each provider you wish to benchmark.")
+    """Render provider status badges in sidebar based on Streamlit Secrets / Env Vars."""
+    st.sidebar.header("🔑 Provider Status")
+    st.sidebar.caption("API keys are loaded automatically from Streamlit Secrets or Environment Variables.")
 
     providers = list_providers()
     if "nim" in providers:
@@ -273,38 +284,20 @@ def render_provider_keys_section():
             continue
 
         if not provider.requires_api_key:
-            with st.sidebar.expander(f"🖥️ {provider_name.capitalize()} (local)", expanded=False):
-                st.caption(f"Local server — no API key required. Run `{provider_name} serve` first.")
-                if st.button(
-                    f"🔌 Connect to {provider_name.capitalize()}",
-                    key=f"connect_{provider_name}",
-                    width="stretch",
-                ):
-                    reachable, message = _probe_local_provider(provider_name)
-                    if reachable:
-                        st.success(f"✓ {message}")
-                        available_providers.append((provider_name, ""))
-                    else:
-                        st.error(f"✗ {message}")
+            reachable, message = _probe_local_provider(provider_name)
+            if reachable:
+                st.sidebar.success(f"✓ {provider_name.capitalize()} (local connected)")
+                available_providers.append((provider_name, ""))
+            else:
+                st.sidebar.caption(f"🖥️ {provider_name.capitalize()} (local — not running)")
             continue
 
-        env_key = _get_env_key(provider_name)
-        is_preconfigured = bool(env_key and provider.validate_key(env_key))
-
-        with st.sidebar.expander(f"{provider_name.capitalize()}", expanded=is_preconfigured):
-            api_key = st.text_input(
-                f"{provider_name.capitalize()} API Key",
-                type="password",
-                value=env_key if env_key else "",
-                key=f"api_key_{provider_name}",
-                help=f"Manually enter your {provider_name} API key",
-            )
-            if api_key:
-                if provider.validate_key(api_key):
-                    st.success("✓ Valid key format")
-                    available_providers.append((provider_name, api_key))
-                else:
-                    st.error("✗ Invalid key format")
+        secret_key = _get_secret_or_env(provider_name)
+        if secret_key and provider.validate_key(secret_key):
+            st.sidebar.success(f"✓ {provider_name.capitalize()} Active")
+            available_providers.append((provider_name, secret_key))
+        else:
+            st.sidebar.caption(f"🔒 {provider_name.capitalize()} (No Secret)")
 
     return available_providers
 
@@ -1488,8 +1481,8 @@ def main():
     else:
         st.markdown("### 🎮 Get Started")
         st.markdown(
-            "**Have API keys?** Add them in the sidebar under **🔑 API Keys**, "
-            "pick two models under **♟️ Model Selection**, then click **▶️ Start Match**."
+            "API keys are loaded automatically via **Streamlit Secrets**. "
+            "Select two models under **♟️ Model Selection** in the sidebar, then click **▶️ Start Match**."
         )
 
     st.sidebar.markdown("---")

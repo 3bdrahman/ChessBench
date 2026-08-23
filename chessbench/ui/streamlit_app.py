@@ -270,6 +270,25 @@ def render_provider_keys_section():
     st.sidebar.header("🔑 Provider Status")
     st.sidebar.caption("API keys are loaded automatically from Streamlit Secrets or Environment Variables.")
 
+    with st.sidebar.expander("📋 Streamlit Secrets Template (Copy & Paste)", expanded=False):
+        st.markdown(
+            "Copy the template below into **App Settings → Secrets** on Streamlit Cloud, "
+            "or into `.streamlit/secrets.toml` locally:"
+        )
+        st.code(
+            '# Streamlit Secrets Template\n'
+            'OPENAI_API_KEY = "your_openai_key_here"\n'
+            'ANTHROPIC_API_KEY = "your_anthropic_key_here"\n'
+            'GOOGLE_API_KEY = "your_google_key_here"\n'
+            'GROQ_API_KEY = "your_groq_key_here"\n'
+            'NIM_API_KEY = "your_nvidia_nim_key_here"\n'
+            'OPENROUTER_API_KEY = "your_openrouter_key_here"\n'
+            'TOGETHER_API_KEY = "your_together_key_here"\n'
+            'FIREWORKS_API_KEY = "your_fireworks_key_here"\n'
+            'DEEPINFRA_API_KEY = "your_deepinfra_key_here"\n',
+            language="toml",
+        )
+
     providers = list_providers()
     if "nim" in providers:
         providers.remove("nim")
@@ -293,11 +312,12 @@ def render_provider_keys_section():
             continue
 
         secret_key = _get_secret_or_env(provider_name)
+        env_var_name = f"{provider_name.upper()}_API_KEY"
         if secret_key and provider.validate_key(secret_key):
             st.sidebar.success(f"✓ {provider_name.capitalize()} Active")
             available_providers.append((provider_name, secret_key))
         else:
-            st.sidebar.caption(f"🔒 {provider_name.capitalize()} (No Secret)")
+            st.sidebar.caption(f"🔒 {provider_name.capitalize()} (Needs `{env_var_name}`)")
 
     return available_providers
 

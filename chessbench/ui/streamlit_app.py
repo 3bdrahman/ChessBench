@@ -336,7 +336,7 @@ def render_model_selectors(available_providers: list):
         return None, None
 
     if len(all_models) < 2:
-        st.sidebar.warning("At least 2 distinct chess-capable models are required to start a match. Please enable another provider or API key.")
+        st.sidebar.warning("At least 2 distinct chess-capable models are required to start a match. Please configure another provider in Streamlit Secrets.")
         return None, None
 
     model_options = list(all_models.keys())

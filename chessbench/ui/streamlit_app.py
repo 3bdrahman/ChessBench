@@ -465,7 +465,7 @@ def render_model_selectors(available_providers: list):
 
     # Swap Button
     _, col_swap, _ = st.sidebar.columns([1, 3, 1])
-    if col_swap.button("⇄ Swap White & Black", key="btn_swap_players", help="Swap White and Black model assignments", use_container_width=True):
+    if col_swap.button("⇄ Swap White & Black", key="btn_swap_players", help="Swap White and Black model assignments", width="stretch"):
         st.session_state["player_model_1"], st.session_state["player_model_2"] = (
             st.session_state.get("player_model_2"),
             st.session_state.get("player_model_1"),
@@ -929,7 +929,7 @@ def render_live_game_screen(
                         width="large",
                     )
                 }
-                st.dataframe(df, hide_index=True, use_container_width=True, column_config=column_config)
+                st.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
 
 
     # Completed games stack as cf-cards
@@ -1522,7 +1522,7 @@ def main():
             unsafe_allow_html=True,
         )
 
-    if st.sidebar.button("⚔️ Launch AI Arena Match", type="primary", use_container_width=True):
+    if st.sidebar.button("⚔️ Launch AI Arena Match", type="primary", width="stretch"):
         if not model_1_config or not model_2_config:
             st.sidebar.error("Please select two distinct models for the players.")
         elif model_1_config["provider"] == model_2_config["provider"] and model_1_config["model_id"] == model_2_config["model_id"]:
@@ -1564,7 +1564,7 @@ def main():
     if st.session_state.get("show_analytics", False):
         render_analytical_dashboard()
         st.sidebar.markdown("---")
-        if st.sidebar.button("📊 Open Benchmark History", type="primary", use_container_width=True, key="open_history"):
+        if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
             st.session_state.show_analytics = False
             st.session_state.show_history = True
             st.rerun()
@@ -1596,11 +1596,11 @@ def main():
     st.sidebar.markdown("---")
 
     if not show_history:
-        if st.sidebar.button("📊 Open Benchmark History", type="primary", use_container_width=True, key="open_history"):
+        if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
             st.session_state.show_history = True
             st.rerun()
     else:
-        if st.sidebar.button("🏠 Back to Home", use_container_width=True, key="close_history"):
+        if st.sidebar.button("🏠 Back to Home", width="stretch", key="close_history"):
             st.session_state.show_history = False
             st.rerun()
 

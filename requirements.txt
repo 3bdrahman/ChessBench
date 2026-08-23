@@ -10,3 +10,4 @@ python-dotenv>=1.0.0
 pyyaml>=6.0
 numpy>=1.24
 altair>=5.0.0
+click>=8.1

@@ -48,7 +48,23 @@ def render_error(st: Any, exc: BaseException) -> None:
     ``st`` is the Streamlit module (or a duck-typed mock for tests).
     """
     if isinstance(exc, NoProvidersConfiguredError):
-        st.error("**No providers configured** — please configure provider keys in Streamlit Secrets.")
+        st.error("**No providers configured** — Please add API keys to Streamlit Secrets.")
+        st.markdown(
+            "### ⚙️ How to add API keys to Streamlit Secrets\n\n"
+            "**Streamlit Cloud Deployment:**\n"
+            "1. Open your app settings at [share.streamlit.io](https://share.streamlit.io).\n"
+            "2. Navigate to **App Settings → Secrets**.\n"
+            "3. Paste your provider API keys in TOML format:\n"
+            "```toml\n"
+            'OPENAI_API_KEY = "sk-..."\n'
+            'ANTHROPIC_API_KEY = "sk-ant-..."\n'
+            'OPENROUTER_API_KEY = "sk-or-..."\n'
+            'GOOGLE_API_KEY = "AIza..."\n'
+            'GROQ_API_KEY = "gsk_..."\n'
+            "```\n\n"
+            "**Local Development:**\n"
+            "Create a `.env` file or `.streamlit/secrets.toml` in your repository root with your API key definitions."
+        )
         return
 
     if isinstance(exc, InvalidApiKeyError):

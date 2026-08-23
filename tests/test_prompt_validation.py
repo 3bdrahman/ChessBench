@@ -1,12 +1,9 @@
 """Unit tests for 10x prompt validation, injection defense, preset engine, background I/O contract, and fallback system."""
 
 import chess
-import pytest
+
 from chessbench.models.chess_ai import ChessAI
 from chessbench.prompts import (
-    DEFAULT_SYSTEM_PROMPT,
-    DEFAULT_TURN_PROMPT,
-    SYSTEM_OUTPUT_CONTRACT,
     create_safe_prompt_template,
     prompt_registry,
     sanitize_prompt_text,

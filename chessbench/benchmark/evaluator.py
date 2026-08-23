@@ -53,6 +53,11 @@ class StockfishEvaluator:
         """Check if Stockfish binary is available."""
         try:
             import shutil
+            env_path = os.environ.get("STOCKFISH_PATH")
+            if env_path and shutil.which(env_path):
+                self.binary_path = env_path
+                self._available = True
+                return True
             if shutil.which(self.binary_path):
                 self._available = True
                 return True

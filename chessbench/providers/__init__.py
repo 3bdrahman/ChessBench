@@ -1,7 +1,13 @@
 """Provider abstraction layer for LLM chess AI."""
 
 from chessbench.common.common_types import ChatMessage, CompletionResult, ModelInfo, ModelProvider
-from chessbench.providers.registry import PROVIDER_REGISTRY, get_provider, register_provider
+from chessbench.providers.registry import (
+    PROVIDER_REGISTRY,
+    ensure_providers_registered,
+    get_provider,
+    list_providers,
+    register_provider,
+)
 
 # Lazy imports - provider modules are imported on first access via get_provider()
 # This avoids import-time circular dependencies and issues on Streamlit Cloud
@@ -12,6 +18,7 @@ _PROVIDER_MODULES = (
     "google",
     "groq",
     "nim",
+    "ollama",
     "openai",
     "openrouter",
     "stockfish",
@@ -29,17 +36,7 @@ def __getattr__(name: str):
 def __dir__():
     return list(globals().keys()) + list(_PROVIDER_MODULES)
 
-from .chess_ai import ProviderChessAI
-
-
-def list_providers() -> list[str]:
-    """List all available providers, forcing lazy loading."""
-    import sys
-    this_module = sys.modules[__name__]
-    for name in _PROVIDER_MODULES:
-        getattr(this_module, name)
-    from chessbench.providers.registry import list_providers as _registry_list
-    return _registry_list()
+from .chess_ai import ProviderChessAI  # noqa: E402  (deferred: chess_ai imports registry)
 
 __all__ = [
     "PROVIDER_REGISTRY",
@@ -48,6 +45,7 @@ __all__ = [
     "ModelInfo",
     "ModelProvider",
     "ProviderChessAI",
+    "ensure_providers_registered",
     "get_provider",
     "list_providers",
     "register_provider",

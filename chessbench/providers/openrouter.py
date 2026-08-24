@@ -26,6 +26,7 @@ from chessbench.common.exceptions import (
     RateLimitError,
     TimeoutError,
 )
+from chessbench.providers._openai_compat import extract_chat_message
 from chessbench.providers.registry import register_provider
 
 _log = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class OpenRouterProvider(ModelProvider):
         self.base_url = "https://openrouter.ai/api/v1"
 
     def validate_key(self, api_key: str) -> bool:
+        api_key = api_key.strip()
         return api_key.startswith("sk-or-") and len(api_key) > 20
 
     def _key_prefix_hint(self) -> str:
@@ -110,7 +112,7 @@ class OpenRouterProvider(ModelProvider):
 
         completion_kwargs: dict[str, Any] = {
             "model": model,
-            "messages": openai_messages,  # type: ignore[arg-type]
+            "messages": openai_messages,
             "temperature": temperature,
             "extra_body": {"include_reasoning": True},
         }
@@ -131,7 +133,7 @@ class OpenRouterProvider(ModelProvider):
 
         latency_ms = int((time.time() - start) * 1000)
 
-        msg = response.choices[0].message
+        msg = extract_chat_message(response, "openrouter", model)
         content = msg.content or ""
 
         # If it's a reasoning model, append the reasoning to the content so our parser can log it

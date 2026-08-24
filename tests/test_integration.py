@@ -16,6 +16,11 @@ from chessbench.providers.chess_ai import ProviderChessAI
 from chessbench.providers.registry import get_provider, list_providers, register_provider
 
 
+@pytest.fixture(autouse=True)
+def _no_stockfish_eval(monkeypatch):
+    """Keep benchmark-level tests hermetic and fast: skip per-move engine analysis."""
+    monkeypatch.setenv("CHESSBENCH_DISABLE_EVALUATOR", "1")
+
 class MockProvider(ModelProvider):
     """Mock provider for testing."""
     name = "mock"
@@ -538,7 +543,7 @@ class TestRunnerMetricsEndToEnd:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
-            scholars_mate = ["e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6", "h5f7"]
+            scholars_mate: tuple[str, ...] = ("e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6", "h5f7")
             move_idx = 0
 
             async def mock_create(**kwargs):
@@ -577,7 +582,9 @@ class TestBenchmarkRunnerOllamaNoKey:
             ModelInfo,
             ModelProvider,
         )
-        from chessbench.providers.registry import register_provider
+        from chessbench.providers.registry import PROVIDER_REGISTRY, register_provider
+
+        real_ollama = PROVIDER_REGISTRY.get("ollama")
 
         @register_provider
         class OllamaMockProvider(ModelProvider):
@@ -590,7 +597,7 @@ class TestBenchmarkRunnerOllamaNoKey:
             async def list_models(self, api_key: str) -> list[ModelInfo]:
                 return [ModelInfo(id="llama3", name="llama3", provider="ollama")]
 
-            scholars_mate = ["e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6", "h5f7"]
+            scholars_mate: tuple[str, ...] = ("e2e4", "e7e5", "f1c4", "b8c6", "d1h5", "g8f6", "h5f7")
             move_idx = 0
 
             async def complete(self, api_key: str, model: str, messages: list[ChatMessage], **params) -> CompletionResult:
@@ -616,8 +623,15 @@ class TestBenchmarkRunnerOllamaNoKey:
         summary_path = runner.run_dir / "summary.json"
         import json
         summary = json.loads(summary_path.read_text())
-        # With 2 players and alternating colors: 1 pairing × 1 game = 1 game total
+        # With 2 players and alternating colors: 1 pairing x 1 game = 1 game total
         assert summary["total_games"] == 1
+
+        # Restore the real provider so later tests (e.g. live ollama) are not
+        # shadowed by this mock leaking through the global registry.
+        if real_ollama is None:
+            PROVIDER_REGISTRY.pop("ollama", None)
+        else:
+            PROVIDER_REGISTRY["ollama"] = real_ollama
 
 
 class TestDeadCodeRemoval:

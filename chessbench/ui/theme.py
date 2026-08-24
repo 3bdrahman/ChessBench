@@ -217,11 +217,11 @@ _ARENA_CSS = """
     gap: 6px;
 }
 .sb-match-vs-model {
-    max-width: 42%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-width: 45%;
+    word-break: break-word;
+    overflow-wrap: break-word;
     font-size: 0.8rem;
+    line-height: 1.2;
 }
 .sb-match-vs-divider {
     color: #f0b421;
@@ -498,9 +498,9 @@ code, .stCodeBlock, pre {
 }
 .cf-avatar-white { background: transparent; color: var(--arena-text); border: none; }
 .cf-avatar-black { background: transparent; color: var(--arena-text); border: none; }
-.cf-player-meta { display: flex; flex-direction: column; min-width: 0; }
-.cf-player-name { font-weight: 600; color: var(--arena-text); font-size: 0.875rem; }
-.cf-player-spec { font-family: var(--font-mono); font-size: 0.75rem; color: var(--arena-text-muted); }
+.cf-player-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.cf-player-name { font-weight: 600; color: var(--arena-text); font-size: 0.875rem; word-break: break-word; overflow-wrap: break-word; line-height: 1.3; }
+.cf-player-spec { font-family: var(--font-mono); font-size: 0.75rem; color: var(--arena-text-muted); word-break: break-word; overflow-wrap: break-word; }
 .cf-turn-dot {
     width: 8px; height: 8px; border-radius: 50%;
     background: var(--arena-accent); margin-right: 8px;

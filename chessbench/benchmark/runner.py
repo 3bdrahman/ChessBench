@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import logging
-import re
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -33,14 +32,13 @@ from chessbench.common.exceptions import (
 )
 from chessbench.game.async_game import AsyncChessGame, GameState
 from chessbench.game.clock import GameClock
-from chessbench.models import GameStats
+from chessbench.models import GameMove, GameStats
+from chessbench.models.thinking import extract_thinking as _extract_thinking
 from chessbench.providers import get_provider, list_providers
 from chessbench.providers.chess_ai import ProviderChessAI
 from chessbench.providers.ratelimit import ProviderRateLimiter
 
 _log = logging.getLogger(__name__)
-
-_THINKING_RE = re.compile(r"<(?:think|thinking)>(.*?)</(?:think|thinking)>", re.DOTALL | re.IGNORECASE)
 
 # Termination reasons that represent a *clean* chess conclusion — the board
 # reached a real terminal position (or its automatic draw variants). Games that
@@ -62,13 +60,6 @@ _CLEAN_TERMINATIONS: frozenset[str] = frozenset({
     "variant_draw",
     "draw",
 })
-
-
-def _extract_thinking(raw: str | None) -> str | None:
-    if not raw:
-        return None
-    match = _THINKING_RE.search(raw)
-    return match.group(1).strip() if match else None
 
 
 def _uci_to_san(fen: str, uci: str) -> str:
@@ -118,6 +109,9 @@ class BenchmarkConfig:
     # Custom Prompts
     system_prompts: dict[str, str] = field(default_factory=dict)
     turn_prompts: dict[str, str] = field(default_factory=dict)
+    # Color-keyed prompt overrides (additive, for same-model A/B testing)
+    system_prompts_by_color: dict[str, str] = field(default_factory=dict)
+    turn_prompts_by_color: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -137,11 +131,20 @@ class BenchmarkConfig:
 class BenchmarkRunner:
     """Headless benchmark runner."""
 
-    def __init__(self, config: BenchmarkConfig):
+    def __init__(self, config: BenchmarkConfig, resume_from: str | None = None):
         self.config = config
-        self.run_id = config.run_name or datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-        self.run_dir = Path(config.output_dir) / self.run_id
-        self.logger = BenchmarkLogger(str(self.run_dir))
+        self.resume_from = resume_from
+        if resume_from:
+            # Resume from existing run: use the same run_id and run_dir
+            self.run_id = resume_from
+            self.run_dir = Path(config.output_dir) / self.run_id
+            # Load existing completed games to skip them
+            self._completed_game_indices: set[int] = set()
+        else:
+            self.run_id = config.run_name or datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+            self.run_dir = Path(config.output_dir) / self.run_id
+            self._completed_game_indices = set()
+        self.logger = BenchmarkLogger(str(self.run_dir), resume=bool(resume_from))
         self.start_time = time.time()
 
         # Initialize rate limiter
@@ -170,6 +173,27 @@ class BenchmarkRunner:
         # Failed game's state snapshot — populated by the runner before
         # signalling the UI so the UI can render the paused board/error.
         self.problem_state: GameState | None = None
+
+    def _load_completed_game_indices(self) -> None:
+        """Load completed game indices from existing games.jsonl for resume."""
+        import json
+        if not self.logger.game_log_path.exists():
+            return
+        try:
+            with open(self.logger.game_log_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        game = json.loads(line)
+                        if 'game_id' in game and 'config' in game:
+                            # Extract game index from config or calculate from game_id
+                            pass  # We track completed games via logger.games_completed
+        except Exception:
+            pass
+
+    def _is_game_completed(self, game_idx: int) -> bool:
+        """Check if a game at the given index was already completed."""
+        return game_idx in self._completed_game_indices
 
     def _initialize_players(self) -> dict[str, ProviderChessAI]:
         """Initialize player AIs from config.
@@ -205,7 +229,7 @@ class BenchmarkRunner:
                     f"Invalid player spec '{player_spec}': expected 'provider:model' format"
                 ) from exc
 
-            api_key = self.config.api_keys.get(provider_name, '')
+            api_key = (self.config.api_keys.get(provider_name) or '').strip()
 
             provider = get_provider(provider_name)
             if not provider:
@@ -266,10 +290,31 @@ class BenchmarkRunner:
                 'ply': 0
             }]
 
-    def _create_player(self, player_spec: str) -> ProviderChessAI:
-        """Create a fresh AI instance for a game."""
+    def _create_player(self, player_spec: str, color: str | None = None) -> ProviderChessAI:
+        """Create a fresh AI instance for a game.
+
+        Args:
+            player_spec: Player specification in format "provider:model_id"
+            color: Optional color ("white" or "black") for prompt override selection
+        """
         provider_name, model_id = player_spec.split(':', 1)
         api_key = self.config.api_keys.get(provider_name, '')
+
+        # Determine prompts with precedence: color-specific > spec-keyed > None
+        system_prompt = None
+        turn_prompt = None
+
+        if color:
+            # Try color-specific override first
+            system_prompt = self.config.system_prompts_by_color.get(color)
+            turn_prompt = self.config.turn_prompts_by_color.get(color)
+
+        # Fall back to spec-keyed prompts
+        if system_prompt is None:
+            system_prompt = self.config.system_prompts.get(player_spec)
+        if turn_prompt is None:
+            turn_prompt = self.config.turn_prompts.get(player_spec)
+
         return ProviderChessAI(
             provider_name=provider_name,
             model_id=model_id,
@@ -277,6 +322,8 @@ class BenchmarkRunner:
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
             reasoning_level=self.config.reasoning_level,
+            system_prompt=system_prompt,
+            turn_prompt=turn_prompt,
         )
 
     def request_continue_after_problem(self) -> None:
@@ -317,9 +364,9 @@ class BenchmarkRunner:
         has written the JSONL record — so a UI consumer sees the same state
         the on-disk logs reflect.
         """
-        # Create fresh AI instances for every game to isolate state (move history, etc.)
-        white_ai = self._create_player(white_spec)
-        black_ai = self._create_player(black_spec)
+# Create fresh AI instances for every game to isolate state (move history, etc.)
+        white_ai = self._create_player(white_spec, "white")
+        black_ai = self._create_player(black_spec, "black")
 
         # Set up opening position
         board = chess.Board(opening['fen'])
@@ -338,7 +385,7 @@ class BenchmarkRunner:
             )
 
             # Track moves for logging
-            move_logs: list[GameLogEntry] = []
+            move_logs: list[GameMove] = []
 
             async def ui_callback(state: GameState) -> None:
                 if state.moves and len(state.moves) > len(move_logs):
@@ -361,16 +408,21 @@ class BenchmarkRunner:
                         llm_tokens_in=cr.tokens_in if cr else None,
                         llm_tokens_out=cr.tokens_out if cr else None,
                         llm_raw_response=cr.text if cr else "",
-                        thinking_trace=_extract_thinking(cr.text if cr else None),
+                        thinking_trace=(_extract_thinking(cr.text) or None) if (cr and cr.text) else None,
                         prompt_hash=_prompt_hash(fen_before),
-                        validation_retries=0,
-                        eval_cp_score=eval_result.cp_score if eval_result else None,
-                        eval_mate_in=eval_result.mate_in if eval_result else None,
-                        eval_best_move_uci=eval_result.best_move_uci if eval_result else None,
                         eval_best_move_cp=eval_result.best_move_cp if eval_result else None,
                         eval_top3_moves=eval_result.top3_moves if eval_result else None,
                         eval_depth=eval_result.depth if eval_result else None,
                         eval_time_ms=eval_result.time_ms if eval_result else None,
+                        game_phase=getattr(last_move, "game_phase", None),
+                        material_white=getattr(last_move, "material_white", None),
+                        material_black=getattr(last_move, "material_black", None),
+                        material_imbalance=getattr(last_move, "material_imbalance", None),
+                        position_complexity=getattr(last_move, "position_complexity", None),
+                        illegal_attempts_count=getattr(last_move, "illegal_attempts_count", 0),
+                        attempted_illegal_moves=getattr(last_move, "attempted_illegal_moves", []),
+                        clock_remaining_sec=getattr(last_move, "clock_remaining_sec", None),
+                        validation_retries=getattr(last_move, "validation_retries", 0),
                     )
                     move_logs.append(last_move)
                 if user_callback is not None:
@@ -382,7 +434,12 @@ class BenchmarkRunner:
                 self.config.time_control_seconds_per_move,
                 0  # No increment for now, could be added to config later
             )
-            game = AsyncChessGame(white_ai, black_ai, clock=clock, evaluator=evaluator)
+            game = AsyncChessGame(
+                white_ai, black_ai, clock=clock, evaluator=evaluator,
+                # Interactive only when an external UI can dismiss pauses;
+                # the per-move ui_callback closure below always exists.
+                interactive=user_callback is not None,
+            )
             game.board = board.copy()
             self.current_game = game
 
@@ -445,10 +502,13 @@ class BenchmarkRunner:
                         )
 
                 if not is_clean:
+                    failure_detail = getattr(game, "last_failure_error", None)
                     problem = (
                         f"{run_exc}" if run_exc is not None
                         else f"game did not reach a clean chess terminal "
-                             f"(termination={termination}, winner={stats.winner})"
+                             f"(termination={termination}, winner={stats.winner}"
+                             + (f", detail={failure_detail}" if failure_detail else "")
+                             + ")"
                     )
                     self.logger.log_error(
                         game_index=game_idx + 1,
@@ -567,6 +627,10 @@ class BenchmarkRunner:
 
         fatal_exception: Exception | None = None
 
+        # Load completed game indices for resume functionality
+        if self.resume_from:
+            self._load_completed_game_indices()
+
         # Run games pairing by pairing (for proper Glicko-2 rating periods)
         for pairing_idx, (white, black) in enumerate(pairings):
             alternating = pairing_alternating_colors[pairing_idx]
@@ -633,9 +697,6 @@ class BenchmarkRunner:
                     try:
                         return await self.run_pairing(
                             white_spec, black_spec, opening, game_idx, ui_callback, alternating,
-                            on_game_start=lambda g: setattr(
-                                __import__('streamlit').session_state, 'benchmark_current_game', g
-                            )
                         )
                     finally:
                         self.rate_limiter.release(white_provider)
@@ -822,9 +883,9 @@ async def main() -> None:
     # Override from command line
     if args.players:
         config.players = args.players
-    if args.games:
+    if args.games is not None:
         config.games_per_pairing = args.games
-    if args.parallel:
+    if args.parallel is not None:
         config.max_parallel_games = args.parallel
     if args.move_timeout is not None:
         config.move_timeout_seconds = args.move_timeout
@@ -835,16 +896,25 @@ async def main() -> None:
     # Load API keys from environment
     import os
     for provider in list_providers():
-        key = os.getenv(f"{provider.upper()}_API_KEY")
+        key = (os.getenv(f"{provider.upper()}_API_KEY") or "").strip()
         if key:
             config.api_keys[provider] = key
 
     if not config.players:
         print("Error: No players specified. Use --players or config file.")
-        return
+        raise SystemExit(1)
 
-    runner = BenchmarkRunner(config)
-    await runner.run_benchmark()
+    try:
+        runner = BenchmarkRunner(config)
+        await runner.run_benchmark()
+    except (SetupError, NoProvidersConfiguredError, InvalidApiKeyError) as exc:
+        print(f"Error: {exc}")
+        raise SystemExit(1) from exc
+    except FatalBenchmarkError as exc:
+        print(f"Benchmark aborted: {exc}")
+        if exc.cause is not None:
+            print(f"Caused by: {exc.cause}")
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

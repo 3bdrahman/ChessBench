@@ -1,15 +1,17 @@
 """Stockfish evaluator for ground-truth position analysis."""
 
-
-
 import contextlib
 import logging
+import os
+import shutil
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import chess
 import chess.engine
+
+from chessbench import constants
 
 _log = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ class StockfishEvaluator:
     def __init__(
         self,
         binary_path: str = "stockfish",
-        depth: int = 18,
+        depth: int = constants.STOCKFISH_DEFAULT_DEPTH,
         time_ms: int = 100,
         threads: int = 1,
         hash_mb: int = 64,
@@ -51,37 +53,36 @@ class StockfishEvaluator:
 
     def _check_binary(self) -> bool:
         """Check if Stockfish binary is available."""
-        try:
-            import shutil
-            env_path = os.environ.get("STOCKFISH_PATH")
-            if env_path:
-                parts = env_path.strip().split()
-                if parts:
-                    bin_cmd = shutil.which(parts[0]) or parts[0]
-                    if os.path.exists(bin_cmd) or shutil.which(parts[0]):
-                        self.binary_path = env_path
-                        self._available = True
-                        return True
-            if shutil.which(self.binary_path):
-                self._available = True
-                return True
-            # Try common paths
-            common_paths = [
-                "/usr/bin/stockfish",
-                "/usr/local/bin/stockfish",
-                "/opt/homebrew/bin/stockfish",
-                "/var/home/linuxbrew/.linuxbrew/bin/stockfish",
-                "/home/linuxbrew/.linuxbrew/bin/stockfish",
-                "/usr/games/stockfish",
-                os.path.expanduser("~/.local/bin/stockfish"),
-            ]
-            for path in common_paths:
-                if shutil.which(path) or os.path.exists(path):
-                    self.binary_path = path
+        if os.environ.get("CHESSBENCH_DISABLE_EVALUATOR", "").strip().lower() in ("1", "true", "yes"):
+            _log.info("CHESSBENCH_DISABLE_EVALUATOR set — centipawn evaluation disabled.")
+            self._available = False
+            return False
+        env_path = os.environ.get("STOCKFISH_PATH")
+        if env_path:
+            parts = env_path.strip().split()
+            if parts:
+                bin_cmd = shutil.which(parts[0]) or parts[0]
+                if os.path.exists(bin_cmd) or shutil.which(parts[0]):
+                    self.binary_path = env_path
                     self._available = True
                     return True
-        except Exception:
-            pass
+        if shutil.which(self.binary_path):
+            self._available = True
+            return True
+        common_paths = [
+            "/usr/bin/stockfish",
+            "/usr/local/bin/stockfish",
+            "/opt/homebrew/bin/stockfish",
+            "/var/home/linuxbrew/.linuxbrew/bin/stockfish",
+            "/home/linuxbrew/.linuxbrew/bin/stockfish",
+            "/usr/games/stockfish",
+            os.path.expanduser("~/.local/bin/stockfish"),
+        ]
+        for path in common_paths:
+            if shutil.which(path) or os.path.exists(path):
+                self.binary_path = path
+                self._available = True
+                return True
         self._available = False
         return False
 
@@ -115,7 +116,7 @@ class StockfishEvaluator:
                 self._transport.close()
             self._transport = None
 
-    async def __aenter__(self) -> StockfishEvaluator:
+    async def __aenter__(self) -> "StockfishEvaluator":
         await self.start()
         return self
 

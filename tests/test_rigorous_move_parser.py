@@ -28,16 +28,16 @@ def _generate_noisy_llm_text(move_str: str, format_type: str = "tagged") -> str:
     garbage_before = "".join(random.choices(string.ascii_letters + " \n\t.,;:?!", k=random.randint(20, 100)))
     garbage_after = "".join(random.choices(string.ascii_letters + " \n\t.,;:?!", k=random.randint(20, 100)))
 
-    if format_type == "tagged":
-        return f"{garbage_before}\n<thinking>\nAnalyzing board...\n</thinking>\n<move>{move_str}</move>\n{garbage_after}"
-    elif format_type == "san":
-        return f"{garbage_before}\nI think the move to play is {move_str}. This controls the center.\n{garbage_after}"
-    elif format_type == "markdown_code":
-        return f"{garbage_before}\n```\n{move_str}\n```\n{garbage_after}"
-    elif format_type == "bold":
-        return f"{garbage_before}\nMy choice is **{move_str}**.\n{garbage_after}"
-    else:
+    templates = {
+        "tagged": f"{garbage_before}\n<thinking>\nAnalyzing board...\n</thinking>\n<move>{{}}</move>\n{garbage_after}",
+        "san": f"{garbage_before}\nI think the move to play is {{}}. This controls the center.\n{garbage_after}",
+        "markdown_code": f"{garbage_before}\n```\n{{}}\n```\n{garbage_after}",
+        "bold": f"{garbage_before}\nMy choice is **{{}}**.\n{garbage_after}",
+    }
+    template = templates.get(format_type)
+    if template is None:
         return f"{garbage_before} {move_str} {garbage_after}"
+    return template.format(move_str)
 
 
 class TestRigorousMoveParser:

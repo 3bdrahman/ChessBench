@@ -72,15 +72,11 @@ class TestLiveProvidersIntegration:
         )
 
         board = chess.Board()
-        res = await ai.get_move(board)
+        move = await ai.get_move(board.fen())
 
-        assert res.raw_text is not None and len(res.raw_text) > 0
-        assert res.tokens_in is not None and res.tokens_in > 0
-        assert res.tokens_out is not None and res.tokens_out > 0
-        assert res.latency_ms is not None and res.latency_ms > 0
-
-        # Move should either be parsed or identified cleanly
-        if res.uci is not None:
-            assert res.move in board.legal_moves, (
-                f"Live model {provider_name}:{model_id} returned illegal move {res.uci}"
-            )
+        # get_move validates legality internally; the parsed move must be one
+        # of the legal moves in the position it was asked about.
+        probe_board = chess.Board()
+        assert chess.Move.from_uci(move) in probe_board.legal_moves, (
+            f"Live model {provider_name}:{model_id} returned illegal move {move}"
+        )

@@ -58,7 +58,7 @@ class TestGameClock:
         clock = GameClock.from_seconds(300, increment_seconds=5)
         limit = clock.to_engine_limit()
         assert isinstance(limit, chess.engine.Limit)
-        assert limit.white_clock == timedelta(seconds=300)
-        assert limit.black_clock == timedelta(seconds=300)
-        assert limit.white_inc == timedelta(seconds=5)
-        assert limit.black_inc == timedelta(seconds=5)
+        assert limit.white_clock == 300.0
+        assert limit.black_clock == 300.0
+        assert limit.white_inc == 5.0
+        assert limit.black_inc == 5.0

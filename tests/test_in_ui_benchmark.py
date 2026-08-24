@@ -13,6 +13,12 @@ from chessbench.benchmark.runner import BenchmarkConfig, BenchmarkRunner
 from chessbench.providers.chess_ai import ProviderChessAI
 from chessbench.providers.stockfish import StockfishProvider
 
+
+@pytest.fixture(autouse=True)
+def _no_stockfish_eval(monkeypatch):
+    """Keep benchmark-level tests hermetic and fast: skip per-move engine analysis."""
+    monkeypatch.setenv("CHESSBENCH_DISABLE_EVALUATOR", "1")
+
 _STUB_ENGINE = str((Path(__file__).parent / "fixtures" / "uci_stub_engine.py").resolve())
 _FULL_CMD = f"{sys.executable} {_STUB_ENGINE}"
 
@@ -83,7 +89,7 @@ class TestInProcessBenchmark:
 
         assert len(seen_states) >= 4
         final_states = [s for s in seen_states if s.is_game_over]
-        # With 2 players and alternating colors: 1 pairing × 1 game = 1 final state
+        # With 2 players and alternating colors: 1 pairing x 1 game = 1 final state
         assert len(final_states) == 1
         for fs in final_states:
             assert fs.winner is not None
@@ -121,7 +127,7 @@ class TestInProcessBenchmark:
 
         run = load_run(run_dir)
         assert run is not None
-        # With 2 players and alternating colors: 1 pairing × 1 game = 1 game total
+        # With 2 players and alternating colors: 1 pairing x 1 game = 1 game total
         assert run.total_games == 1
         assert "stockfish:depth-4" in run.player_stats
         assert "stockfish:depth-8" in run.player_stats
@@ -304,7 +310,7 @@ class TestPerGameTimeoutNonFatal:
 
         run = load_run(run_dir)
         assert run is not None
-        # With 2 players and alternating colors: 1 pairing × 2 games = 2 scheduled games
+        # With 2 players and alternating colors: 1 pairing x 2 games = 2 scheduled games
         # One timed out, so completed-game count < scheduled count.
         assert run.total_games < 2
         assert run.total_games >= 1  # at least one game actually finished

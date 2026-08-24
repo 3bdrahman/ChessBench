@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -9,8 +10,6 @@ from typing import Any
 import chess
 
 from chessbench.benchmark.evaluator import StockfishEvaluator
-from chessbench.game.async_game import AsyncChessGame
-from chessbench.game.clock import GameClock
 from chessbench.providers import get_provider
 from chessbench.providers.chess_ai import ProviderChessAI
 
@@ -23,9 +22,8 @@ class AdversarialConfig:
     colors: str = "alternating"  # "alternating", "white", "black"
     time_control_seconds: int = 30
     max_parallel_games: int = 2
-
-    def __post_init__(self) -> None:
-        pass
+    max_moves: int = 300
+    move_timeout_seconds: float = 120.0
 
 
 @dataclass
@@ -149,11 +147,9 @@ class AdversarialEvaluator:
         games: int,
     ) -> DepthResult:
         """Run games between LLM and Stockfish at a specific depth."""
-        # We'll use a simplified version of the runner logic
         wins = 0
         losses = 0
         draws = 0
-        total_games = 0
 
         for game_idx in range(games):
             # Determine colors
@@ -167,49 +163,44 @@ class AdversarialEvaluator:
             white_ai = llm_ai if llm_is_white else stockfish_ai
             black_ai = stockfish_ai if llm_is_white else llm_ai
 
-            # Create game
             board = chess.Board()
-            clock = GameClock.from_seconds(self.config.time_control_seconds)
-            game = AsyncChessGame(white_ai, black_ai, clock=clock)
-            game.board = board.copy()
 
-            # Play game with evaluation
-            await self.evaluator.start()
+            cp_losses: list[int] = []
+            ply = 0
+            try:
+                await self.evaluator.start()
+                while (
+                    not board.is_game_over(claim_draw=True)
+                    and ply < self.config.max_moves
+                ):
+                    current_player = white_ai if ply % 2 == 0 else black_ai
+                    fen_before = board.fen()
+                    is_llm_turn = (ply % 2 == 0 and llm_is_white) or (ply % 2 == 1 and not llm_is_white)
 
-            # Simple game loop with evaluation
-            cp_losses = []
-            total_games = 0
-            while not game.board.is_game_over():
-                current_player = white_ai if len(game.moves) % 2 == 0 else black_ai
-                fen_before = game.board.fen()
+                    eval_result = await self.evaluator.evaluate(board)
 
-                # Get move with evaluation
-                move_str, _completion_result = await current_player.get_move_with_result(fen_before)
-                move = chess.Move.from_uci(move_str)
+                    move_str, _completion_result = await asyncio.wait_for(
+                        current_player.get_move_with_result(fen_before),
+                        timeout=self.config.move_timeout_seconds,
+                    )
+                    move = chess.Move.from_uci(move_str)
+                    if move not in board.legal_moves:
+                        raise ValueError(f"Illegal move {move_str} from {current_player.name}")
+                    board.push(move)
+                    ply += 1
 
-                # Evaluate position before move
-                eval_result = await self.evaluator.evaluate(game.board)
+                    if is_llm_turn and eval_result and eval_result.cp_score is not None and eval_result.best_move_cp is not None:
+                        cp_losses.append(eval_result.best_move_cp - eval_result.cp_score)
+            finally:
+                await self.evaluator.stop()
 
-                if move in game.board.legal_moves:
-                    game.board.push(move)
-
-# Track cp loss for LLM moves
-            if ((len(game.moves) % 2 == 0 and llm_is_white) or (len(game.moves) % 2 == 1 and not llm_is_white)) and eval_result and eval_result.cp_score is not None and eval_result.best_move_cp is not None:
-                cp_loss = eval_result.best_move_cp - eval_result.cp_score
-                cp_losses.append(cp_loss)
-
-            # Determine result
-            outcome = game.board.outcome(claim_draw=False)
-            if outcome:
-                if outcome.winner is None:
-                    draws += 1
-                elif (outcome.winner and llm_is_white) or (not outcome.winner and not llm_is_white):
-                    wins += 1
-                else:
-                    losses += 1
-
-            total_games += 1
-            await self.evaluator.stop()
+            outcome = board.outcome(claim_draw=True)
+            if outcome is None or outcome.winner is None:
+                draws += 1
+            elif (outcome.winner and llm_is_white) or (not outcome.winner and not llm_is_white):
+                wins += 1
+            else:
+                losses += 1
 
         games_played = wins + losses + draws
         llm_score = (wins + 0.5 * draws) / games_played if games_played > 0 else 0

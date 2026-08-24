@@ -96,9 +96,7 @@ def _is_executable_file(candidate: str) -> bool:
             return False
         binary = shutil.which(parts[0]) or parts[0]
         binary_path = Path(binary).expanduser()
-        if binary_path.is_file() and os.access(binary_path, os.X_OK):
-            return True
-        return False
+        return binary_path.is_file() and os.access(binary_path, os.X_OK)
     except OSError:
         return False
 
@@ -227,14 +225,19 @@ class StockfishProvider(ModelProvider):
                 timeout=think_time + 2.0,
             )
         except builtins.TimeoutError as exc:
-            latency_ms = int((time.time() - start) * 1000)
             raise TimeoutError(
                 "stockfish",
                 think_time + 2.0,
             ) from exc
-        finally:
-            # Engine is reused across moves; do not quit here.
-            pass
+        except chess.engine.EngineError as exc:
+            # Engine died or desynced: drop the cached process so the next
+            # call starts a fresh one instead of replaying against a corpse.
+            await self.shutdown()
+            raise ProviderAPIError(
+                "stockfish",
+                502,
+                f"Stockfish engine failed during play: {exc}",
+            ) from exc
 
         latency_ms = int((time.time() - start) * 1000)
         if result.move is None:
@@ -286,7 +289,13 @@ class StockfishProvider(ModelProvider):
             return self._protocol
         await self.shutdown()
         command = self._command_for(binary)
-        transport, protocol = await chess.engine.popen_uci(command)
+        try:
+            transport, protocol = await chess.engine.popen_uci(command)
+        except OSError as exc:
+            raise ProviderUnavailableError(
+                "stockfish",
+                f"failed to start engine '{command}': {exc}",
+            ) from exc
         try:
             await protocol.configure(
                 {

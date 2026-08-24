@@ -27,6 +27,7 @@ from chessbench.common.exceptions import (
     RateLimitError,
     TimeoutError,
 )
+from chessbench.providers._openai_compat import extract_chat_message
 from chessbench.providers.registry import register_provider
 
 _log = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ class NIMProvider(ModelProvider):
         self.base_url = os.getenv("NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
 
     def validate_key(self, api_key: str) -> bool:
-        return len(api_key) >= 10
+        return len(api_key.strip()) >= 10
 
     def _key_prefix_hint(self) -> str:
         return "NIM key"
@@ -90,7 +91,7 @@ class NIMProvider(ModelProvider):
 
         completion_kwargs: dict[str, Any] = {
             "model": model,
-            "messages": openai_messages,  # type: ignore[arg-type]
+            "messages": openai_messages,
             "temperature": temperature,
         }
         if max_tokens is not None:
@@ -105,13 +106,24 @@ class NIMProvider(ModelProvider):
         try:
             response = await client.chat.completions.create(**completion_kwargs)
         except Exception as exc:
-            latency_ms = int((time.time() - start) * 1000)
-            _classify_and_raise(exc, "nim", model, latency_ms, api_key)
+            # Fallback if NIM model rejects tool calling parameters (400 / 422)
+            if "tools" in completion_kwargs and getattr(exc, "status_code", None) in (400, 422):
+                _log.warning("NIM model %s rejected tools parameter; retrying without tools...", model)
+                completion_kwargs.pop("tools", None)
+                completion_kwargs.pop("tool_choice", None)
+                try:
+                    response = await client.chat.completions.create(**completion_kwargs)
+                except Exception as exc2:
+                    latency_ms = int((time.time() - start) * 1000)
+                    _classify_and_raise(exc2, "nim", model, latency_ms, api_key)
+            else:
+                latency_ms = int((time.time() - start) * 1000)
+                _classify_and_raise(exc, "nim", model, latency_ms, api_key)
 
         latency_ms = int((time.time() - start) * 1000)
 
         tool_calls_out = None
-        message = response.choices[0].message
+        message = extract_chat_message(response, "nim", model)
         if hasattr(message, "tool_calls") and message.tool_calls:
             import json
             tool_calls_out = []

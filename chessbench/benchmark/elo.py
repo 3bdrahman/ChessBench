@@ -132,9 +132,6 @@ class Glicko2:
                 deviation=173.7178 * new_phi,
                 volatility=new_sigma
             )
-            new_ratings[player].mu = new_mu
-            new_ratings[player].phi = new_phi
-            new_ratings[player].sigma = new_sigma
 
         # Apply updates
         self.ratings.update(new_ratings)

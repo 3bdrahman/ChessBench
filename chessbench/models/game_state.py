@@ -25,6 +25,14 @@ class GameMove:
     is_illegal: bool = False
     is_format_error: bool = False
     validation_retries: int = 0
+    game_phase: str = "middlegame"
+    material_white: int = 39
+    material_black: int = 39
+    material_imbalance: int = 0
+    position_complexity: int = 20
+    illegal_attempts_count: int = 0
+    attempted_illegal_moves: list[str] = field(default_factory=list)
+    clock_remaining_sec: float | None = None
 
 
 @dataclass

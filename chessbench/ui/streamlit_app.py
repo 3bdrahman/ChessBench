@@ -13,12 +13,11 @@ import asyncio
 import os
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import chess
 import chess.svg
-import numpy as np
 import pandas as pd
 import streamlit as st
 from streamlit.runtime.scriptrunner import add_script_run_ctx
@@ -28,7 +27,7 @@ from chessbench.benchmark.results_view import (
     load_run,
 )
 from chessbench.benchmark.runner import BenchmarkConfig, BenchmarkRunner
-from chessbench.common.common_types import is_chess_capable
+from chessbench.common.common_types import ChatMessage, is_chess_capable
 from chessbench.common.exceptions import (
     FatalBenchmarkError,
     GameExecutionError,
@@ -43,8 +42,11 @@ from chessbench.common.exceptions import (
 # NIM: NVIDIA's hosted inference API, server-side key.
 from chessbench.constants import HOSTED_PROVIDERS
 from chessbench.game.async_game import GameState
+from chessbench.models import GameMove, GameStats
+from chessbench.prompts import validate_prompt_text
 from chessbench.providers import get_provider, list_providers
 from chessbench.providers.chess_ai import ProviderChessAI
+from chessbench.ui.dry_run import render_dry_run
 from chessbench.ui.error_display import render_error
 from chessbench.ui.helpers import (
     format_duration_ms,
@@ -54,9 +56,12 @@ from chessbench.ui.helpers import (
     render_thinking_trace_drawer,
 )
 from chessbench.ui.landing import render_hero, render_landing_metrics
+from chessbench.ui.prompt_workbench import can_launch_match, is_ab_eligible
 from chessbench.ui.theme import apply_arena_theme
 
-RUNS_ROOT = os.environ.get("CHESSBENCH_RUNS_ROOT") or os.environ.get("CHESS_FIGHT_RUNS_ROOT", "runs")
+RUNS_ROOT = os.environ.get("CHESSBENCH_RUNS_ROOT") or os.environ.get(
+    "CHESS_FIGHT_RUNS_ROOT", "runs"
+)
 
 # Configure page
 st.set_page_config(
@@ -72,9 +77,13 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 
 
-def _draw_board(board_placeholder, state: GameState, start_time: float | None = None) -> None:
+def _draw_board(
+    board_placeholder, state: GameState, start_time: float | None = None
+) -> None:
     king_square = state.board.king(state.board.turn)
-    check_square = king_square if state.board.is_check() and king_square is not None else None
+    check_square = (
+        king_square if state.board.is_check() and king_square is not None else None
+    )
     board_placeholder.write(
         chess.svg.board(
             state.board,
@@ -86,7 +95,9 @@ def _draw_board(board_placeholder, state: GameState, start_time: float | None = 
     )
 
 
-def _draw_metrics(stats_placeholder, state: GameState, start_time: float | None = None) -> None:
+def _draw_metrics(
+    stats_placeholder, state: GameState, start_time: float | None = None
+) -> None:
     cols = stats_placeholder.columns(5)
     with cols[0]:
         st.metric("Total Moves", state.stats.total_moves)
@@ -107,8 +118,8 @@ def _draw_metrics(stats_placeholder, state: GameState, start_time: float | None 
             turn_color = "White ♔" if state.board.turn else "Black ♚"
             st.metric("Current Turn", turn_color)
         else:
-            term_reason = getattr(state.stats, 'termination_reason', 'unknown')
-            st.metric("Termination", term_reason.replace('_', ' ').title())
+            term_reason = getattr(state.stats, "termination_reason", "unknown")
+            st.metric("Termination", term_reason.replace("_", " ").title())
 
 
 def _draw_moves(moves_placeholder, moves: list) -> None:
@@ -122,7 +133,11 @@ def _draw_moves(moves_placeholder, moves: list) -> None:
                 "Move": move.move,
                 "Capture": 1 if move.is_capture else 0,
                 "Check": 1 if move.is_check else 0,
-                "Reasoning": (move.reasoning.replace("<", "&lt;").replace(">", "&gt;") if move.reasoning else ""),
+                "Reasoning": (
+                    move.reasoning.replace("<", "&lt;").replace(">", "&gt;")
+                    if move.reasoning
+                    else ""
+                ),
             }
             for i, move in enumerate(moves)
         ]
@@ -137,7 +152,9 @@ def _draw_moves(moves_placeholder, moves: list) -> None:
         )
     }
 
-    moves_placeholder.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
+    moves_placeholder.dataframe(
+        df, hide_index=True, width="stretch", column_config=column_config
+    )
 
 
 def _draw_completion_result(expander_placeholder, state: GameState) -> None:
@@ -145,17 +162,26 @@ def _draw_completion_result(expander_placeholder, state: GameState) -> None:
     cr = state.last_completion_result
     if cr is None:
         return
-    title = f"Last LLM completion ({state.current_player})" if state.current_player else "Last LLM completion"
+    title = (
+        f"Last LLM completion ({state.current_player})"
+        if state.current_player
+        else "Last LLM completion"
+    )
     with expander_placeholder.expander(title, expanded=True):
         col_a, col_b, col_c = st.columns(3)
         with col_a:
-            st.metric("Latency", format_duration_ms(cr.latency_ms) if cr.latency_ms is not None else "—")
+            st.metric(
+                "Latency",
+                format_duration_ms(cr.latency_ms) if cr.latency_ms is not None else "—",
+            )
         with col_b:
             st.metric("Tokens in", cr.tokens_in if cr.tokens_in is not None else "—")
         with col_c:
             st.metric("Tokens out", cr.tokens_out if cr.tokens_out is not None else "—")
         if cr.error:
-            st.error(f"**{cr.error_type or 'Error'}** (Retry #{cr.retry_count}): {cr.error}")
+            st.error(
+                f"**{cr.error_type or 'Error'}** (Retry #{cr.retry_count}): {cr.error}"
+            )
         else:
             st.caption("Raw model response:")
             st.code(cr.text or "")
@@ -172,7 +198,9 @@ class ChessUI:
 
     def display_board(self, board):
         king_square = board.king(board.turn)
-        check_square = king_square if board.is_check() and king_square is not None else None
+        check_square = (
+            king_square if board.is_check() and king_square is not None else None
+        )
         svg_board = chess.svg.board(
             board,
             size=600,
@@ -203,14 +231,29 @@ class ChessUI:
 # ---------------------------------------------------------------------------
 
 
+def _safe_async_run(coro: Any) -> Any:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    else:
+        return asyncio.run(coro)
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
-def _cached_list_models(provider_name: str, api_key: str) -> list:
+def _cached_list_models(provider_name: str, api_key: str) -> list[Any]:
     """Cache model list responses to accelerate Streamlit Cloud reruns."""
     provider = get_provider(provider_name)
     if not provider:
         return []
     try:
-        return asyncio.run(provider.list_models(api_key))
+        return _safe_async_run(provider.list_models(api_key))  # type: ignore[no-any-return]
     except Exception:
         return []
 
@@ -256,9 +299,8 @@ def _get_secret_or_env(provider_name: str) -> str | None:
         return env_key
     try:
         if hasattr(st, "secrets"):
-            return (
-                st.secrets.get(f"{provider_name.lower()}_api_key")
-                or st.secrets.get(f"{provider_name.upper()}_API_KEY")
+            return st.secrets.get(f"{provider_name.lower()}_api_key") or st.secrets.get(
+                f"{provider_name.upper()}_API_KEY"
             )
     except Exception:
         pass
@@ -283,10 +325,12 @@ def _test_model_async(model_info: dict):
         with st.spinner(f"Testing {model_id}..."):
             _ = asyncio.run(
                 provider.complete(
-                    model_id=model_id,
-                    prompt="Test",
-                    system_prompt="Respond with 'OK'.",
                     api_key=api_key,
+                    model=model_id,
+                    messages=[
+                        ChatMessage(role="system", content="Respond with 'OK'."),
+                        ChatMessage(role="user", content="Test"),
+                    ],
                     temperature=0.0,
                     max_tokens=5,
                 )
@@ -306,7 +350,7 @@ def render_sidebar_header_and_nav():
         '<div class="sb-brand-container">'
         '  <div class="sb-brand-title">♟️ CHESSBENCH</div>'
         '  <div class="sb-brand-tag">v1.0</div>'
-        '</div>',
+        "</div>",
         unsafe_allow_html=True,
     )
 
@@ -349,7 +393,9 @@ def render_provider_keys_section():
 
     expander_title = f"🔑 Provider Keys ({active_count}/{total_count} Active)"
     with st.sidebar.expander(expander_title, expanded=False):
-        st.caption("API keys are loaded automatically from Streamlit Secrets or Environment Variables.")
+        st.caption(
+            "API keys are loaded automatically from Streamlit Secrets or Environment Variables."
+        )
 
         grid_html = '<div class="sb-provider-grid">'
         for pname, is_active, label in status_list:
@@ -357,7 +403,7 @@ def render_provider_keys_section():
                 grid_html += f'<div class="sb-provider-badge-active"><span>✓ {pname.capitalize()}</span><span style="font-size:0.64rem; opacity:0.85;">{label}</span></div>'
             else:
                 grid_html += f'<div class="sb-provider-badge-inactive"><span>🔒 {pname.capitalize()}</span><span style="font-size:0.64rem; opacity:0.65;">{label}</span></div>'
-        grid_html += '</div>'
+        grid_html += "</div>"
         st.markdown(grid_html, unsafe_allow_html=True)
 
         with st.popover("📋 Streamlit Secrets Template"):
@@ -366,7 +412,7 @@ def render_provider_keys_section():
                 "or into `.streamlit/secrets.toml` locally:"
             )
             st.code(
-                '# Streamlit Secrets Template\n'
+                "# Streamlit Secrets Template\n"
                 'OPENAI_API_KEY = "your_openai_key_here"\n'
                 'ANTHROPIC_API_KEY = "your_anthropic_key_here"\n'
                 'GOOGLE_API_KEY = "your_google_key_here"\n'
@@ -384,7 +430,10 @@ def render_provider_keys_section():
 
 def render_model_selectors(available_providers: list):
     """Render model selection for White and Black players."""
-    st.sidebar.markdown('<div style="font-weight:650; font-size:0.95rem; margin-bottom:8px; color:var(--arena-text);">⚔️ Player Matchup</div>', unsafe_allow_html=True)
+    st.sidebar.markdown(
+        '<div style="font-weight:650; font-size:0.95rem; margin-bottom:8px; color:var(--arena-text);">⚔️ Player Matchup</div>',
+        unsafe_allow_html=True,
+    )
 
     all_models: dict[str, dict] = {}
     filtered_count = 0
@@ -406,16 +455,16 @@ def render_model_selectors(available_providers: list):
             }
 
     if filtered_count:
-        st.sidebar.caption(
-            f"ⓘ {filtered_count} non-chat model(s) hidden"
-        )
+        st.sidebar.caption(f"ⓘ {filtered_count} non-chat model(s) hidden")
 
     if not all_models:
         st.sidebar.warning("Couldn't fetch models")
         return None, None
 
     if len(all_models) < 2:
-        st.sidebar.warning("At least 2 distinct chess-capable models are required to start a match. Please configure another provider in Streamlit Secrets.")
+        st.sidebar.warning(
+            "At least 2 distinct chess-capable models are required to start a match. Please configure another provider in Streamlit Secrets."
+        )
         return None, None
 
     model_options = list(all_models.keys())
@@ -452,14 +501,20 @@ def render_model_selectors(available_providers: list):
         key="player_model_1",
         label_visibility="collapsed",
     )
-    if col_t1.button("🔬", key="test_model_1", help="Test model latency & connectivity"):
+    if col_t1.button(
+        "🔬", key="test_model_1", help="Test model latency & connectivity"
+    ):
         _test_model_async(all_models[model_1])
 
     m1_info = all_models[model_1]
-    ctx1 = f"{m1_info['context_window']//1024}k ctx" if m1_info.get('context_window') else "standard"
+    ctx1 = (
+        f"{m1_info['context_window']//1024}k ctx"
+        if m1_info.get("context_window")
+        else "standard"
+    )
     st.sidebar.markdown(
         f'<div class="sb-model-meta"><span class="sb-tag">{m1_info["provider"]}</span><span class="sb-tag">{ctx1}</span></div>'
-        '</div>',
+        "</div>",
         unsafe_allow_html=True,
     )
 
@@ -498,14 +553,20 @@ def render_model_selectors(available_providers: list):
         key="player_model_2",
         label_visibility="collapsed",
     )
-    if col_t2.button("🔬", key="test_model_2", help="Test model latency & connectivity"):
+    if col_t2.button(
+        "🔬", key="test_model_2", help="Test model latency & connectivity"
+    ):
         _test_model_async(all_models[model_2])
 
     m2_info = all_models[model_2]
-    ctx2 = f"{m2_info['context_window']//1024}k ctx" if m2_info.get('context_window') else "standard"
+    ctx2 = (
+        f"{m2_info['context_window']//1024}k ctx"
+        if m2_info.get("context_window")
+        else "standard"
+    )
     st.sidebar.markdown(
         f'<div class="sb-model-meta"><span class="sb-tag">{m2_info["provider"]}</span><span class="sb-tag">{ctx2}</span></div>'
-        '</div>',
+        "</div>",
         unsafe_allow_html=True,
     )
 
@@ -515,166 +576,12 @@ def render_model_selectors(available_providers: list):
 
 
 def render_prompt_management(model_1_config, model_2_config):
-    """Render 10x Prompt Engineering Workbench in Streamlit sidebar with live AST validation, preset loader, and render sandbox."""
-    if not model_1_config or not model_2_config:
-        return None, None
-
-    import chess
-
-    from chessbench.prompts import (
-        DEFAULT_SYSTEM_PROMPT,
-        DEFAULT_TURN_PROMPT,
-        create_safe_prompt_template,
-        prompt_registry,
-        validate_prompt_text,
+    """Delegate to workbench_ui module."""
+    from chessbench.ui.workbench_ui import (
+        render_prompt_management as workbench_render_prompt_management,
     )
 
-    m1_spec = f"{model_1_config['provider']}:{model_1_config['model_id']}"
-    m2_spec = f"{model_2_config['provider']}:{model_2_config['model_id']}"
-
-    # Initialize defaults in session state if missing
-    if f"sys_prompt_{m1_spec}" not in st.session_state:
-        st.session_state[f"sys_prompt_{m1_spec}"] = DEFAULT_SYSTEM_PROMPT
-    if f"turn_prompt_{m1_spec}" not in st.session_state:
-        st.session_state[f"turn_prompt_{m1_spec}"] = DEFAULT_TURN_PROMPT
-    if f"sys_prompt_{m2_spec}" not in st.session_state:
-        st.session_state[f"sys_prompt_{m2_spec}"] = DEFAULT_SYSTEM_PROMPT
-    if f"turn_prompt_{m2_spec}" not in st.session_state:
-        st.session_state[f"turn_prompt_{m2_spec}"] = DEFAULT_TURN_PROMPT
-
-    with st.sidebar.expander("⚡ Prompt Strategy Workbench", expanded=False):
-        st.markdown("**🎯 Benchmark Strategy Presets**")
-        preset_versions = prompt_registry.list_versions()
-        col_pr1, col_pr2 = st.columns([3, 2])
-        selected_preset = col_pr1.selectbox(
-            "Load Tested Strategy Preset",
-            options=preset_versions,
-            index=0,
-            key="preset_selector_dropdown",
-            label_visibility="collapsed",
-        )
-        if col_pr2.button("Apply Both", key="btn_apply_preset_both", help="Apply preset to both White & Black"):
-            sys_p, turn_p = prompt_registry.get_preset_prompts(selected_preset)
-            st.session_state[f"sys_prompt_{m1_spec}"] = sys_p
-            st.session_state[f"turn_prompt_{m1_spec}"] = turn_p
-            st.session_state[f"sys_prompt_{m2_spec}"] = sys_p
-            st.session_state[f"turn_prompt_{m2_spec}"] = turn_p
-            st.success(f"Preset `{selected_preset}` loaded!")
-            st.rerun()
-
-        st.markdown(
-            '<div style="margin: 8px 0 4px 0; font-size: 0.72rem; color: var(--arena-text-muted); font-weight:600;">KEY VARIABLES</div>'
-            '<span class="sb-var-chip">{color}</span><span class="sb-var-chip">{fen}</span><span class="sb-var-chip">{forcing_moves}</span><span class="sb-var-chip">{legal_moves_uci}</span><span class="sb-var-chip">{last_move_san}</span>',
-            unsafe_allow_html=True,
-        )
-
-        tab_p1, tab_p2 = st.tabs(["♔ P1 (White)", "♚ P2 (Black)"])
-
-        # --- Player 1 ---
-        with tab_p1:
-            st.caption(f"Strategy for `{model_1_config['model_id'][:20]}`")
-            sys_1 = st.text_area(
-                "System Prompt (P1)",
-                value=st.session_state[f"sys_prompt_{m1_spec}"],
-                height=80,
-                key=f"ui_sys_1_{m1_spec}",
-            )
-            turn_1 = st.text_area(
-                "Turn Prompt (P1)",
-                value=st.session_state[f"turn_prompt_{m1_spec}"],
-                height=140,
-                key=f"ui_turn_1_{m1_spec}",
-            )
-
-            v1 = validate_prompt_text(sys_1, turn_1)
-            if not v1.is_valid:
-                st.error("❌ P1 Prompt Invalid:\n" + "\n".join(f"- {e}" for e in v1.errors))
-            else:
-                st.caption(f"✅ Budget: ~`{v1.estimated_tokens}` tokens")
-
-            col_res1, col_prev1 = st.columns([1, 1])
-            if col_res1.button("🔄 Reset P1", key=f"reset_p1_{m1_spec}"):
-                st.session_state[f"sys_prompt_{m1_spec}"] = DEFAULT_SYSTEM_PROMPT
-                st.session_state[f"turn_prompt_{m1_spec}"] = DEFAULT_TURN_PROMPT
-                st.rerun()
-
-            with col_prev1.popover("👁️ Preview Output"):
-                tmpl1, _ = create_safe_prompt_template(sys_1, turn_1)
-                sample_board = chess.Board()
-                sample_ctx = {
-                    "color": "White",
-                    "fen": sample_board.fen(),
-                    "ascii_board": str(sample_board),
-                    "forcing_moves": "e2e4, d2d4",
-                    "developing_moves": "g1f3, b1c3",
-                    "positional_moves": "c2c4",
-                    "legal_moves_uci": "e2e4 d2d4 g1f3 b1c3",
-                    "legal_moves_annotated": "1. e2e4",
-                    "last_move_san": "None",
-                    "move_history_san": "",
-                    "stagnation_status": "Normal",
-                }
-                msgs1 = tmpl1.render_messages(sample_ctx)
-                for msg in msgs1:
-                    st.markdown(f"**[{msg.role.upper()}]**")
-                    st.code(msg.content, language="text")
-
-        # --- Player 2 ---
-        with tab_p2:
-            st.caption(f"Strategy for `{model_2_config['model_id'][:20]}`")
-            sys_2 = st.text_area(
-                "System Prompt (P2)",
-                value=st.session_state[f"sys_prompt_{m2_spec}"],
-                height=80,
-                key=f"ui_sys_2_{m2_spec}",
-            )
-            turn_2 = st.text_area(
-                "Turn Prompt (P2)",
-                value=st.session_state[f"turn_prompt_{m2_spec}"],
-                height=140,
-                key=f"ui_turn_2_{m2_spec}",
-            )
-
-            v2 = validate_prompt_text(sys_2, turn_2)
-            if not v2.is_valid:
-                st.error("❌ P2 Prompt Invalid:\n" + "\n".join(f"- {e}" for e in v2.errors))
-            else:
-                st.caption(f"✅ Budget: ~`{v2.estimated_tokens}` tokens")
-
-            col_res2, col_prev2 = st.columns([1, 1])
-            if col_res2.button("🔄 Reset P2", key=f"reset_p2_{m2_spec}"):
-                st.session_state[f"sys_prompt_{m2_spec}"] = DEFAULT_SYSTEM_PROMPT
-                st.session_state[f"turn_prompt_{m2_spec}"] = DEFAULT_TURN_PROMPT
-                st.rerun()
-
-            with col_prev2.popover("👁️ Preview Output"):
-                tmpl2, _ = create_safe_prompt_template(sys_2, turn_2)
-                sample_board = chess.Board()
-                sample_ctx = {
-                    "color": "Black",
-                    "fen": sample_board.fen(),
-                    "ascii_board": str(sample_board),
-                    "forcing_moves": "e7e5, c7c5",
-                    "developing_moves": "g8f6, b8c6",
-                    "positional_moves": "d7d6",
-                    "legal_moves_uci": "e7e5 c7c5 g8f6 b8c6",
-                    "legal_moves_annotated": "1... e5",
-                    "last_move_san": "e4",
-                    "move_history_san": "1. e4",
-                    "stagnation_status": "Normal",
-                }
-                msgs2 = tmpl2.render_messages(sample_ctx)
-                for msg in msgs2:
-                    st.markdown(f"**[{msg.role.upper()}]**")
-                    st.code(msg.content, language="text")
-
-    # Save edits back to session state to persist them
-    st.session_state[f"sys_prompt_{m1_spec}"] = sys_1
-    st.session_state[f"turn_prompt_{m1_spec}"] = turn_1
-    st.session_state[f"sys_prompt_{m2_spec}"] = sys_2
-    st.session_state[f"turn_prompt_{m2_spec}"] = turn_2
-
-    return {m1_spec: sys_1, m2_spec: sys_2}, {m1_spec: turn_1, m2_spec: turn_2}
+    return workbench_render_prompt_management(model_1_config, model_2_config)
 
 
 def create_provider_ai(white_config: dict, black_config: dict):
@@ -694,9 +601,6 @@ def create_provider_ai(white_config: dict, black_config: dict):
         **black_params,
     )
     return white_ai, black_ai
-
-
-
 
 
 def _reset_game_state() -> None:
@@ -736,7 +640,7 @@ def render_live_game_screen(
     - Below: completed games stack as cf-cards
     """
     # Handle paused state
-    if is_paused:
+    if is_paused and state is not None:
         st.warning(f"⏸ Paused — {pause_reason or 'Unknown reason'}")
         if getattr(state, "pause_error", None):
             st.error(f"**Error:** {state.pause_error}")
@@ -744,27 +648,41 @@ def render_live_game_screen(
             turn_info = getattr(state, "paused_turn", 0) + 1
             st.info(f"**Failed Player:** {state.paused_player} (Turn {turn_info})")
 
-        is_benchmark_pause = (pause_reason == "game_failed")
+        is_benchmark_pause = pause_reason == "game_failed"
         if is_benchmark_pause:
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("▶️ Continue to next game", type="primary", width="stretch", key="paused_continue"):
+                if st.button(
+                    "▶️ Continue to next game",
+                    type="primary",
+                    width="stretch",
+                    key="paused_continue",
+                ):
                     runner = st.session_state.get("benchmark_runner")
-                    if runner is not None and hasattr(runner, "request_continue_after_problem"):
+                    if runner is not None and hasattr(
+                        runner, "request_continue_after_problem"
+                    ):
                         runner.request_continue_after_problem()
                     st.rerun()
             with col2:
                 if st.button("⛔ Abort benchmark", width="stretch", key="paused_abort"):
                     runner = st.session_state.get("benchmark_runner")
-                    if runner is not None and hasattr(runner, "request_abort_after_problem"):
+                    if runner is not None and hasattr(
+                        runner, "request_abort_after_problem"
+                    ):
                         runner.request_abort_after_problem()
                     st.rerun()
         else:
-            can_rewind = len(state.moves) > 1 or (len(state.moves) == 1 and not getattr(state.moves[0], "is_illegal", False))
+            can_rewind = len(state.moves) > 1 or (
+                len(state.moves) == 1
+                and not getattr(state.moves[0], "is_illegal", False)
+            )
             if can_rewind:
                 col_rewind, col1, col2, col3 = st.columns(4)
                 with col_rewind:
-                    if st.button("⏪ Rewind Turn", width="stretch", key="paused_rewind"):
+                    if st.button(
+                        "⏪ Rewind Turn", width="stretch", key="paused_rewind"
+                    ):
                         runner = st.session_state.get("benchmark_runner")
                         if runner:
                             runner.resume_game(retry=False, rewind=True)
@@ -773,13 +691,17 @@ def render_live_game_screen(
                 col1, col2, col3 = st.columns(3)
 
             with col1:
-                if st.button("↻ Retry Turn", type="primary", width="stretch", key="paused_retry"):
+                if st.button(
+                    "↻ Retry Turn", type="primary", width="stretch", key="paused_retry"
+                ):
                     runner = st.session_state.get("benchmark_runner")
                     if runner:
                         runner.resume_game(retry=True)
                     st.rerun()
             with col2:
-                if st.button("⏭ Skip Turn (Force Move)", width="stretch", key="paused_skip"):
+                if st.button(
+                    "⏭ Skip Turn (Force Move)", width="stretch", key="paused_skip"
+                ):
                     runner = st.session_state.get("benchmark_runner")
                     if runner:
                         runner.resume_game(retry=False, force_move=True)
@@ -787,12 +709,17 @@ def render_live_game_screen(
             with col3:
                 if st.button("⛔ Cancel Game", width="stretch", key="paused_cancel"):
                     runner = st.session_state.get("benchmark_runner")
-                    if runner and hasattr(runner, 'current_game') and runner.current_game:
+                    if (
+                        runner
+                        and hasattr(runner, "current_game")
+                        and runner.current_game
+                    ):
                         runner.current_game.cancel()
                     st.rerun()
 
     # Inject move ticker auto-scroll JS (runs on each render, scrolls latest pill into view)
-    st.markdown("""
+    st.markdown(
+        """
     <script>
     (function() {
         const ticker = document.querySelector('.cf-move-ticker');
@@ -805,7 +732,9 @@ def render_live_game_screen(
         }
     })();
     </script>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     # Two-column arena frame: left=board, right=panels
     if state is not None:
@@ -818,7 +747,11 @@ def render_live_game_screen(
             last_mv = state.board.peek() if state.board.move_stack else None
 
             # If there's a last move, use its eval. Otherwise default to 0.
-            cp = state.moves[-1].cp_score if state.moves and state.moves[-1].cp_score is not None else 0
+            cp = (
+                state.moves[-1].cp_score
+                if state.moves and state.moves[-1].cp_score is not None
+                else 0
+            )
             mate = state.moves[-1].mate_in if state.moves else None
 
             render_board_with_evalbar(
@@ -869,23 +802,32 @@ def render_live_game_screen(
 
                 cols2 = st.columns(3)
                 with cols2[0]:
-                    elapsed = int(state.game_duration) if state.game_duration > 0 else int(time.time() - start_time)
+                    elapsed = (
+                        int(state.game_duration)
+                        if state.game_duration > 0
+                        else int(time.time() - start_time)
+                    )
                     st.metric("Time", format_duration_ms(elapsed * 1000))
                 with cols2[1]:
                     turn_color = "White ♔" if state.board.turn else "Black ♚"
                     st.metric("Turn", turn_color if not state.is_game_over else "—")
                 with cols2[2]:
                     if state.is_game_over:
-                        term = getattr(state.stats, 'termination_reason', 'unknown')
-                        st.metric("Result", term.replace('_', ' ').title())
+                        term = getattr(state.stats, "termination_reason", "unknown")
+                        st.metric("Result", term.replace("_", " ").title())
 
             # Last completion drawer
             cr = state.last_completion_result
             if cr:
-                with st.expander(f"Last completion ({state.current_player})", expanded=False):
+                with st.expander(
+                    f"Last completion ({state.current_player})", expanded=False
+                ):
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        st.metric("Latency", format_duration_ms(cr.latency_ms) if cr.latency_ms else "—")
+                        st.metric(
+                            "Latency",
+                            format_duration_ms(cr.latency_ms) if cr.latency_ms else "—",
+                        )
                     with c2:
                         st.metric("Tokens in", f"{cr.tokens_in or 0}")
                     with c3:
@@ -905,40 +847,69 @@ def render_live_game_screen(
                 df_rows = []
                 ply_idx = 0
                 for m in state.moves:
-                    is_white_turn = (ply_idx % 2 == 0)
-                    piece_map = {'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛'}
-                    cap_suffix = f" ({piece_map.get(m.captured_piece, m.captured_piece)})" if m.captured_piece else ""
+                    is_white_turn = ply_idx % 2 == 0
+                    piece_map = {"p": "♟", "n": "♞", "b": "♝", "r": "♜", "q": "♛"}
+                    cap_suffix = (
+                        f" ({piece_map.get(m.captured_piece, m.captured_piece)})"
+                        if m.captured_piece
+                        else ""
+                    )
                     is_illegal = getattr(m, "is_illegal", False)
-                    df_rows.append({
-                        "Turn": ply_idx + 1,
-                        "Color": "White" if is_white_turn else "Black",
-                        "Player": m.player.split(":", 1)[-1],
-                        "Move": f"{m.move_san or m.move}{cap_suffix}",
-                        "Capture": 1 if m.is_capture else 0,
-                        "Check": 1 if m.is_check else 0,
-                        "Checkmate": 1 if m.is_checkmate else 0,
-                        "Illegal": 1 if is_illegal else 0,
-                        "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
-                        "Latency": format_duration_ms(m.latency_ms),
-                        "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",
-                        "Reasoning": m.reasoning.replace("<", "&lt;")[:500] + "..." if m.reasoning and len(m.reasoning) > 500 else (m.reasoning.replace("<", "&lt;") if m.reasoning else ""),
-                    })
+                    df_rows.append(
+                        {
+                            "Turn": ply_idx + 1,
+                            "Color": "White" if is_white_turn else "Black",
+                            "Player": m.player.split(":", 1)[-1],
+                            "Move": f"{m.move_san or m.move}{cap_suffix}",
+                            "Capture": 1 if m.is_capture else 0,
+                            "Check": 1 if m.is_check else 0,
+                            "Checkmate": 1 if m.is_checkmate else 0,
+                            "Illegal": 1 if is_illegal else 0,
+                            "Eval": (
+                                f"M{m.mate_in}"
+                                if m.mate_in
+                                else (
+                                    f"{m.cp_score/100:+.2f}"
+                                    if m.cp_score is not None
+                                    else ""
+                                )
+                            ),
+                            "Latency": format_duration_ms(m.latency_ms),
+                            "Tokens": (
+                                f"{m.tokens_in or 0} in / {m.tokens_out or 0} out"
+                                if m.tokens_in or m.tokens_out
+                                else ""
+                            ),
+                            "Reasoning": (
+                                m.reasoning.replace("<", "&lt;") if m.reasoning else ""
+                            ),
+                        }
+                    )
                     if not is_illegal:
                         ply_idx += 1
                 df = pd.DataFrame(df_rows)
                 column_config = {
-                    "Capture": st.column_config.NumberColumn("Capture", width="small", format="%d"),
-                    "Check": st.column_config.NumberColumn("Check", width="small", format="%d"),
-                    "Checkmate": st.column_config.NumberColumn("Checkmate", width="small", format="%d"),
-                    "Illegal": st.column_config.NumberColumn("Illegal", width="small", format="%d"),
+                    "Capture": st.column_config.NumberColumn(
+                        "Capture", width="small", format="%d"
+                    ),
+                    "Check": st.column_config.NumberColumn(
+                        "Check", width="small", format="%d"
+                    ),
+                    "Checkmate": st.column_config.NumberColumn(
+                        "Checkmate", width="small", format="%d"
+                    ),
+                    "Illegal": st.column_config.NumberColumn(
+                        "Illegal", width="small", format="%d"
+                    ),
                     "Reasoning": st.column_config.TextColumn(
                         "Reasoning",
                         help="Click a cell to read the LLM's full reasoning for this move.",
                         width="large",
-                    )
+                    ),
                 }
-                st.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
-
+                st.dataframe(
+                    df, hide_index=True, width="stretch", column_config=column_config
+                )
 
     # Completed games stack as cf-cards
     if completed_games:
@@ -952,7 +923,7 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
     """Render one completed game as a cf-card with inline board, metrics, moves."""
     white_player = state.moves[0].player if state.moves else "?"
     black_player = state.moves[1].player if len(state.moves) >= 2 else "?"
-    term_reason = getattr(state.stats, 'termination_reason', 'unknown')
+    term_reason = getattr(state.stats, "termination_reason", "unknown")
     winner = state.winner or "?"
 
     with st.container(border=True):
@@ -960,11 +931,13 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
         # Header row
         hdr_cols = st.columns([4, 1, 1])
         with hdr_cols[0]:
-            st.markdown(f"**Game {game_idx + 1}** · ♔ White: **{white_player}** vs ♚ Black: **{black_player}**")
+            st.markdown(
+                f"**Game {game_idx + 1}** · ♔ White: **{white_player}** vs ♚ Black: **{black_player}**"
+            )
         with hdr_cols[1]:
             st.metric("Result", winner)
         with hdr_cols[2]:
-            st.metric("Termination", term_reason.replace('_', ' ').title())
+            st.metric("Termination", term_reason.replace("_", " ").title())
 
         # Board + metrics side by side
         bcol, mcol = st.columns([1, 1])
@@ -972,7 +945,9 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
             king = state.board.king(state.board.turn)
             check_sq = king if state.board.is_check() and king is not None else None
             last_mv = state.board.peek() if state.board.move_stack else None
-            render_board_with_evalbar(state.board, size=320, lastmove=last_mv, check_square=check_sq)
+            render_board_with_evalbar(
+                state.board, size=320, lastmove=last_mv, check_square=check_sq
+            )
 
         with mcol:
             m1, m2, m3 = st.columns(3)
@@ -987,39 +962,75 @@ def _draw_completed_game_summary_card(game_idx: int, state: GameState) -> None:
                 df_rows = []
                 ply_idx = 0
                 for m in state.moves:
-                    is_white_turn = (ply_idx % 2 == 0)
-                    piece_map = {'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛'}
-                    cap_suffix = f" ({piece_map.get(m.captured_piece, m.captured_piece)})" if m.captured_piece else ""
+                    is_white_turn = ply_idx % 2 == 0
+                    piece_map = {"p": "♟", "n": "♞", "b": "♝", "r": "♜", "q": "♛"}
+                    cap_suffix = (
+                        f" ({piece_map.get(m.captured_piece, m.captured_piece)})"
+                        if m.captured_piece
+                        else ""
+                    )
                     is_illegal = getattr(m, "is_illegal", False)
-                    df_rows.append({
-                        "Turn": ply_idx + 1,
-                        "Color": "White" if is_white_turn else "Black",
-                        "Player": m.player.split(":", 1)[-1],
-                        "Move": f"{m.move_san or m.move}{cap_suffix}" if not is_illegal else f"Illegal: {m.move}",
-                        "Capture": 1 if m.is_capture else 0,
-                        "Check": 1 if m.is_check else 0,
-                        "Checkmate": 1 if m.is_checkmate else 0,
-                        "Illegal": 1 if is_illegal else 0,
-                        "Eval": f"M{m.mate_in}" if m.mate_in else (f"{m.cp_score/100:+.2f}" if m.cp_score is not None else ""),
-                        "Latency": format_duration_ms(m.latency_ms),
-                        "Tokens": f"{m.tokens_in or 0} in / {m.tokens_out or 0} out" if m.tokens_in or m.tokens_out else "",
-                        "Reasoning": m.reasoning.replace("<", "&lt;").replace(">", "&gt;") if m.reasoning else "",
-                    })
+                    df_rows.append(
+                        {
+                            "Turn": ply_idx + 1,
+                            "Color": "White" if is_white_turn else "Black",
+                            "Player": m.player.split(":", 1)[-1],
+                            "Move": (
+                                f"{m.move_san or m.move}{cap_suffix}"
+                                if not is_illegal
+                                else f"Illegal: {m.move}"
+                            ),
+                            "Capture": 1 if m.is_capture else 0,
+                            "Check": 1 if m.is_check else 0,
+                            "Checkmate": 1 if m.is_checkmate else 0,
+                            "Illegal": 1 if is_illegal else 0,
+                            "Eval": (
+                                f"M{m.mate_in}"
+                                if m.mate_in
+                                else (
+                                    f"{m.cp_score/100:+.2f}"
+                                    if m.cp_score is not None
+                                    else ""
+                                )
+                            ),
+                            "Latency": format_duration_ms(m.latency_ms),
+                            "Tokens": (
+                                f"{m.tokens_in or 0} in / {m.tokens_out or 0} out"
+                                if m.tokens_in or m.tokens_out
+                                else ""
+                            ),
+                            "Reasoning": (
+                                m.reasoning.replace("<", "&lt;").replace(">", "&gt;")
+                                if m.reasoning
+                                else ""
+                            ),
+                        }
+                    )
                     if getattr(m, "is_illegal", False) is False:
                         ply_idx += 1
                 df = pd.DataFrame(df_rows)
                 column_config = {
-                    "Capture": st.column_config.NumberColumn("Capture", width="small", format="%d"),
-                    "Check": st.column_config.NumberColumn("Check", width="small", format="%d"),
-                    "Checkmate": st.column_config.NumberColumn("Checkmate", width="small", format="%d"),
-                    "Illegal": st.column_config.NumberColumn("Illegal", width="small", format="%d"),
+                    "Capture": st.column_config.NumberColumn(
+                        "Capture", width="small", format="%d"
+                    ),
+                    "Check": st.column_config.NumberColumn(
+                        "Check", width="small", format="%d"
+                    ),
+                    "Checkmate": st.column_config.NumberColumn(
+                        "Checkmate", width="small", format="%d"
+                    ),
+                    "Illegal": st.column_config.NumberColumn(
+                        "Illegal", width="small", format="%d"
+                    ),
                     "Reasoning": st.column_config.TextColumn(
                         "Reasoning",
                         help="Click a cell to read the LLM's full reasoning for this move.",
                         width="large",
-                    )
+                    ),
                 }
-                st.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
+                st.dataframe(
+                    df, hide_index=True, width="stretch", column_config=column_config
+                )
 
 
 def run_in_process_benchmark(
@@ -1074,18 +1085,31 @@ def run_in_process_benchmark(
             unsafe_allow_html=True,
         )
 
-    if "benchmark_runner" not in st.session_state or st.session_state.benchmark_runner is None:
+    if (
+        "benchmark_runner" not in st.session_state
+        or st.session_state.benchmark_runner is None
+    ):
         try:
             st.session_state.benchmark_runner = BenchmarkRunner(config)
         except (NoProvidersConfiguredError, SetupError, InvalidApiKeyError) as exc:
             render_error(st, exc)
-            if st.button("🔙 Return to Main Menu", type="primary", width="stretch", key="err_setup_return"):
+            if st.button(
+                "🔙 Return to Main Menu",
+                type="primary",
+                width="stretch",
+                key="err_setup_return",
+            ):
                 _reset_game_state()
                 st.rerun()
             return
         except ValueError as exc:
             st.error(f"Benchmark setup failed: {exc}")
-            if st.button("🔙 Return to Main Menu", type="primary", width="stretch", key="err_val_return"):
+            if st.button(
+                "🔙 Return to Main Menu",
+                type="primary",
+                width="stretch",
+                key="err_val_return",
+            ):
                 _reset_game_state()
                 st.rerun()
             return
@@ -1119,6 +1143,7 @@ def run_in_process_benchmark(
                 if state.is_game_over:
                     # Store a copy of the completed game state
                     import copy
+
                     completed_game = copy.deepcopy(state)
                     st.session_state.benchmark_completed_games.append(completed_game)
                     st.session_state.benchmark_game_index += 1
@@ -1150,18 +1175,17 @@ def run_in_process_benchmark(
         st.session_state.benchmark_thread = t
         t.start()
 
-
-
-
     # Now start the benchmark if not already running
-    if "benchmark_thread" not in st.session_state or (not st.session_state.benchmark_thread.is_alive() and not st.session_state.get("benchmark_done", False)):
-        if not st.session_state.get("benchmark_done", False):
-            start_benchmark()
+    if (
+        "benchmark_thread" not in st.session_state
+        or not st.session_state.benchmark_thread.is_alive()
+    ) and not st.session_state.get("benchmark_done", False):
+        start_benchmark()
 
     def _draw_live_ui():
         state: GameState | None = st.session_state.get("benchmark_state")
         game_idx = st.session_state.benchmark_game_index
-        is_paused = getattr(state, 'is_paused', False)
+        is_paused = getattr(state, "is_paused", False)
 
         if is_paused:
             if "benchmark_pause_time" not in st.session_state:
@@ -1172,12 +1196,14 @@ def run_in_process_benchmark(
         else:
             if "benchmark_pause_time" in st.session_state:
                 # Commit the pause duration to start_time
-                st.session_state.benchmark_start_time += (time.time() - st.session_state.benchmark_pause_time)
+                st.session_state.benchmark_start_time += (
+                    time.time() - st.session_state.benchmark_pause_time
+                )
                 del st.session_state["benchmark_pause_time"]
             start_time = st.session_state.benchmark_start_time
 
         completed_games = st.session_state.get("benchmark_completed_games", [])
-        pause_reason = getattr(state, 'pause_reason', None) if is_paused else None
+        pause_reason = getattr(state, "pause_reason", None) if is_paused else None
 
         render_live_game_screen(
             state=state,
@@ -1192,23 +1218,39 @@ def run_in_process_benchmark(
         )
 
     if st.session_state.get("benchmark_error"):
-        exc = st.session_state.benchmark_error
-        if isinstance(exc, (GameExecutionError, FatalBenchmarkError)) or isinstance(exc, (NoProvidersConfiguredError, SetupError, InvalidApiKeyError)):
-            render_error(st, exc)
+        error = st.session_state.benchmark_error
+        if isinstance(
+            error,
+            (
+                GameExecutionError,
+                FatalBenchmarkError,
+                NoProvidersConfiguredError,
+                SetupError,
+                InvalidApiKeyError,
+            ),
+        ):
+            render_error(st, error)
         else:
-            st.error(f"Benchmark failed: {exc}")
-        if st.button("🔙 Return to Main Menu", type="primary", width="stretch", key="err_bm_return"):
+            st.error(f"Benchmark failed: {error}")
+        if st.button(
+            "🔙 Return to Main Menu",
+            type="primary",
+            width="stretch",
+            key="err_bm_return",
+        ):
             _reset_game_state()
             st.rerun()
         return
 
     if not st.session_state.get("benchmark_done", False):
         if hasattr(st, "fragment"):
+
             @st.fragment(run_every=2.0)
             def _live_fragment():
                 if st.session_state.get("benchmark_done", False):
                     st.rerun()
                 _draw_live_ui()
+
             _live_fragment()
             return
         else:
@@ -1232,7 +1274,9 @@ def run_in_process_benchmark(
     if run is not None:
         render_run_summary(run, expanded=True)
 
-    if st.button("🔙 Return to Main Menu", type="primary", width="stretch", key="done_bm_return"):
+    if st.button(
+        "🔙 Return to Main Menu", type="primary", width="stretch", key="done_bm_return"
+    ):
         _reset_game_state()
         st.rerun()
 
@@ -1246,12 +1290,15 @@ def run_in_process_benchmark(
 def get_cached_runs(runs_root: str):
     return list_runs(runs_root)
 
+
 def flush_benchmark_history(runs_root: str):
     import os
     import shutil
+
     if os.path.exists(runs_root):
         shutil.rmtree(runs_root)
     get_cached_runs.clear()
+
 
 def render_benchmark_history(*, expanded: bool = False) -> None:
     """Render benchmark runs parsed from the on-disk JSONL artifacts.
@@ -1262,9 +1309,14 @@ def render_benchmark_history(*, expanded: bool = False) -> None:
     with st.expander("📊 Benchmark History", expanded=expanded):
         render_landing_metrics(RUNS_ROOT)
 
-        col1, col2 = st.columns([4, 1])
+        _col1, col2 = st.columns([4, 1])
         with col2:
-            if st.button("🗑️ Flush History", key="flush_history", type="secondary", width="stretch"):
+            if st.button(
+                "🗑️ Flush History",
+                key="flush_history",
+                type="secondary",
+                width="stretch",
+            ):
                 flush_benchmark_history(RUNS_ROOT)
                 st.rerun()
 
@@ -1286,12 +1338,6 @@ def render_benchmark_history(*, expanded: bool = False) -> None:
 
 def render_run_summary(run, *, expanded: bool) -> None:
     """Render one benchmark run as a compact data block."""
-    label = (
-        f"{run.run_id} · {run.total_games} games · "
-        f"{len(run.providers_seen)} provider(s) · "
-        f"{datetime.utcfromtimestamp(0).isoformat() if not run.timestamp_utc else run.timestamp_utc}"
-    )
-
     # Render as cf-card instead of bare expander
     with st.container(border=True):
 
@@ -1299,9 +1345,16 @@ def render_run_summary(run, *, expanded: bool) -> None:
         hdr_col1, hdr_col2 = st.columns([4, 1])
         with hdr_col1:
             st.markdown(f"### {run.run_id}")
-            st.caption(f"{run.total_games} games · {len(run.providers_seen)} provider(s)")
+            st.caption(
+                f"{run.total_games} games · {len(run.providers_seen)} provider(s)"
+            )
         with hdr_col2:
-            if st.button("📊 Analyze", key=f"analyze_run_{run.run_id}", type="primary", width="stretch"):
+            if st.button(
+                "📊 Analyze",
+                key=f"analyze_run_{run.run_id}",
+                type="primary",
+                width="stretch",
+            ):
                 st.session_state.show_analytics = True
                 st.session_state.show_history = False
                 st.session_state.analytics_run_dir = str(run.run_dir)
@@ -1334,8 +1387,16 @@ def render_run_summary(run, *, expanded: bool) -> None:
                         ),
                         "Captures": ps.captures,
                         "Checks": ps.checks,
-                        "Tokens in": ps.tokens_in_total if ps.tokens_in_total is not None else None,
-                        "Tokens out": ps.tokens_out_total if ps.tokens_out_total is not None else None,
+                        "Tokens in": (
+                            ps.tokens_in_total
+                            if ps.tokens_in_total is not None
+                            else None
+                        ),
+                        "Tokens out": (
+                            ps.tokens_out_total
+                            if ps.tokens_out_total is not None
+                            else None
+                        ),
                     }
                 )
             if rows:
@@ -1371,8 +1432,10 @@ def render_game_viewer(run) -> None:
     st.markdown("### ♟️ Game Replays & Logs")
 
     for i, game in enumerate(run.games):
-        term_reason = getattr(game, 'termination_reason', 'unknown')
-        st.markdown(f"#### Game {i+1}: ♔ White: **{game.white_player}** vs ♚ Black: **{game.black_player}** ({game.result}) — *{term_reason.replace('_', ' ').title()}*")
+        term_reason = getattr(game, "termination_reason", "unknown")
+        st.markdown(
+            f"#### Game {i+1}: ♔ White: **{game.white_player}** vs ♚ Black: **{game.black_player}** ({game.result}) — *{term_reason.replace('_', ' ').title()}*"
+        )
 
         if not game.moves:
             st.info("No moves recorded for this game.")
@@ -1383,7 +1446,13 @@ def render_game_viewer(run) -> None:
         max_moves = len(game.moves)
 
         # Calculate step state
-        move_idx = st.slider(f"Rewind Game {i+1}", 0, max_moves, max_moves, key=f"slider_{run.run_id}_{game.game_id}")
+        move_idx = st.slider(
+            f"Rewind Game {i+1}",
+            0,
+            max_moves,
+            max_moves,
+            key=f"slider_{run.run_id}_{game.game_id}",
+        )
 
         if move_idx == 0:
             fen = game.opening_fen or chess.STARTING_FEN
@@ -1405,16 +1474,33 @@ def render_game_viewer(run) -> None:
         with col1:
             b = chess.Board(fen)
             king_square = b.king(b.turn)
-            check_square = king_square if b.is_check() and king_square is not None else None
+            check_square = (
+                king_square if b.is_check() and king_square is not None else None
+            )
 
             # Use cf-board-frame via render_board_with_evalbar
-            render_board_with_evalbar(b, size=400, lastmove=last_move, check_square=check_square)
+            render_board_with_evalbar(
+                b, size=400, lastmove=last_move, check_square=check_square
+            )
 
         with col2:
             if move_info:
-                player_name = game.white_player if move_info.color == "white" else game.black_player
-                st.markdown(f"**Move {move_info.move_number}** - {player_name} ({move_info.color.title()}) played `{move_info.move_san}`")
-                st.metric("Latency", format_duration_ms(move_info.llm_latency_ms) if move_info.llm_latency_ms else "—")
+                player_name = (
+                    game.white_player
+                    if move_info.color == "white"
+                    else game.black_player
+                )
+                st.markdown(
+                    f"**Move {move_info.move_number}** - {player_name} ({move_info.color.title()}) played `{move_info.move_san}`"
+                )
+                st.metric(
+                    "Latency",
+                    (
+                        format_duration_ms(move_info.llm_latency_ms)
+                        if move_info.llm_latency_ms
+                        else "—"
+                    ),
+                )
                 if move_info.llm_tokens_out:
                     st.metric("Tokens Out", move_info.llm_tokens_out)
 
@@ -1439,37 +1525,47 @@ def render_game_viewer(run) -> None:
         for m in game.moves:
             # Parse timestamp if possible
             t_str = m.timestamp_utc
-            if t_str:
-                if len(t_str) > 19:
-                    t_str = t_str[11:19]
+            if t_str and len(t_str) > 19:
+                t_str = t_str[11:19]
 
             san = m.move_san or ""
-            df_rows.append({
-                "Move #": m.move_number,
-                "Color": m.color.title(),
-                "Player": game.white_player if m.color == "white" else game.black_player,
-                "Move": san,
-                "Capture": 1 if "x" in san else 0,
-                "Check": 1 if "+" in san else 0,
-                "Checkmate": 1 if "#" in san else 0,
-                "Reasoning": m.thinking_trace.replace("<", "&lt;").replace(">", "&gt;") if m.thinking_trace else "",
-            })
+            df_rows.append(
+                {
+                    "Move #": m.move_number,
+                    "Color": m.color.title(),
+                    "Player": (
+                        game.white_player if m.color == "white" else game.black_player
+                    ),
+                    "Move": san,
+                    "Capture": 1 if "x" in san else 0,
+                    "Check": 1 if "+" in san else 0,
+                    "Checkmate": 1 if "#" in san else 0,
+                    "Reasoning": (
+                        m.thinking_trace.replace("<", "&lt;").replace(">", "&gt;")
+                        if m.thinking_trace
+                        else ""
+                    ),
+                }
+            )
 
         df = pd.DataFrame(df_rows)
 
         column_config = {
-            "Capture": st.column_config.NumberColumn("Capture", width="small", format="%d"),
+            "Capture": st.column_config.NumberColumn(
+                "Capture", width="small", format="%d"
+            ),
             "Check": st.column_config.NumberColumn("Check", width="small", format="%d"),
-            "Checkmate": st.column_config.NumberColumn("Checkmate", width="small", format="%d"),
+            "Checkmate": st.column_config.NumberColumn(
+                "Checkmate", width="small", format="%d"
+            ),
             "Reasoning": st.column_config.TextColumn(
                 "Reasoning",
                 help="Click a cell to read the LLM's full reasoning for this move.",
                 width="large",
-            )
+            ),
         }
         st.dataframe(df, hide_index=True, width="stretch", column_config=column_config)
         st.divider()
-
 
 
 # ---------------------------------------------------------------------------
@@ -1491,72 +1587,169 @@ def main():
     model_1_config, model_2_config = render_model_selectors(available_providers)
 
     # Prompt Strategy Workbench
-    system_prompts, turn_prompts = render_prompt_management(model_1_config, model_2_config)
+    system_prompts_by_spec, turn_prompts_by_spec, _prompts_by_color = (
+        render_prompt_management(model_1_config, model_2_config)
+    )
+    # Strategy Dry-Run
+    render_dry_run(model_1_config, model_2_config)
 
     # Game Controls Section
-    st.sidebar.markdown('<div style="font-weight:650; font-size:0.95rem; margin-top:12px; margin-bottom:8px; color:var(--arena-text);">🎮 Match Settings</div>', unsafe_allow_html=True)
-
-    col_g, col_r = st.sidebar.columns([1, 1])
-    games = col_g.number_input(
-        "Games to play", min_value=1, max_value=20, value=1, step=1, key="game_count"
+    st.sidebar.markdown(
+        '<div style="font-weight:650; font-size:0.95rem; margin-top:12px; margin-bottom:8px; color:var(--arena-text);">🎮 Match Settings</div>',
+        unsafe_allow_html=True,
     )
 
-    reasoning_level = col_r.selectbox(
+    games = st.sidebar.number_input(
+        "Games to play", min_value=1, max_value=20, value=1, step=1, key="game_count"
+    )
+    reasoning_level = st.sidebar.radio(
         "Reasoning Level",
         options=["low", "mid", "high"],
-        index=1,
-        help="Low = 256t fast, Mid = 1024t tactical, High = 4096t deep thinking",
-        key="reasoning_level_select",
+        index=2,  # default to high
+        horizontal=True,
+        key="reasoning_level_selector",
+        help="Select reasoning level for the match.",
     )
 
     colors_mode = "alternating" if games > 1 else "fixed"
 
     # Match Preview Summary Box
     if model_1_config and model_2_config:
-        m1_name = model_1_config['model_id'].split('/')[-1]
-        m2_name = model_2_config['model_id'].split('/')[-1]
+        m1_name = model_1_config["model_id"].split("/")[-1]
+        m2_name = model_2_config["model_id"].split("/")[-1]
         st.sidebar.markdown(
             '<div class="sb-match-summary">'
             '  <div class="sb-match-vs">'
             f'    <div class="sb-match-vs-model" title="{m1_name}">♔ {m1_name}</div>'
             '    <div class="sb-match-vs-divider">VS</div>'
             f'    <div class="sb-match-vs-model" title="{m2_name}" style="text-align:right;">♚ {m2_name}</div>'
-            '  </div>'
+            "  </div>"
             '  <div class="sb-match-details">'
             f'    <span>{games} Game{"s" if games > 1 else ""} ({colors_mode})</span>'
-            f'    <span>Reasoning: <strong>{reasoning_level.upper()}</strong></span>'
-            '  </div>'
-            '</div>',
+            f"    <span>Reasoning: <strong>{reasoning_level.upper()}</strong></span>"
+            "  </div>"
+            "</div>",
             unsafe_allow_html=True,
         )
+
+    # Same-model A/B hint
+    same_model_hint = ""
+    if model_1_config and model_2_config:
+        if (
+            model_1_config["provider"] == model_2_config["provider"]
+            and model_1_config["model_id"] == model_2_config["model_id"]
+        ):
+            # Same model, check if A/B eligible
+            sys_1 = st.session_state.get(
+                f"sys_prompt_{model_1_config['provider']}:{model_1_config['model_id']}",
+                "",
+            )
+            turn_1 = st.session_state.get(
+                f"turn_prompt_{model_1_config['provider']}:{model_1_config['model_id']}",
+                "",
+            )
+            sys_2 = st.session_state.get(
+                f"sys_prompt_{model_2_config['provider']}:{model_2_config['model_id']}",
+                "",
+            )
+            turn_2 = st.session_state.get(
+                f"turn_prompt_{model_2_config['provider']}:{model_2_config['model_id']}",
+                "",
+            )
+            v1 = validate_prompt_text(sys_1, turn_1)
+            v2 = validate_prompt_text(sys_2, turn_2)
+            if is_ab_eligible(
+                model_1_config, model_2_config, sys_1, turn_1, sys_2, turn_2
+            ):
+                same_model_hint = (
+                    "💡 A/B mode enabled: same model with different prompts"
+                )
+            else:
+                same_model_hint = (
+                    "⚠️ Same model and same strategy — prompts must differ for A/B mode"
+                )
+        else:
+            same_model_hint = ""
+    if same_model_hint:
+        st.sidebar.caption(same_model_hint)
 
     if st.sidebar.button("⚔️ Launch AI Arena Match", type="primary", width="stretch"):
         if not model_1_config or not model_2_config:
             st.sidebar.error("Please select two distinct models for the players.")
-        elif model_1_config["provider"] == model_2_config["provider"] and model_1_config["model_id"] == model_2_config["model_id"]:
-            st.sidebar.error("Model 1 and Model 2 must be different models.")
+        elif (
+            model_1_config["provider"] == model_2_config["provider"]
+            and model_1_config["model_id"] == model_2_config["model_id"]
+        ):
+            # Same model: check A/B eligibility
+            sys_1 = st.session_state.get(
+                f"sys_prompt_{model_1_config['provider']}:{model_1_config['model_id']}",
+                "",
+            )
+            turn_1 = st.session_state.get(
+                f"turn_prompt_{model_1_config['provider']}:{model_1_config['model_id']}",
+                "",
+            )
+            sys_2 = st.session_state.get(
+                f"sys_prompt_{model_2_config['provider']}:{model_2_config['model_id']}",
+                "",
+            )
+            turn_2 = st.session_state.get(
+                f"turn_prompt_{model_2_config['provider']}:{model_2_config['model_id']}",
+                "",
+            )
+            v1 = validate_prompt_text(sys_1, turn_1)
+            v2 = validate_prompt_text(sys_2, turn_2)
+            if not is_ab_eligible(
+                model_1_config, model_2_config, sys_1, turn_1, sys_2, turn_2
+            ):
+                st.sidebar.error(
+                    "Model 1 and Model 2 are the same and have identical prompts. Please differentiate prompts for A/B mode."
+                )
+                return
+        # Launch hard-gate: validate both players' prompts
+        sys_1 = st.session_state.get(
+            f"sys_prompt_{model_1_config['provider']}:{model_1_config['model_id']}", ""
+        )
+        turn_1 = st.session_state.get(
+            f"turn_prompt_{model_1_config['provider']}:{model_1_config['model_id']}", ""
+        )
+        sys_2 = st.session_state.get(
+            f"sys_prompt_{model_2_config['provider']}:{model_2_config['model_id']}", ""
+        )
+        turn_2 = st.session_state.get(
+            f"turn_prompt_{model_2_config['provider']}:{model_2_config['model_id']}", ""
+        )
+        v1 = validate_prompt_text(sys_1, turn_1)
+        v2 = validate_prompt_text(sys_2, turn_2)
+        can_launch, error_msg = can_launch_match(v1, v2)
+        if not can_launch:
+            st.sidebar.error(error_msg)
+            return
+
+        _reset_game_state()
+        st.session_state.game_running = True
+
+        import random
+
+        if random.choice([True, False]):
+            white_config, black_config = model_1_config, model_2_config
         else:
-            _reset_game_state()
-            st.session_state.game_running = True
+            white_config, black_config = model_2_config, model_1_config
 
-            import random
-            if random.choice([True, False]):
-                white_config, black_config = model_1_config, model_2_config
-            else:
-                white_config, black_config = model_2_config, model_1_config
+        st.session_state.active_match_config = {
+            "white_config": white_config,
+            "black_config": black_config,
+            "games": int(games),
+            "colors": colors_mode,
+            "reasoning_level": reasoning_level,
+            "system_prompts": system_prompts_by_spec,
+            "turn_prompts": turn_prompts_by_spec,
+        }
+        st.rerun()
 
-            st.session_state.active_match_config = {
-                "white_config": white_config,
-                "black_config": black_config,
-                "games": int(games),
-                "colors": colors_mode,
-                "reasoning_level": reasoning_level,
-                "system_prompts": system_prompts,
-                "turn_prompts": turn_prompts,
-            }
-            st.rerun()
-
-    if st.session_state.get("game_running", False) and st.session_state.get("active_match_config"):
+    if st.session_state.get("game_running", False) and st.session_state.get(
+        "active_match_config"
+    ):
         config = st.session_state.active_match_config
         run_in_process_benchmark(
             white_config=config["white_config"],
@@ -1572,7 +1765,12 @@ def main():
     if st.session_state.get("show_analytics", False):
         render_analytical_dashboard()
         st.sidebar.markdown("---")
-        if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
+        if st.sidebar.button(
+            "📊 Open Benchmark History",
+            type="primary",
+            width="stretch",
+            key="open_history",
+        ):
             st.session_state.show_analytics = False
             st.session_state.show_history = True
             st.rerun()
@@ -1589,8 +1787,8 @@ def main():
         st.markdown(
             '<div class="cf-section-title">📊 Benchmark History</div>'
             '<div class="cf-section-sub">Browse past runs parsed from real JSONL artifacts on disk. '
-            'Open a run to view its leaderboard, head-to-head, and per-game replays with '
-            'Stockfish eval timelines and move-quality heatmaps.</div>',
+            "Open a run to view its leaderboard, head-to-head, and per-game replays with "
+            "Stockfish eval timelines and move-quality heatmaps.</div>",
             unsafe_allow_html=True,
         )
         render_benchmark_history(expanded=True)
@@ -1604,7 +1802,12 @@ def main():
     st.sidebar.markdown("---")
 
     if not show_history:
-        if st.sidebar.button("📊 Open Benchmark History", type="primary", width="stretch", key="open_history"):
+        if st.sidebar.button(
+            "📊 Open Benchmark History",
+            type="primary",
+            width="stretch",
+            key="open_history",
+        ):
             st.session_state.show_history = True
             st.rerun()
     else:
@@ -1613,10 +1816,8 @@ def main():
             st.rerun()
 
 
-
-
 def render_analytical_dashboard():
-    """Render the analytical dashboard with eval graphs, move quality, opening explorer, etc."""
+    """Render the research-grade analytical dashboard with multi-model matrix, phase analytics, and deep dive charts."""
     back, title = st.columns([1, 6])
     with back:
         if st.button("← Back to History", key="analytics_back"):
@@ -1625,7 +1826,7 @@ def render_analytical_dashboard():
             st.session_state.pop("analytics_run_dir", None)
             st.rerun()
     with title:
-        st.markdown("## 📊 Analytical Dashboard")
+        st.markdown("## 📊 Research Analytics Dashboard")
 
     # Load available runs
     runs = list_runs(RUNS_ROOT)
@@ -1642,13 +1843,15 @@ def render_analytical_dashboard():
                 pre_selected_run = r
                 break
 
-    # Run selector as card header
+    # Run selector
     with st.container(border=True):
         run_options = {f"{run.run_id} ({run.total_games} games)": run for run in runs}
         default_idx = 0
         if pre_selected_run:
             label = f"{pre_selected_run.run_id} ({pre_selected_run.total_games} games)"
-            default_idx = list(run_options.keys()).index(label) if label in run_options else 0
+            default_idx = (
+                list(run_options.keys()).index(label) if label in run_options else 0
+            )
         selected_run_label = st.selectbox(
             "Select Run to Analyze",
             options=list(run_options.keys()),
@@ -1657,507 +1860,357 @@ def render_analytical_dashboard():
         )
         selected_run = run_options[selected_run_label]
 
-    # Load the selected run
+    # Load full run data
     run = load_run(selected_run.run_dir)
-    if run is None:
-        st.error("Failed to load run data.")
+    if run is None or not run.games:
+        st.error("Failed to load benchmark run data.")
         return
 
-    # Game selector within the run
-    if not run.games:
-        st.info("No games in this run.")
-        return
+    import altair as alt
 
-    with st.container(border=True):
-        game_options = {f"Game {i+1}: {g.white_player} vs {g.black_player} ({g.result})": g for i, g in enumerate(run.games)}
+    # 4 Main Research Tabs
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "🏆 Model Matrix & Leaderboard",
+            "⚔️ Game Deep Dive & Eval Graph",
+            "♟️ Game Phase Analytics",
+            "🧠 Reasoning & Resilience",
+        ]
+    )
+
+    # ============================================================
+    # TAB 1: MODEL MATRIX & LEADERBOARD
+    # ============================================================
+    with tab1:
+        st.markdown("### 🏆 Comparative Model Performance Matrix")
+        from chessbench.benchmark.results_view import (
+            compute_model_performance_matrix,
+            compute_phase_breakdown,
+            compute_retry_resilience,
+            compute_thinking_quality_correlation,
+        )
+
+        matrix = compute_model_performance_matrix(run)
+        if matrix:
+            matrix_df = pd.DataFrame(matrix)
+            st.dataframe(
+                matrix_df,
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "Accuracy %": st.column_config.NumberColumn(
+                        "Accuracy %", format="%.1f%%"
+                    ),
+                    "Win Rate %": st.column_config.NumberColumn(
+                        "Win Rate %", format="%.1f%%"
+                    ),
+                    "Blunder Rate %": st.column_config.NumberColumn(
+                        "Blunder Rate %", format="%.1f%%"
+                    ),
+                    "Illegal/Retry Rate %": st.column_config.NumberColumn(
+                        "Illegal/Retry Rate %", format="%.1f%%"
+                    ),
+                    "ACPL": st.column_config.NumberColumn(
+                        "ACPL (Lower is Better)", format="%.1f"
+                    ),
+                },
+            )
+
+            # Comparative Altair Bar Chart
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                chart_acpl = (
+                    alt.Chart(matrix_df)
+                    .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                    .encode(
+                        x=alt.X("Player:N", title="Model", sort="-y"),
+                        y=alt.Y("ACPL:Q", title="Average Centipawn Loss (ACPL)"),
+                        color=alt.Color("Player:N", legend=None),
+                        tooltip=["Player", "ACPL", "Accuracy %"],
+                    )
+                    .properties(title="Centipawn Loss per Model (Lower = Better)")
+                )
+                st.altair_chart(chart_acpl, width="stretch")
+
+            with col_c2:
+                chart_acc = (
+                    alt.Chart(matrix_df)
+                    .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                    .encode(
+                        x=alt.X("Player:N", title="Model", sort="-y"),
+                        y=alt.Y("Accuracy %:Q", title="CAPS Accuracy %"),
+                        color=alt.Color("Player:N", legend=None),
+                        tooltip=["Player", "Accuracy %", "Blunder Rate %"],
+                    )
+                    .properties(title="Overall Move Accuracy % per Model")
+                )
+                st.altair_chart(chart_acc, width="stretch")
+
+    # ============================================================
+    # TAB 2: GAME DEEP DIVE & EVAL GRAPH
+    # ============================================================
+    with tab2:
+        game_options = {
+            f"Game {i+1}: {g.white_player} vs {g.black_player} ({g.result})": g
+            for i, g in enumerate(run.games)
+        }
         selected_game_label = st.selectbox(
             "Select Game to Analyze",
             options=list(game_options.keys()),
-            key="analytics_game_selector"
+            key="analytics_tab2_game_selector",
         )
         selected_game = game_options[selected_game_label]
 
-    st.markdown("---")
+        st.markdown("### 📈 Stockfish Centipawn Advantage Timeline")
+        eval_data = []
+        board = chess.Board(selected_game.opening_fen)
 
-    # ============================================================
-    # 1. EVAL TIMELINE - Line chart with horizontal advantage bar
-    # ============================================================
-    st.markdown("### 📈 Eval Timeline")
-    eval_data = []
-    board = chess.Board(selected_game.opening_fen)
+        for ply, move_log in enumerate(selected_game.moves):
+            move = chess.Move.from_uci(move_log.move_uci) if move_log.move_uci else None
+            if move and move in board.legal_moves:
+                board.push(move)
 
-    for ply, move_log in enumerate(selected_game.moves):
-        move = chess.Move.from_uci(move_log.move_uci)
-        if move in board.legal_moves:
-            board.push(move)
-
-        eval_data.append({
-            "Ply": ply + 1,
-            "Move": move_log.move_san,
-            "Player": move_log.player,
-            "Color": move_log.color,
-            "Eval (cp)": move_log.eval_cp_score,
-            "Best Move": move_log.eval_best_move_uci,
-            "Best Eval (cp)": move_log.eval_best_move_cp,
-        })
-
-    if eval_data:
-        eval_df = pd.DataFrame(eval_data)
-        # Filter rows with eval data
-        eval_df = eval_df[eval_df["Eval (cp)"].notna()]
-        if not eval_df.empty:
-            import altair as alt
-
-            # Horizontal advantage bar above chart (DESIGN.md §3)
-            # Create a simple bar showing current advantage
-            last_eval = eval_df.iloc[-1]["Eval (cp)"]
-            max_abs_eval = max(abs(eval_df["Eval (cp)"].max()), abs(eval_df["Eval (cp)"].min()), 100)
-            advantage_pct = 50 + (last_eval / max_abs_eval * 50) if max_abs_eval > 0 else 50
-            advantage_pct = max(0, min(100, advantage_pct))
-
-            adv_html = f"""
-            <div class="cf-advantage-bar" style="height:8px;background:linear-gradient(90deg, var(--arena-black) 0%, var(--arena-black) 50%, var(--arena-white) 50%, var(--arena-white) 100%);border-radius:4px;margin-bottom:12px;position:relative;border:1px solid var(--arena-border-strong);overflow:hidden;">
-                <div style="position:absolute;left:{advantage_pct}%;top:0;bottom:0;width:2px;background:var(--arena-accent);box-shadow:0 0 8px var(--arena-accent);"></div>
-            </div>
-            <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:0.75rem;color:var(--arena-text-muted);margin-bottom:8px;">
-                <span>Black advantage</span><span>Even</span><span>White advantage</span>
-            </div>
-            """
-            st.markdown(adv_html, unsafe_allow_html=True)
-
-            # Base line chart
-            base = alt.Chart(eval_df).encode(
-                x=alt.X("Ply:Q", title="Ply (half-move)"),
-                y=alt.Y("Eval (cp):Q", title="Centipawn Evaluation"),
-                color=alt.Color("Color:N", title="Side to Move"),
+            eval_data.append(
+                {
+                    "Ply": ply + 1,
+                    "Move": move_log.move_san,
+                    "Player": move_log.player,
+                    "Color": move_log.color,
+                    "Eval (cp)": move_log.eval_cp_score,
+                    "Best Move": move_log.eval_best_move_uci,
+                    "Best Eval (cp)": move_log.eval_best_move_cp,
+                    "Quality": move_log.move_quality or "unknown",
+                    "Phase": move_log.game_phase or "middlegame",
+                    "Material Imbalance": move_log.material_imbalance or 0,
+                }
             )
 
-            line = base.mark_line(point=True)
-            points = base.mark_point(size=80, filled=True)
+        if eval_data:
+            eval_df = pd.DataFrame(eval_data)
+            eval_df_valid = eval_df[eval_df["Eval (cp)"].notna()]
+            if not eval_df_valid.empty:
+                last_eval = eval_df_valid.iloc[-1]["Eval (cp)"]
+                max_abs_eval = max(
+                    abs(eval_df_valid["Eval (cp)"].max()),
+                    abs(eval_df_valid["Eval (cp)"].min()),
+                    100,
+                )
+                advantage_pct = max(0, min(100, 50 + (last_eval / max_abs_eval * 50)))
 
-            chart = (line + points).properties(
-                width=700,
-                height=400,
-                title="Stockfish Evaluation per Ply"
-            ).interactive()
-
-            st.altair_chart(chart, width="stretch")
-        else:
-            st.info("No evaluation data available for this game.")
-
-    st.markdown("---")
-
-    # ============================================================
-    # 2. MOVE QUALITY HEATMAP - Rect-encoded ply x quality
-    # ============================================================
-    st.markdown("### 🔥 Move Quality Heatmap")
-
-    quality_data = []
-    for ply, move_log in enumerate(selected_game.moves):
-        if move_log.move_quality:
-            quality_data.append({
-                "Ply": ply + 1,
-                "Move": move_log.move_san,
-                "Player": move_log.player,
-                "Quality": move_log.move_quality,
-                "CP Loss": move_log.cp_loss,
-                "Is Best": move_log.is_best_move,
-            })
-
-    if quality_data:
-        quality_df = pd.DataFrame(quality_data)
-
-        # Color mapping from DESIGN.md
-        quality_colors = {
-            "best": "#2ecc71",
-            "excellent": "#27ae60",
-            "good": "#9ecd43",
-            "inaccuracy": "#db6d28",
-            "mistake": "#e67e22",
-            "blunder": "#e74c3c",
-        }
-
-        # Quality order for y-axis
-        quality_order = ["best", "excellent", "good", "inaccuracy", "mistake", "blunder"]
-
-        # Create heatmap data: count of each quality per ply range
-        heatmap_data = []
-        for ply in quality_df["Ply"].unique():
-            ply_data = quality_df[quality_df["Ply"] == ply]
-            for q in quality_order:
-                count = (ply_data["Quality"] == q).sum()
-                if count > 0:
-                    heatmap_data.append({
-                        "Ply": ply,
-                        "Quality": q,
-                        "Count": int(count),
-                        "Color": quality_colors[q],
-                    })
-
-        if heatmap_data:
-            heatmap_df = pd.DataFrame(heatmap_data)
-
-            # Altair rect heatmap
-            heatmap_chart = alt.Chart(heatmap_df).mark_rect().encode(
-                x=alt.X("Ply:O", title="Ply", axis=alt.Axis(labelAngle=0)),
-                y=alt.Y("Quality:N", title="Move Quality", sort=quality_order),
-                color=alt.Color("Color:N", scale=None, legend=None),
-                tooltip=["Ply", "Quality", "Count"]
-            ).properties(
-                width=700,
-                height=280,
-                title="Move Quality Distribution per Ply"
-            ).configure_view(stroke=None)
-
-            st.altair_chart(heatmap_chart, width="stretch")
-
-        # Summary stats
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            best_pct = (quality_df["Quality"] == "best").mean() * 100
-            st.metric("Best Move %", f"{best_pct:.1f}%")
-        with col2:
-            blunder_rate = (quality_df["Quality"] == "blunder").mean() * 100
-            st.metric("Blunder Rate", f"{blunder_rate:.1f}%")
-        with col3:
-            avg_cp = quality_df["CP Loss"].mean()
-            st.metric("Avg CP Loss", f"{avg_cp:.1f}")
-        with col4:
-            mistake_rate = (quality_df["Quality"].isin(["mistake", "blunder"])).mean() * 100
-            st.metric("Mistake+Blunder Rate", f"{mistake_rate:.1f}%")
-    else:
-        st.info("No move quality data available for this game.")
-
-    st.markdown("---")
-
-    # ============================================================
-    # 3. OPENING EXPLORER - Table with inline win-rate bars
-    # ============================================================
-    st.markdown("### 🌳 Opening Explorer")
-
-    # Aggregate opening stats across all runs
-    opening_stats = {}
-    for run_data in runs:
-        loaded_run = load_run(run_data.run_dir)
-        if loaded_run:
-            for game in loaded_run.games:
-                eco = game.opening_eco or "?"
-                name = game.opening_name or "Unknown"
-                key = f"{eco}: {name}"
-                if key not in opening_stats:
-                    opening_stats[key] = {"games": 0, "wins": 0, "losses": 0, "draws": 0, "cp_losses": []}
-
-                opening_stats[key]["games"] += 1
-                if game.result_numeric == 1.0 and game.white_player == selected_game.white_player:
-                    opening_stats[key]["wins"] += 1
-                elif game.result_numeric == 0.0 and game.black_player == selected_game.black_player:
-                    opening_stats[key]["losses"] += 1
-                else:
-                    opening_stats[key]["draws"] += 1
-
-                # Collect cp losses for this opening
-                for move in game.moves:
-                    if move.cp_loss is not None:
-                        opening_stats[key]["cp_losses"].append(move.cp_loss)
-
-    if opening_stats:
-        opening_rows = []
-        for key, stats in opening_stats.items():
-            avg_cp = sum(stats["cp_losses"]) / len(stats["cp_losses"]) if stats["cp_losses"] else 0
-            win_rate = stats['wins'] / stats['games'] * 100 if stats["games"] > 0 else 0
-            opening_rows.append({
-                "Opening": key,
-                "Games": stats["games"],
-                "Wins": stats["wins"],
-                "Losses": stats["losses"],
-                "Draws": stats["draws"],
-                "Win Rate": win_rate,
-                "Win Rate %": f"{win_rate:.1f}%",
-                "Avg CP Loss": f"{avg_cp:.1f}",
-            })
-
-        opening_df = pd.DataFrame(opening_rows).sort_values("Games", ascending=False)
-
-        # Render with inline win-rate bars using HTML
-        with st.container(border=True):
-            for _, row in opening_df.iterrows():
-                wr = row["Win Rate"]
-                bar_color = "var(--eval-good)" if wr >= 50 else "var(--eval-blunder)"
-                st.markdown(f"""
-                <div style="display:flex;align-items:center;margin-bottom:8px;font-size:0.875rem;">
-                    <div style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:12px;" title="{row['Opening']}">{row['Opening']}</div>
-                    <div style="width:100px;background:var(--arena-border);height:8px;border-radius:4px;overflow:hidden;margin-right:12px;">
-                        <div style="width:{wr}%;background:{bar_color};height:100%;"></div>
-                    </div>
-                    <div style="width:40px;text-align:right;font-family:var(--font-mono);font-size:0.8125rem;">{int(wr)}%</div>
-                    <div style="width:90px;text-align:right;font-family:var(--font-mono);font-size:0.8125rem;color:var(--arena-text-muted);">{row['Avg CP Loss']}</div>
+                adv_html = f"""
+                <div class="cf-advantage-bar" style="height:8px;background:linear-gradient(90deg, #1e2330 0%, #1e2330 50%, #f0b421 50%, #f0b421 100%);border-radius:4px;margin-bottom:8px;position:relative;overflow:hidden;">
+                    <div style="position:absolute;left:{advantage_pct}%;top:0;bottom:0;width:3px;background:#ffffff;box-shadow:0 0 8px #ffffff;"></div>
                 </div>
-                """, unsafe_allow_html=True)
-    else:
-        st.info("No opening data available.")
+                <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:0.75rem;color:var(--arena-text-muted);margin-bottom:12px;">
+                    <span>♚ Black Advantage</span><span>Even</span><span>♔ White Advantage</span>
+                </div>
+                """
+                st.markdown(adv_html, unsafe_allow_html=True)
 
-    st.markdown("---")
+                # Line + points chart
+                base = alt.Chart(eval_df_valid).encode(
+                    x=alt.X("Ply:Q", title="Ply (Half-Move)"),
+                    y=alt.Y(
+                        "Eval (cp):Q", title="Centipawn Score (+ = White, - = Black)"
+                    ),
+                    color=alt.Color("Player:N", title="Player"),
+                )
+                line = base.mark_line(strokeWidth=2)
+                points = base.mark_point(size=70, filled=True).encode(
+                    tooltip=["Ply", "Move", "Player", "Eval (cp)", "Quality", "Phase"]
+                )
+                chart = (line + points).properties(width=700, height=360).interactive()
+                st.altair_chart(chart, width="stretch")
 
-    # ============================================================
-    # 4. MODEL COMPARISON - Radar chart (≥2 models) / Table fallback
-    # ============================================================
-    st.markdown("### 🤖 Model Comparison")
+                # Material Trajectory Chart
+                st.markdown("### ⚖️ Material Balance Trajectory")
+                mat_chart = (
+                    alt.Chart(eval_df)
+                    .mark_area(opacity=0.4)
+                    .encode(
+                        x=alt.X("Ply:Q", title="Ply"),
+                        y=alt.Y(
+                            "Material Imbalance:Q",
+                            title="Material Balance (White - Black)",
+                        ),
+                        color=alt.value("#f0b421"),
+                        tooltip=["Ply", "Move", "Material Imbalance"],
+                    )
+                    .properties(height=180)
+                    .interactive()
+                )
+                st.altair_chart(mat_chart, width="stretch")
 
-    # Compare models across all runs
-    model_stats = {}
-    for run_data in runs:
-        loaded_run = load_run(run_data.run_dir)
-        if loaded_run:
-            for name, ps in loaded_run.player_stats.items():
-                if name not in model_stats:
-                    model_stats[name] = {
-                        "games": 0, "wins": 0, "losses": 0, "draws": 0,
-                        "total_cp_loss": 0, "cp_loss_count": 0,
-                        "blunders": 0, "mistakes": 0, "inaccuracies": 0,
-                        "best_moves": 0, "total_moves": 0,
-                        "total_latency": 0, "latency_count": 0,
-                        "thinking_chars": 0, "thinking_count": 0,
+        # Move History Table
+        with st.expander("📄 Full Move History Data", expanded=False):
+            move_table_rows = []
+            for ply, m in enumerate(selected_game.moves):
+                move_table_rows.append(
+                    {
+                        "Ply": ply + 1,
+                        "Player": m.player,
+                        "Move": m.move_san,
+                        "Eval": (
+                            f"{m.eval_cp_score/100:+.2f}"
+                            if m.eval_cp_score is not None
+                            else "—"
+                        ),
+                        "Quality": m.move_quality or "—",
+                        "Phase": m.game_phase or "—",
+                        "Latency (ms)": m.llm_latency_ms,
+                        "Retries": m.validation_retries + m.illegal_attempts_count,
+                        "Reasoning": m.thinking_trace or "",
                     }
-                stats = model_stats[name]
-                stats["games"] += ps.games_played
-                stats["wins"] += ps.wins
-                stats["losses"] += ps.losses
-                stats["draws"] += ps.draws
-                stats["total_latency"] += ps.total_latency_ms
-                stats["latency_count"] += ps.latency_samples
-
-    if model_stats and len(model_stats) >= 2:
-        # Build radar chart data
-        radar_rows = []
-        for name, stats in model_stats.items():
-            score = stats["wins"] + 0.5 * stats["draws"]
-            score_pct = (score / stats["games"] * 100) if stats["games"] > 0 else 0
-            avg_latency = stats["total_latency"] / stats["latency_count"] if stats["latency_count"] > 0 else 0
-
-            # Collect move quality stats from all games
-            total_cp_loss = 0
-            cp_loss_count = 0
-            blunders = 0
-            best_moves = 0
-            total_moves = 0
-            for run_data in runs:
-                loaded_run = load_run(run_data.run_dir)
-                if loaded_run:
-                    for game in loaded_run.games:
-                        if game.white_player == name or game.black_player == name:
-                            for move in game.moves:
-                                if move.cp_loss is not None:
-                                    total_cp_loss += move.cp_loss
-                                    cp_loss_count += 1
-                                if move.move_quality == "blunder":
-                                    blunders += 1
-                                if move.move_quality == "best":
-                                    best_moves += 1
-                                if move.move_quality:
-                                    total_moves += 1
-
-            blunder_rate = (blunders / total_moves * 100) if total_moves > 0 else 0
-            best_move_pct = (best_moves / total_moves * 100) if total_moves > 0 else 0
-            avg_cp_loss = (total_cp_loss / cp_loss_count) if cp_loss_count > 0 else 0
-
-            radar_rows.append({
-                "Model": name,
-                "Score %": score_pct,
-                "Avg Latency (ms)": avg_latency,
-                "Best Move %": best_move_pct,
-                "Blunder Rate %": blunder_rate,
-                "Avg CP Loss": avg_cp_loss,
-            })
-
-        radar_df = pd.DataFrame(radar_rows)
-
-        # Normalize each metric to 0-1 for radar
-        metrics = ["Score %", "Best Move %", "Avg CP Loss", "Blunder Rate %", "Avg Latency (ms)"]
-        # For Score % and Best Move %: higher is better (normalize max->1)
-        # For Avg CP Loss, Blunder Rate %, Avg Latency: lower is better (normalize min->1, invert)
-        normalized = {}
-        for m in metrics:
-            vals = radar_df[m].values
-            if m in ["Score %", "Best Move %"]:
-                max_val = max(vals) if max(vals) > 0 else 1
-                normalized[m] = vals / max_val
-            else:
-                min_val = min(vals) if min(vals) > 0 else 1
-                max_val = max(vals)
-                # Invert: lower is better, so 1 - (val-min)/(max-min)
-                if max_val > min_val:
-                    normalized[m] = 1 - (vals - min_val) / (max_val - min_val)
-                else:
-                    normalized[m] = np.ones_like(vals) * 0.5
-
-        # Prepare data for Altair radar (polar coordinate approximation)
-        radar_plot_data = []
-        for i, row in radar_df.iterrows():
-            for m in metrics:
-                radar_plot_data.append({
-                    "Model": row["Model"],
-                    "Metric": m,
-                    "Value": normalized[m][i],
-                })
-        radar_plot_df = pd.DataFrame(radar_plot_data)
-
-        # Altair radar chart using theta/r
-        radar_chart = alt.Chart(radar_plot_df).mark_line(point=True, strokeWidth=2).encode(
-            theta=alt.Theta("Metric:N", sort=metrics),
-            radius=alt.Radius("Value:Q", scale=alt.Scale(domain=[0, 1])),
-            color=alt.Color("Model:N", legend=alt.Legend(title="Model")),
-            tooltip=["Model", "Metric", alt.Tooltip("Value:Q", format=".2f")]
-        ).properties(
-            width=400,
-            height=400,
-            title="Model Comparison Radar (normalized 0-1, higher=better)"
-        ).configure_view(stroke=None)
-
-        st.altair_chart(radar_chart, width="stretch")
-
-        # Also show comparison table
-        comparison_rows = []
-        for name, stats in model_stats.items():
-            score = stats["wins"] + 0.5 * stats["draws"]
-            score_pct = (score / stats["games"] * 100) if stats["games"] > 0 else 0
-            avg_latency = stats["total_latency"] / stats["latency_count"] if stats["latency_count"] > 0 else 0
-
-            comparison_rows.append({
-                "Model": name,
-                "Games": stats["games"],
-                "Wins": stats["wins"],
-                "Losses": stats["losses"],
-                "Draws": stats["draws"],
-                "Score %": f"{score_pct:.1f}%",
-                "Avg Latency": format_duration_ms(avg_latency) if avg_latency > 0 else "—",
-            })
-
-        comparison_df = pd.DataFrame(comparison_rows).sort_values("Games", ascending=False)
-        st.dataframe(comparison_df, hide_index=True, width="stretch")
-
-    elif model_stats:
-        # Single model - show table only
-        comparison_rows = []
-        for name, stats in model_stats.items():
-            score = stats["wins"] + 0.5 * stats["draws"]
-            score_pct = (score / stats["games"] * 100) if stats["games"] > 0 else 0
-            avg_latency = stats["total_latency"] / stats["latency_count"] if stats["latency_count"] > 0 else 0
-
-            comparison_rows.append({
-                "Model": name,
-                "Games": stats["games"],
-                "Wins": stats["wins"],
-                "Losses": stats["losses"],
-                "Draws": stats["draws"],
-                "Score %": f"{score_pct:.1f}%",
-                "Avg Latency": format_duration_ms(avg_latency) if avg_latency > 0 else "—",
-            })
-
-        comparison_df = pd.DataFrame(comparison_rows).sort_values("Games", ascending=False)
-        st.dataframe(comparison_df, hide_index=True, width="stretch")
-        st.caption("Radar chart requires ≥2 models. Run a benchmark with multiple models to see comparison.")
-    else:
-        st.info("No model comparison data available.")
-
-    st.markdown("---")
+                )
+            st.dataframe(
+                pd.DataFrame(move_table_rows), hide_index=True, width="stretch"
+            )
 
     # ============================================================
-    # 5. THINKING TRACE VIEWER
+    # TAB 3: GAME PHASE ANALYTICS
     # ============================================================
-    st.markdown("### 🧠 Thinking Trace Viewer")
+    with tab3:
+        st.markdown("### ♟️ Model Performance by Board Phase")
+        st.caption(
+            "Breakdown of Average Centipawn Loss (ACPL) and Blunder % across Opening, Middlegame, and Endgame."
+        )
 
-    thinking_data = []
-    for ply, move_log in enumerate(selected_game.moves):
-        if move_log.thinking_trace:
-            thinking_data.append({
-                "Ply": ply + 1,
-                "Move": move_log.move_san,
-                "Player": move_log.player,
-                "Thinking": move_log.thinking_trace[:200] + "..." if len(move_log.thinking_trace) > 200 else move_log.thinking_trace,
-                "Chars": move_log.thinking_chars,
-                "Words": move_log.thinking_words,
-                "Structured": move_log.thinking_has_structured,
-                "Tactics": move_log.thinking_mentions_tactics,
-                "Strategy": move_log.thinking_mentions_strategy,
-                "Time Pressure": move_log.thinking_mentions_time_pressure,
-            })
+        phase_results = compute_phase_breakdown(run)
+        if phase_results:
+            p_rows = []
+            for player, metrics in phase_results.items():
+                p_rows.append(
+                    {
+                        "Player": player,
+                        "Opening ACPL": metrics.get("opening_acpl"),
+                        "Opening Blunder %": metrics.get("opening_blunder_pct"),
+                        "Middlegame ACPL": metrics.get("middlegame_acpl"),
+                        "Middlegame Blunder %": metrics.get("middlegame_blunder_pct"),
+                        "Endgame ACPL": metrics.get("endgame_acpl"),
+                        "Endgame Blunder %": metrics.get("endgame_blunder_pct"),
+                    }
+                )
+            phase_df = pd.DataFrame(p_rows)
+            st.dataframe(phase_df, hide_index=True, width="stretch")
 
-    if thinking_data:
-        thinking_df = pd.DataFrame(thinking_data)
-        st.dataframe(thinking_df, hide_index=True, width="stretch")
-
-        # Expandable thinking trace per move
-        for ply, move_log in enumerate(selected_game.moves):
-            if move_log.thinking_trace:
-                with st.expander(f"Ply {ply+1}: {move_log.move_san} ({move_log.player})"):
-                    st.code(move_log.thinking_trace, language="text")
-    else:
-        st.info("No thinking traces available for this game.")
-
-    st.markdown("---")
+            # Board Complexity Scatter Plot
+            st.markdown("### 🌀 Board Complexity vs Centipawn Loss")
+            complexity_data = []
+            for g in run.games:
+                for m in g.moves:
+                    if m.position_complexity is not None and m.cp_loss is not None:
+                        complexity_data.append(
+                            {
+                                "Player": m.player,
+                                "Legal Candidates": m.position_complexity,
+                                "Centipawn Loss": m.cp_loss,
+                                "Move": m.move_san,
+                            }
+                        )
+            if complexity_data:
+                comp_df = pd.DataFrame(complexity_data)
+                comp_chart = (
+                    alt.Chart(comp_df)
+                    .mark_circle(size=60, opacity=0.6)
+                    .encode(
+                        x=alt.X(
+                            "Legal Candidates:Q",
+                            title="Position Complexity (Number of Legal Moves)",
+                        ),
+                        y=alt.Y("Centipawn Loss:Q", title="Centipawn Loss"),
+                        color=alt.Color("Player:N"),
+                        tooltip=[
+                            "Player",
+                            "Move",
+                            "Legal Candidates",
+                            "Centipawn Loss",
+                        ],
+                    )
+                    .properties(height=350)
+                    .interactive()
+                )
+                st.altair_chart(comp_chart, width="stretch")
 
     # ============================================================
-    # 6. REPLAY CONTROLS
+    # TAB 4: REASONING & RESILIENCE ANALYTICS
     # ============================================================
-    st.markdown("### ▶️ Replay Controls")
+    with tab4:
+        st.markdown("### 🧠 Reasoning Depth vs Move Quality")
+        st.caption(
+            "Analyzing whether longer thinking traces lead to lower centipawn loss."
+        )
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("⏮️ Start", width="stretch"):
-            st.info("Use the demo game viewer for full replay controls.")
-    with col2:
-        _ = st.slider("Replay Speed", 0.1, 3.0, 1.0, 0.1, key="replay_speed")
-    with col3:
-        if st.button("⏭️ End", width="stretch"):
-            st.info("Use the demo game viewer for full replay controls.")
+        thinking_points = compute_thinking_quality_correlation(run)
+        if thinking_points:
+            think_df = pd.DataFrame(thinking_points)
+            think_chart = (
+                alt.Chart(think_df)
+                .mark_circle(size=60, opacity=0.7)
+                .encode(
+                    x=alt.X("Thinking Words:Q", title="Thinking Trace Word Count"),
+                    y=alt.Y("Centipawn Loss:Q", title="Centipawn Loss"),
+                    color=alt.Color("Player:N"),
+                    tooltip=[
+                        "Player",
+                        "Move",
+                        "Thinking Words",
+                        "Centipawn Loss",
+                        "Quality",
+                    ],
+                )
+                .properties(height=350)
+                .interactive()
+            )
+            st.altair_chart(think_chart, width="stretch")
+        else:
+            st.info("No thinking trace word counts recorded for this run.")
 
-    st.info("💡 For full replay controls (jump to move, flip board, etc.), use the Demo Games section.")
+        st.markdown("---")
+        st.markdown("### 🛡️ Retry Resilience & Error Recovery")
+        resilience = compute_retry_resilience(run)
+        if resilience:
+            res_rows = [{"Player": k, **v} for k, v in resilience.items()]
+            st.dataframe(pd.DataFrame(res_rows), hide_index=True, width="stretch")
 
-    st.markdown("---")
+        st.markdown("---")
+        st.markdown("### 💾 Export Benchmark Artifacts")
+        with st.container(border=True):
+            col_exp1, col_exp2, col_exp3 = st.columns(3)
+            with col_exp1:
+                if st.button(
+                    "📄 Export PGN + Eval", width="stretch", key="export_tab4_pgn"
+                ):
+                    from chessbench.benchmark.export import export_pgn_with_eval
 
-    # ============================================================
-    # 7. EXPORT BUTTONS - Ghost CTA pills per DESIGN.md
-    # ============================================================
-    st.markdown("### 💾 Export Game Data")
+                    try:
+                        path = export_pgn_with_eval(
+                            run.run_dir, run.run_dir / "export_eval.pgn"
+                        )
+                        st.success(f"Exported to {path}")
+                    except Exception as e:
+                        st.error(f"Export failed: {e}")
+            with col_exp2:
+                if st.button("📊 Export CSV", width="stretch", key="export_tab4_csv"):
+                    from chessbench.benchmark.export import export_csv
 
-    with st.container(border=True):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("📄 Export PGN+Eval", width="stretch", key="export_pgn"):
-                from chessbench.benchmark.export import export_pgn_with_eval
-                output_path = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/game_{selected_game.game_id}_eval.pgn"
-                try:
-                    path = export_pgn_with_eval(selected_game.run_dir if hasattr(selected_game, 'run_dir') else RUNS_ROOT, output_path)
-                    st.success(f"Exported to {path}")
-                except Exception as e:
-                    st.error(f"Export failed: {e}")
+                    try:
+                        path = export_csv(run.run_dir, run.run_dir / "export_csv")
+                        st.success(f"Exported to {path}")
+                    except Exception as e:
+                        st.error(f"Export failed: {e}")
+            with col_exp3:
+                if st.button(
+                    "📦 Export Parquet", width="stretch", key="export_tab4_parquet"
+                ):
+                    from chessbench.benchmark.export import export_parquet
 
-        with col2:
-            if st.button("📊 Export CSV", width="stretch", key="export_csv"):
-                from chessbench.benchmark.export import export_csv
-                try:
-                    output_dir = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/export_csv"
-                    path = export_csv(selected_game.run_dir if hasattr(selected_game, 'run_dir') else RUNS_ROOT, output_dir)
-                    st.success(f"Exported to {path}")
-                except Exception as e:
-                    st.error(f"Export failed: {e}")
-
-        with col3:
-            if st.button("📦 Export Parquet", width="stretch", key="export_parquet"):
-                from chessbench.benchmark.export import export_parquet
-                try:
-                    output_path = f"runs/{selected_game.run_id if hasattr(selected_game, 'run_id') else 'export'}/export.parquet"
-                    path = export_parquet(selected_game.run_dir if hasattr(selected_game, 'run_dir') else RUNS_ROOT, output_path)
-                    st.success(f"Exported to {path}")
-                except Exception as e:
-                    st.error(f"Export failed: {e}")
-
-
-
-# Add import for altair at the top of the file if not already there
-import chess
-
-from chessbench.models import GameMove, GameStats
+                    try:
+                        path = export_parquet(
+                            run.run_dir, run.run_dir / "export.parquet"
+                        )
+                        st.success(f"Exported to {path}")
+                    except Exception as e:
+                        st.error(f"Export failed: {e}")
 
 
 def rehydrate_session_state():
@@ -2166,6 +2219,7 @@ def rehydrate_session_state():
     import streamlit as st
 
     from chessbench.benchmark.results_view import list_runs
+
     RUNS_ROOT = os.environ.get("CHESS_FIGHT_RUNS_ROOT", "runs")
 
     if "rehydrated" in st.session_state:
@@ -2173,7 +2227,10 @@ def rehydrate_session_state():
 
     st.session_state.rehydrated = True
 
-    if "benchmark_completed_games" in st.session_state and st.session_state.benchmark_completed_games:
+    if (
+        "benchmark_completed_games" in st.session_state
+        and st.session_state.benchmark_completed_games
+    ):
         return
 
     runs = list_runs(RUNS_ROOT)
@@ -2184,13 +2241,6 @@ def rehydrate_session_state():
     # Check if the run is recent enough, e.g., within the last 12 hours
     if not latest_run.timestamp_utc:
         return
-
-    # parse timestamp_utc (e.g. "2026-08-15T23:33:19Z")
-    import datetime
-    try:
-        ts = datetime.datetime.fromisoformat(latest_run.timestamp_utc.replace("Z", "+00:00"))
-    except Exception:
-        pass
 
     if not latest_run.games:
         return
@@ -2203,7 +2253,7 @@ def rehydrate_session_state():
             check_moves=0,
             game_duration=game_rec.game_duration_sec,
             winner=game_rec.winner_spec,
-            termination_reason=game_rec.termination_reason
+            termination_reason=game_rec.termination_reason,
         )
 
         board = chess.Board(game_rec.opening_fen or chess.STARTING_FEN)
@@ -2248,35 +2298,41 @@ def rehydrate_session_state():
             except Exception:
                 is_illegal = True
 
-            game_moves.append(GameMove(
-                player=m.player,
-                move=m.move_uci,
-                move_san=m.move_san,
-                timestamp=0.0,
-                is_capture=is_capture,
-                captured_piece=captured_piece,
-                is_check=is_check,
-                is_checkmate=is_checkmate,
-                is_promotion=is_promotion,
-                is_castling=is_castling,
-                cp_score=m.eval_cp_score,
-                mate_in=m.eval_mate_in,
-                latency_ms=m.llm_latency_ms,
-                tokens_in=m.llm_tokens_in,
-                tokens_out=m.llm_tokens_out,
-                reasoning=m.thinking_trace,
-                is_illegal=is_illegal
-            ))
+            game_moves.append(
+                GameMove(
+                    player=m.player,
+                    move=m.move_uci,
+                    move_san=m.move_san,
+                    timestamp=0.0,
+                    is_capture=is_capture,
+                    captured_piece=captured_piece,
+                    is_check=is_check,
+                    is_checkmate=is_checkmate,
+                    is_promotion=is_promotion,
+                    is_castling=is_castling,
+                    cp_score=m.eval_cp_score,
+                    mate_in=m.eval_mate_in,
+                    latency_ms=m.llm_latency_ms,
+                    tokens_in=m.llm_tokens_in,
+                    tokens_out=m.llm_tokens_out,
+                    reasoning=m.thinking_trace,
+                    is_illegal=is_illegal,
+                )
+            )
 
         gs = GameState(
             board=board,
             moves=game_moves,
             stats=stats,
-            current_player=game_rec.white_player if board.turn == chess.WHITE else game_rec.black_player,
+            current_player=(
+                game_rec.white_player
+                if board.turn == chess.WHITE
+                else game_rec.black_player
+            ),
             is_game_over=True,
             winner=game_rec.winner_spec,
             game_duration=game_rec.game_duration_sec,
-            fen_before=game_rec.opening_fen or chess.STARTING_FEN
+            fen_before=game_rec.opening_fen or chess.STARTING_FEN,
         )
         rehydrated_games.append(gs)
 

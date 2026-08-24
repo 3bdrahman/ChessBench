@@ -11,7 +11,6 @@ from chessbench.common.exceptions import (
 )
 from chessbench.common.retry import (
     RETRY_MOVE_PARSE,
-    RETRY_RATE_LIMIT,
     RETRY_TRANSIENT,
     RetryPolicy,
     retry_async,
@@ -121,8 +120,6 @@ class TestRetryAsync:
                 raise RateLimitError(provider="x")
             return "ok"
 
-        policy = RETRY_RATE_LIMIT
-        # Override to skip real sleep delay
         policy_fast = RetryPolicy(
             max_attempts=5,
             initial_delay=0.001,

@@ -18,18 +18,21 @@ def get_provider_key(provider_name: str) -> str | None:
     """Retrieve API key for provider from environment variables or Streamlit secrets."""
     env_var = f"{provider_name.upper()}_API_KEY"
     key = os.getenv(env_var)
-    if key:
-        return key
+    if key and key.strip():
+        return key.strip()
 
-    # Streamlit secrets fallback for hosted Streamlit Cloud
+    # Streamlit secrets fallback for hosted Streamlit Cloud. Only import /
+    # attribute problems are silenced — a malformed secrets.toml must surface.
     try:
         import streamlit as st
 
         if hasattr(st, "secrets"):
             secret_key_lower = f"{provider_name.lower()}_api_key"
             secret_key_upper = env_var
-            return st.secrets.get(secret_key_lower) or st.secrets.get(secret_key_upper)
-    except Exception:
+            value = st.secrets.get(secret_key_lower) or st.secrets.get(secret_key_upper)
+            if value and str(value).strip():
+                return str(value).strip()
+    except (ImportError, AttributeError):
         pass
 
     return None

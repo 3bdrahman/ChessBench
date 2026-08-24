@@ -113,10 +113,10 @@ class GameClock:
     def to_engine_limit(self) -> chess.engine.Limit:
         """Convert clock to python-chess engine Limit object."""
         return chess.engine.Limit(
-            white_clock=self.white_time,
-            black_clock=self.black_time,
-            white_inc=self.increment,
-            black_inc=self.increment,
+            white_clock=self.white_time.total_seconds(),
+            black_clock=self.black_time.total_seconds(),
+            white_inc=self.increment.total_seconds(),
+            black_inc=self.increment.total_seconds(),
         )
 
     def get_state(self) -> dict[str, int]:

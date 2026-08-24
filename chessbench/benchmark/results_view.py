@@ -67,6 +67,14 @@ class MoveRecord:
     thinking_mentions_material: bool | None = None
     thinking_mentions_positional: bool | None = None
     thinking_mentions_king_safety: bool | None = None
+    game_phase: str | None = None
+    material_white: int | None = None
+    material_black: int | None = None
+    material_imbalance: int | None = None
+    position_complexity: int | None = None
+    illegal_attempts_count: int = 0
+    attempted_illegal_moves: list[str] = field(default_factory=list)
+    clock_remaining_sec: float | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> MoveRecord:
@@ -105,6 +113,14 @@ class MoveRecord:
             thinking_mentions_material=data.get("thinking_mentions_material"),
             thinking_mentions_positional=data.get("thinking_mentions_positional"),
             thinking_mentions_king_safety=data.get("thinking_mentions_king_safety"),
+            game_phase=data.get("game_phase"),
+            material_white=data.get("material_white"),
+            material_black=data.get("material_black"),
+            material_imbalance=data.get("material_imbalance"),
+            position_complexity=data.get("position_complexity"),
+            illegal_attempts_count=int(data.get("illegal_attempts_count", 0) or 0),
+            attempted_illegal_moves=data.get("attempted_illegal_moves", []) or [],
+            clock_remaining_sec=data.get("clock_remaining_sec"),
         )
 
 
@@ -207,6 +223,7 @@ class RunSummary:
     player_stats: dict[str, PlayerStats]
     pairings: list[PairingResult]
     providers_seen: list[str]
+    provenance: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -221,6 +238,7 @@ class RunSummary:
             "player_stats": {k: asdict(v) for k, v in self.player_stats.items()},
             "pairings": [asdict(p) for p in self.pairings],
             "games": [g.to_dict() for g in self.games],
+            "provenance": self.provenance,
         }
 
 
@@ -469,6 +487,7 @@ def load_run(run_dir: str | Path) -> RunSummary | None:
         player_stats=player_stats,
         pairings=pairings,
         providers_seen=_providers_seen(player_stats),
+        provenance=summary.get("provenance", {}),
     )
 
 
@@ -562,3 +581,153 @@ def aggregate_leaderboard(runs: list[RunSummary]) -> list[LeaderboardRow]:
             row.score_pct = 100.0 * row.score / row.games
 
     return sorted(acc.values(), key=lambda r: r.score_pct or 0.0, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Rich Analytics & Metric Computations
+# ---------------------------------------------------------------------------
+
+
+def compute_model_performance_matrix(run: RunSummary) -> list[dict[str, Any]]:
+    """Compute comprehensive per-model metrics matrix across a benchmark run."""
+    import math
+
+    player_moves: dict[str, list[MoveRecord]] = defaultdict(list)
+    for game in run.games:
+        for move in game.moves:
+            player_moves[move.player].append(move)
+
+    matrix: list[dict[str, Any]] = []
+    for player_name, ps in run.player_stats.items():
+        moves = player_moves.get(player_name, [])
+        losses = [m.cp_loss for m in moves if m.cp_loss is not None]
+        blunders = sum(1 for m in moves if m.move_quality == "blunder")
+        inaccuracies = sum(1 for m in moves if m.move_quality in ("inaccuracy", "mistake"))
+        retries = sum(m.validation_retries + m.illegal_attempts_count for m in moves)
+
+        acpl = float(sum(losses) / len(losses)) if losses else None
+        accuracy_pct = float(sum(100.0 * math.exp(-0.005 * loss) for loss in losses) / len(losses)) if losses else None
+        blunder_rate = float(100.0 * blunders / len(moves)) if moves else 0.0
+        inaccuracy_rate = float(100.0 * inaccuracies / len(moves)) if moves else 0.0
+        illegal_rate = float(100.0 * retries / len(moves)) if moves else 0.0
+
+        matrix.append({
+            "Player": player_name,
+            "Games": ps.games_played,
+            "Win Rate %": round(100.0 * ps.score / ps.games_played, 1) if ps.games_played > 0 else 0.0,
+            "ACPL": round(acpl, 1) if acpl is not None else None,
+            "Accuracy %": round(accuracy_pct, 1) if accuracy_pct is not None else None,
+            "Blunder Rate %": round(blunder_rate, 1),
+            "Inaccuracy Rate %": round(inaccuracy_rate, 1),
+            "Illegal/Retry Rate %": round(illegal_rate, 1),
+            "Avg Latency (s)": round(ps.avg_latency_ms / 1000.0, 2) if ps.avg_latency_ms else None,
+            "Tokens Out Total": ps.tokens_out_total,
+        })
+
+    return sorted(matrix, key=lambda x: x["Accuracy %"] or 0.0, reverse=True)
+
+
+def compute_phase_breakdown(run: RunSummary) -> dict[str, dict[str, float | None]]:
+    """Aggregate Average Centipawn Loss (ACPL) and Blunder % segmented by board phase."""
+    phase_data: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    phase_blunders: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    phase_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    for game in run.games:
+        for move in game.moves:
+            phase = move.game_phase or "middlegame"
+            player = move.player
+            phase_counts[player][phase] += 1
+
+            if move.cp_loss is not None:
+                phase_data[player][phase].append(move.cp_loss)
+            if move.move_quality == "blunder":
+                phase_blunders[player][phase] += 1
+
+    result: dict[str, dict[str, float | None]] = {}
+    for player, phases in phase_data.items():
+        result[player] = {}
+        for phase, losses in phases.items():
+            result[player][f"{phase}_acpl"] = round(sum(losses) / len(losses), 1) if losses else None
+            cnt = phase_counts[player][phase]
+            blunders = phase_blunders[player][phase]
+            result[player][f"{phase}_blunder_pct"] = round(100.0 * blunders / cnt, 1) if cnt > 0 else 0.0
+
+    return result
+
+
+def compute_thinking_quality_correlation(run: RunSummary) -> list[dict[str, Any]]:
+    """Extract (thinking_words, cp_loss, player, move_san) data points for analysis."""
+    points: list[dict[str, Any]] = []
+    for game in run.games:
+        for move in game.moves:
+            if move.thinking_words is not None and move.cp_loss is not None:
+                points.append({
+                    "Player": move.player,
+                    "Thinking Words": move.thinking_words,
+                    "Centipawn Loss": move.cp_loss,
+                    "Move": move.move_san,
+                    "Quality": move.move_quality or "unknown",
+                })
+    return points
+
+
+def format_provenance_for_ui(run: RunSummary) -> dict[str, Any]:
+    """Format provenance data for UI display with custom-strategy indicators and short hashes.
+
+    Returns:
+        Dict mapping player specs to their formatted provenance info by color
+    """
+    if not hasattr(run, 'provenance') or not run.provenance:
+        return {}
+
+    formatted: dict[str, dict[str, dict[str, Any]]] = {}
+    for player_spec, color_data in run.provenance.items():
+        formatted[player_spec] = {}
+        for color, provenance_info in color_data.items():
+            # Extract strategy hash and create short version
+            strategy_hash = provenance_info.get("strategy_hash", "")
+            short_hash = strategy_hash[:8] if strategy_hash else ""
+
+            # Determine if this is a custom strategy (not preset/followback)
+            source = provenance_info.get("source", "preset")
+            is_custom = source == "custom"
+
+            # Determine if fallback was used
+            used_fallback = provenance_info.get("used_fallback", False)
+
+            formatted[player_spec][color] = {
+                "strategy_hash": strategy_hash,
+                "short_hash": short_hash,
+                "is_custom": is_custom,
+                "used_fallback": used_fallback,
+                "source": source,
+                "system_prompt": provenance_info.get("system_prompt"),
+                "turn_prompt": provenance_info.get("turn_prompt"),
+            }
+    return formatted
+
+
+def compute_retry_resilience(run: RunSummary) -> dict[str, Any]:
+    """Compute retry recovery rates and error breakdown per model."""
+    resilience: dict[str, dict[str, int]] = defaultdict(lambda: {"clean_first_try": 0, "recovered_retries": 0, "failed_retries": 0})
+    for game in run.games:
+        for move in game.moves:
+            player = move.player
+            retries = move.validation_retries + move.illegal_attempts_count
+            if retries == 0:
+                resilience[player]["clean_first_try"] += 1
+            else:
+                resilience[player]["recovered_retries"] += 1
+
+    out: dict[str, Any] = {}
+    for player, counts in resilience.items():
+        total = counts["clean_first_try"] + counts["recovered_retries"] + counts["failed_retries"]
+        clean_pct = round(100.0 * counts["clean_first_try"] / total, 1) if total > 0 else 100.0
+        out[player] = {
+            "First-Try Clean %": clean_pct,
+            "Clean Moves": counts["clean_first_try"],
+            "Recovered Moves": counts["recovered_retries"],
+            "Total Moves": total,
+        }
+    return out

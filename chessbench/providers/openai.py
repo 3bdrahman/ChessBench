@@ -26,6 +26,7 @@ from chessbench.common.exceptions import (
     RateLimitError,
     TimeoutError,
 )
+from chessbench.providers._openai_compat import extract_chat_message
 from chessbench.providers.registry import register_provider
 
 _log = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class OpenAIProvider(ModelProvider):
         pass
 
     def validate_key(self, api_key: str) -> bool:
+        api_key = api_key.strip()
         return api_key.startswith("sk-") and len(api_key) > 20
 
     def _key_prefix_hint(self) -> str:
@@ -94,11 +96,11 @@ class OpenAIProvider(ModelProvider):
 
         temperature = params.get("temperature", DEFAULT_TEMPERATURE)
         max_tokens = params.get("max_tokens")
-        reasoning_level = params.get("reasoning_level", "mid")
+        reasoning_level = params.get("reasoning_level", "high")
 
         completion_kwargs: dict[str, Any] = {
             "model": model,
-            "messages": openai_messages,  # type: ignore[arg-type]
+            "messages": openai_messages,
             "temperature": temperature,
         }
         if max_tokens is not None:
@@ -111,7 +113,7 @@ class OpenAIProvider(ModelProvider):
 
         reasoning_effort_map = {"low": "low", "mid": "medium", "high": "high"}
         if model.lower().startswith(("o1", "o3", "o4")) or "reasoning" in model.lower():
-            completion_kwargs["reasoning_effort"] = reasoning_effort_map.get(reasoning_level, "medium")
+            completion_kwargs["reasoning_effort"] = reasoning_effort_map.get(reasoning_level, "high")
 
         start = time.time()
         try:
@@ -123,7 +125,7 @@ class OpenAIProvider(ModelProvider):
         latency_ms = int((time.time() - start) * 1000)
 
         tool_calls_out = None
-        message = response.choices[0].message
+        message = extract_chat_message(response, "openai", model)
         if hasattr(message, "tool_calls") and message.tool_calls:
             import json
             tool_calls_out = []

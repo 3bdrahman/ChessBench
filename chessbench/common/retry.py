@@ -9,6 +9,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from chessbench.common.exceptions import (
+    MoveValidationError,
+    RateLimitError,
+    is_retryable,
+)
+
 
 @dataclass(frozen=True)
 class RetryPolicy:
@@ -60,18 +66,14 @@ async def retry_async(
     raise last_exc
 
 
-# Preset policies for common scenarios
+# Preset policies for common scenarios. Classification delegates to the typed
+# exception hierarchy instead of string name matching.
 RETRY_TRANSIENT = RetryPolicy(
     max_attempts=3,
     initial_delay=2.0,
     max_delay=30.0,
     jitter=True,
-    should_retry=lambda exc: exc.__class__.__name__ in (
-        "RateLimitError",
-        "TimeoutError",
-        "ConnectionError",
-        "NetworkError",
-    ),
+    should_retry=is_retryable,
 )
 
 RETRY_RATE_LIMIT = RetryPolicy(
@@ -79,7 +81,7 @@ RETRY_RATE_LIMIT = RetryPolicy(
     initial_delay=1.0,
     max_delay=60.0,
     jitter=True,
-    should_retry=lambda exc: exc.__class__.__name__ == "RateLimitError",
+    should_retry=lambda exc: isinstance(exc, RateLimitError),
 )
 
 RETRY_MOVE_PARSE = RetryPolicy(
@@ -87,22 +89,13 @@ RETRY_MOVE_PARSE = RetryPolicy(
     initial_delay=0.0,
     max_delay=0.0,
     jitter=False,
-    should_retry=lambda exc: exc.__class__.__name__ == "MoveValidationError",
+    should_retry=lambda exc: isinstance(exc, MoveValidationError),
 )
 
 
 def is_retryable_error(exc: Exception) -> bool:
-    """Return True if ``exc`` is a transient error worth retrying.
-
-    This is a convenience that matches the behavior used in
-    ``chessbench.common.exceptions.is_retryable``.
-    """
-    return exc.__class__.__name__ in (
-        "RateLimitError",
-        "TimeoutError",
-        "ConnectionError",
-        "NetworkError",
-    )
+    """Return True if ``exc`` is a transient error worth retrying."""
+    return is_retryable(exc)
 
 
 __all__ = [

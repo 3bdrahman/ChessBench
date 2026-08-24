@@ -25,6 +25,9 @@ def _strip_thinking(text: str) -> str:
     """Remove <think>...</think> blocks from text, including unclosed think tags."""
     text = re.sub(r'<(?:think|thinking)>.*?</(?:think|thinking)>', '', text, flags=re.DOTALL | re.IGNORECASE)
     text = re.sub(r'<(?:think|thinking)>.*?(?=<move>)', '', text, flags=re.DOTALL | re.IGNORECASE)
+    # Opener still present after the two passes above has neither a closing
+    # tag nor a following <move>: everything after it is thinking runoff.
+    text = re.sub(r'<(?:think|thinking)>.*\Z', '', text, flags=re.DOTALL | re.IGNORECASE)
     return text
 
 
@@ -67,7 +70,7 @@ def _parse_san(text: str, board: chess.Board) -> MoveParseResult | None:
     # Castle patterns: O-O-O (queenside) MUST be checked before O-O (kingside)
     # because the kingside regex `\bO[-\s]?O\b` matches the O-O inside O-O-O
     # — checking queenside first avoids mis-firing.
-    if re.search(r'\bO[-\s]?O[-\s]?O\b', text, re.IGNORECASE):
+    if re.search(r'\b[O0][-\s]?[O0][-\s]?[O0]\b', text, re.IGNORECASE):
         # Queenside castle
         for move in board.legal_moves:
             if board.is_castling(move) and move.to_square < move.from_square:
@@ -77,7 +80,7 @@ def _parse_san(text: str, board: chess.Board) -> MoveParseResult | None:
                     confidence=0.9,
                     ambiguous=False,
                 )
-    if re.search(r'\bO[-\s]?O\b', text, re.IGNORECASE):
+    if re.search(r'\b[O0][-\s]?[O0]\b', text, re.IGNORECASE):
         # Kingside castle
         for move in board.legal_moves:
             if board.is_castling(move) and move.to_square > move.from_square:
@@ -257,70 +260,6 @@ def _parse_natural_language(text: str, board: chess.Board) -> MoveParseResult | 
     return None
 
 
-def _resolve_disambiguation(text: str, board: chess.Board, candidates: list[chess.Move]) -> MoveParseResult | None:
-    """
-    Resolve ambiguous moves using context clues from the text.
-    E.g., if two knights can go to d2, prefer "knight from b1" or "knight from f3"
-    """
-    if len(candidates) <= 1:
-        return None
-
-    text = text.lower()
-
-    # Look for from-square hints: "from b1", "from f3", "b1 to d2", "f3d2"
-    from_square_pattern = r'(?:from\s+)?([a-h][1-8])\s*(?:to|-)'
-    from_matches = re.findall(from_square_pattern, text)
-
-    for from_sq in from_matches:
-        from_square = chess.parse_square(from_sq)
-        filtered = [m for m in candidates if m.from_square == from_square]
-        if len(filtered) == 1:
-            move = filtered[0]
-            return MoveParseResult(
-                uci=move.uci(),
-                san=board.san(move),
-                confidence=0.85,
-                ambiguous=False,
-                promotion_piece=(move.promotion and chess.piece_name(move.promotion).lower()) or None,
-            )
-
-    # Look for piece-specific hints: "knight from b1", "white knight", "black bishop"
-    piece_hints = {
-        'white knight': chess.KNIGHT,
-        'black knight': chess.KNIGHT,
-        'white bishop': chess.BISHOP,
-        'black bishop': chess.BISHOP,
-        'white rook': chess.ROOK,
-        'black rook': chess.ROOK,
-        'white queen': chess.QUEEN,
-        'black queen': chess.QUEEN,
-        'white king': chess.KING,
-        'black king': chess.KING,
-    }
-
-    for hint, piece_type in piece_hints.items():
-        if hint in text:
-            # Filter by piece type and color
-            color = chess.WHITE if 'white' in hint else chess.BLACK
-            filtered = [
-                m for m in candidates
-                if (piece := board.piece_at(m.from_square)) is not None
-                and piece.piece_type == piece_type
-                and piece.color == color
-            ]
-            if len(filtered) == 1:
-                move = filtered[0]
-                return MoveParseResult(
-                    uci=move.uci(),
-                    san=board.san(move),
-                    confidence=0.8,
-                    ambiguous=False,
-                    promotion_piece=(move.promotion and chess.piece_name(move.promotion).lower()) or None,
-                )
-
-    return None
-
-
 def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
     """
     Main entry point: parse a move from LLM output.
@@ -474,17 +413,20 @@ def validate_move(move_str: str, board: chess.Board) -> str:
     """
     move_str = move_str.strip().lower()
 
-    # Remove common response artifacts from START only
     prefixes = ["move:", "i choose", "my move is", "play", "'", '"', "`"]
-    for prefix in prefixes:
-        if move_str.startswith(prefix):
-            move_str = move_str[len(prefix):].strip()
-
-    # Remove trailing artifacts (quotes, backticks, punctuation)
     suffixes = ["'", '"', "`", ".", ",", ":", ";"]
-    for suffix in suffixes:
-        if move_str.endswith(suffix):
-            move_str = move_str[:-len(suffix)].strip()
+    for _ in range(8):
+        stripped = False
+        for prefix in prefixes:
+            if move_str.startswith(prefix):
+                move_str = move_str[len(prefix):].strip()
+                stripped = True
+        for suffix in suffixes:
+            if move_str.endswith(suffix):
+                move_str = move_str[:-len(suffix)].strip()
+                stripped = True
+        if not stripped:
+            break
 
     # Basic UCI format validation
     if not (4 <= len(move_str) <= 5):

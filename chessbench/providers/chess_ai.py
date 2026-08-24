@@ -31,7 +31,7 @@ class ProviderChessAI(ChessAI):
         provider_name: str,
         model_id: str,
         api_key: str,
-        reasoning_level: str = "mid",
+        reasoning_level: str = "high",
         **params: Any,
     ) -> None:
         if "reasoning_level" in params:
@@ -169,7 +169,7 @@ class ProviderChessAI(ChessAI):
             for tool_call in result.tool_calls:
                 args = tool_call.get("arguments", {})
                 if isinstance(args, dict) and "uci_move" in args:
-                    uci_move = args["uci_move"]
+                    uci_move: str = args["uci_move"]
                     if uci_move in [m.uci() for m in board.legal_moves]:
                         return uci_move
 

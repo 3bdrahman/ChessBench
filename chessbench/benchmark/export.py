@@ -19,6 +19,23 @@ from chessbench.benchmark.results_view import GameRecord, PairingResult, load_ru
 from chessbench.benchmark.results_view import PlayerStats as ViewPlayerStats
 
 
+def _sanitize_for_csv(value: str | None) -> str | None:
+    """Sanitize string to prevent CSV formula injection.
+
+    Prefixes formula-starting characters with an apostrophe to prevent
+    spreadsheet programs from interpreting them as formulas.
+    """
+    if value is None:
+        return None
+    s = str(value)
+    if not s:
+        return s
+    # Characters that trigger formula interpretation in Excel/LibreOffice/Google Sheets
+    if s[0] in ('=', '+', '-', '@', '\t', '\r', '\n'):
+        return "'" + s
+    return s
+
+
 @dataclass
 class ExportConfig:
     """Configuration for export."""
@@ -39,7 +56,13 @@ def compute_config_hash(config: dict[str, Any]) -> str:
 def _normalize_for_hash(obj: Any) -> Any:
     """Normalize object for consistent hashing."""
     if isinstance(obj, dict):
-        return {k: _normalize_for_hash(v) for k, v in sorted(obj.items())}
+        # Skip empty dicts for the new prompt override fields to preserve hash compatibility
+        items = []
+        for k, v in obj.items():
+            if k in ('system_prompts_by_color', 'turn_prompts_by_color') and isinstance(v, dict) and len(v) == 0:
+                continue
+            items.append((k, v))
+        return {k: _normalize_for_hash(v) for k, v in sorted(items)}
     elif isinstance(obj, list):
         return [_normalize_for_hash(v) for v in obj]
     elif isinstance(obj, (str, int, float, bool, type(None))):
@@ -79,9 +102,121 @@ def compute_dependency_versions() -> dict[str, str]:
     return deps
 
 
-def create_reproducibility_metadata(config: dict[str, Any]) -> dict[str, Any]:
-    """Create comprehensive reproducibility metadata."""
-    return {
+def _compute_player_provenance(config: dict[str, Any], run_summary: Any) -> dict[str, Any]:
+    """Compute per-player prompt provenance from config and run summary.
+
+    Args:
+        config: The benchmark configuration dict
+        run_summary: The run summary containing game data
+
+    Returns:
+        Dict mapping player specs to their provenance info by color
+    """
+    provenance: dict[str, dict[str, dict[str, Any]]] = {}
+
+    # Get the set of player specs from the config
+    player_specs = set(config.get('players', []))
+
+    # For each player, determine what colors they played as
+    player_colors: dict[str, set[str]] = {spec: set() for spec in player_specs}
+    for game in run_summary.games:
+        white_spec = game.white_player
+        black_spec = game.black_player
+        if white_spec in player_colors:
+            player_colors[white_spec].add('white')
+        if black_spec in player_colors:
+            player_colors[black_spec].add('black')
+
+    # Compute provenance for each player
+    for spec in player_specs:
+        provenance[spec] = {}
+
+        # Check what colors this player actually played as
+        for color in player_colors[spec]:
+            # Determine prompts with precedence: color-specific > spec-keyed > None
+            system_prompt = None
+            turn_prompt = None
+            source_system = None
+            source_turn = None
+
+            # Try color-specific override first
+            color_key = color.lower()
+            if color_key in config.get('system_prompts_by_color', {}):
+                system_prompt = config['system_prompts_by_color'][color_key]
+                source_system = f"color-specific:{color_key}"
+            if color_key in config.get('turn_prompts_by_color', {}):
+                turn_prompt = config['turn_prompts_by_color'][color_key]
+                source_turn = f"color-specific:{color_key}"
+
+            # Fall back to spec-keyed prompts
+            if system_prompt is None:
+                system_prompt = config.get('system_prompts', {}).get(spec)
+                if system_prompt is not None:
+                    source_system = "spec-keyed"
+            if turn_prompt is None:
+                turn_prompt = config.get('turn_prompts', {}).get(spec)
+                if turn_prompt is not None:
+                    source_turn = "spec-keyed"
+
+            # Determine if fallback occurred
+            used_fallback = False
+            # Check if we wanted color-specific but fell back to spec-keyed or None
+            # Check if we wanted spec-keyed but fell back to None
+
+            # For system prompt
+            wanted_color_specific = color_key in config.get('system_prompts_by_color', {})
+            wanted_spec_keyed = spec in config.get('system_prompts', {})
+            got_color_specific = source_system and source_system.startswith("color-specific")
+            got_spec_keyed = source_system == "spec-keyed"
+
+            if (wanted_color_specific and not got_color_specific) or \
+               (wanted_spec_keyed and not got_spec_keyed and system_prompt is None):
+                used_fallback = True
+
+            # For turn prompt
+            wanted_color_specific_turn = color_key in config.get('turn_prompts_by_color', {})
+            wanted_spec_keyed_turn = spec in config.get('turn_prompts', {})
+            got_color_specific_turn = source_turn and source_turn.startswith("color-specific")
+            got_spec_keyed_turn = source_turn == "spec-keyed"
+
+            if (wanted_color_specific_turn and not got_color_specific_turn) or \
+               (wanted_spec_keyed_turn and not got_spec_keyed_turn and turn_prompt is None):
+                used_fallback = True
+
+            # Compute strategy hash
+            strategy_hash = ""
+            if system_prompt is not None or turn_prompt is not None:
+                # Use null byte as separator as specified in requirements
+                system_part = system_prompt if system_prompt is not None else ""
+                turn_part = turn_prompt if turn_prompt is not None else ""
+                strategy_string = f"{system_part}\x00{turn_part}"
+                strategy_hash = hashlib.sha256(strategy_string.encode()).hexdigest()[:16]
+
+            # Determine source (simplified - we don't have access to preset versions)
+            # For now, we'll say "custom" if we got a non-None prompt from config, else "preset"
+            source = "custom"
+            if system_prompt is None and turn_prompt is None:
+                source = "preset"
+
+            provenance[spec][color] = {
+                "system_prompt": system_prompt,
+                "turn_prompt": turn_prompt,
+                "strategy_hash": strategy_hash,
+                "source": source,
+                "used_fallback": used_fallback,
+            }
+
+    return provenance
+
+
+def create_reproducibility_metadata(config: dict[str, Any], run_summary: Any = None) -> dict[str, Any]:
+    """Create comprehensive reproducibility metadata.
+
+    Args:
+        config: The benchmark configuration dict
+        run_summary: Optional run summary to compute per-player provenance
+    """
+    metadata = {
         "config_hash": compute_config_hash(config),
         "config": config,
         "git_commit": compute_git_hash(),
@@ -89,6 +224,12 @@ def create_reproducibility_metadata(config: dict[str, Any]) -> dict[str, Any]:
         "dependencies": compute_dependency_versions(),
         "timestamp_utc": datetime.now(UTC).isoformat() + 'Z',
     }
+
+    # Add per-player provenance if run summary is provided
+    if run_summary is not None:
+        metadata["provenance"] = _compute_player_provenance(config, run_summary)
+
+    return metadata
 
 
 def export_parquet(run_dir: str | Path, output_path: str | Path | None = None) -> Path:
@@ -118,7 +259,7 @@ def export_parquet(run_dir: str | Path, output_path: str | Path | None = None) -
     pairings_df.to_parquet(f"{base}_pairings.parquet", compression='snappy')
 
     # Write metadata
-    metadata = create_reproducibility_metadata(run_summary.config)
+    metadata = create_reproducibility_metadata(run_summary.config, run_summary)
     with open(f"{base}_metadata.json", 'w') as f:
         json.dump(metadata, f, indent=2)
 
@@ -147,7 +288,7 @@ def export_csv(run_dir: str | Path, output_dir: str | Path | None = None) -> Pat
     pairings_df.to_csv(output_dir / "pairings.csv", index=False)
 
     # Write metadata
-    metadata = create_reproducibility_metadata(run_summary.config)
+    metadata = create_reproducibility_metadata(run_summary.config, run_summary)
     with open(output_dir / "metadata.json", 'w') as f:
         json.dump(metadata, f, indent=2)
 
@@ -176,20 +317,25 @@ def export_pgn_with_eval(run_dir: str | Path, output_path: str | Path | None = N
     return output_path
 
 
+def _pgn_tag(value: str) -> str:
+    """Escape a PGN tag value (backslashes and double quotes per PGN spec)."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _game_to_pgn_with_eval(game: GameRecord) -> list[str]:
     """Convert a game to PGN with evaluation annotations."""
     pgn_lines = [
         '[Event "Chess LLM Benchmark"]',
         '[Site "Local"]',
         f'[Date "{datetime.now(UTC).strftime("%Y.%m.%d")}"]',
-        f'[Round "{game.game_id}"]',
-        f'[White "{game.white_player}"]',
-        f'[Black "{game.black_player}"]',
-        f'[Result "{game.result}"]',
-        f'[WhiteProvider "{game.white_provider}"]',
-        f'[BlackProvider "{game.black_provider}"]',
-        f'[OpeningECO "{game.opening_eco or "?"}"]',
-        f'[OpeningName "{game.opening_name or "?"}"]',
+        f'[Round "{_pgn_tag(str(game.game_id))}"]',
+        f'[White "{_pgn_tag(game.white_player)}"]',
+        f'[Black "{_pgn_tag(game.black_player)}"]',
+        f'[Result "{_pgn_tag(game.result)}"]',
+        f'[WhiteProvider "{_pgn_tag(game.white_provider)}"]',
+        f'[BlackProvider "{_pgn_tag(game.black_provider)}"]',
+        f'[OpeningECO "{_pgn_tag(str(game.opening_eco or "?"))}"]',
+        f'[OpeningName "{_pgn_tag(str(game.opening_name or "?"))}"]',
         f'[GameDuration "{game.game_duration_sec:.1f}"]',
         '',
     ]
@@ -198,8 +344,11 @@ def _game_to_pgn_with_eval(game: GameRecord) -> list[str]:
     move_text = []
 
     for ply, move_log in enumerate(game.moves):
-        move = chess.Move.from_uci(move_log.move_uci)
-        if move in board.legal_moves:
+        try:
+            move = chess.Move.from_uci(move_log.move_uci)
+        except ValueError:
+            move = None
+        if move is not None and move in board.legal_moves:
             san = board.san(move)
             board.push(move)
         else:
@@ -270,8 +419,8 @@ def _moves_to_dataframe(games: list[GameRecord]) -> pd.DataFrame:
                 'llm_latency_ms': move.llm_latency_ms,
                 'llm_tokens_in': move.llm_tokens_in,
                 'llm_tokens_out': move.llm_tokens_out,
-                'llm_raw_response': move.llm_raw_response,
-                'thinking_trace': move.thinking_trace,
+                'llm_raw_response': _sanitize_for_csv(move.llm_raw_response),
+                'thinking_trace': _sanitize_for_csv(move.thinking_trace),
                 'prompt_hash': move.prompt_hash,
                 'validation_retries': move.validation_retries,
                 'timestamp_utc': move.timestamp_utc,

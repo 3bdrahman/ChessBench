@@ -30,9 +30,7 @@ def stub_provider(monkeypatch) -> StockfishProvider:
     monkeypatch.setenv("STOCKFISH_PATH", _FULL_CMD)
     provider = StockfishProvider()
     provider.find_binary = lambda: _FULL_CMD  # type: ignore[method-assign]
-    yield provider
-    # Best-effort async cleanup happens in the tests themselves; nothing to
-    # tear down synchronously here.
+    return provider
 
 
 class TestStockfishProviderProtocol:
@@ -62,7 +60,8 @@ class TestStockfishProviderProtocol:
         assert result.text.startswith("<uci>")
         assert result.raw_response["provider"] == "stockfish"
         assert result.raw_response["move_uci"] in {m.uci() for m in chess.Board().legal_moves}
-        assert result.latency_ms is not None and result.latency_ms >= 0
+        assert result.latency_ms is not None
+        assert result.latency_ms >= 0
 
     @pytest.mark.asyncio
     async def test_complete_via_fen_prefix_message(self, stub_provider):

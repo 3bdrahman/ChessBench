@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -133,7 +134,7 @@ async def _run_behavioral_check(
                     original_game = g
                     break
 
-            if original_game and original_game.moves:
+            if original_game and original_game.moves and game_log and game_log.moves:
                 # Compare move sequences
                 original_moves = [m.move_uci for m in original_game.moves]
                 new_moves = [m.move_uci for m in game_log.moves]
@@ -147,8 +148,8 @@ async def _run_behavioral_check(
                         diffs.append(f"Move mismatch at ply {i+1}: original={orig}, new={new}")
 
                 # Compare timing if available
-                if original_game.moves and game_log.moves:
-                    for i, (orig, new) in enumerate(zip(original_game.moves, game_log.moves, strict=True)):
+                if original_game.moves and game_log is not None and game_log.moves:
+                    for i, (orig, new) in enumerate(zip(original_game.moves, game_log.moves, strict=True)):  # type: ignore[assignment]
                         if hasattr(orig, 'llm_latency_ms') and hasattr(new, 'llm_latency_ms') and orig.llm_latency_ms is not None and new.llm_latency_ms is not None:
                             diff = abs(orig.llm_latency_ms - new.llm_latency_ms)
                             behavioral_checks["timing_diffs"].append(diff)
@@ -277,12 +278,12 @@ def run_reproducibility_cli(run_dir: str | Path) -> int:
 
     args = parser.parse_args()
 
-    report = verify_run_reproducibility(
+    report = asyncio.run(verify_run_reproducibility(
         args.run_dir,
         move_timing_tolerance_ms=args.move_tolerance,
         token_tolerance=args.token_tolerance,
         full_behavioral_check=args.full_behavioral,
-    )
+    ))
 
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))

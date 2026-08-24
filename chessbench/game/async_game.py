@@ -1,6 +1,7 @@
 """Async game loop for non-blocking chess games."""
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -51,7 +52,23 @@ class AsyncChessGame:
         clock: GameClock | None = None,
         evaluator: StockfishEvaluator | None = None,
         max_moves: int = 512,
+        interactive: bool = True,
     ):
+        """Create an async chess game.
+
+        Args:
+            player1: White player.
+            player2: Black player.
+            starting_fen: Optional custom starting position.
+            clock: Optional game clock.
+            evaluator: Optional Stockfish evaluator for per-move telemetry.
+            max_moves: Failsafe move limit.
+            interactive: When True (default), move failures pause the game and
+                wait for :meth:`resume` — for UI-driven play. When False
+                (headless benchmark/CLI), nobody can dismiss a pause, so a
+                failed move terminates the game with a problem termination
+                reason instead of deadlocking forever.
+        """
         self.board = chess.Board(starting_fen) if starting_fen else chess.Board()
         self.player1 = player1
         self.player2 = player2
@@ -67,6 +84,11 @@ class AsyncChessGame:
         self.clock = clock
         self._turn_start_time = 0.0
         self.max_moves = max_moves
+        self.interactive = interactive
+        # Populated when a move fails in non-interactive mode so finalization
+        # records the real cause instead of overwriting it with board outcome.
+        self.last_failure_reason: str | None = None
+        self.last_failure_error: str | None = None
         # Pause/resume support
         self._pause_event = asyncio.Event()
         self._pause_event.set()  # Start unpaused
@@ -78,7 +100,7 @@ class AsyncChessGame:
         self._retry_current_turn = False
         self._force_move = False
         self._rewind_turn = False
-        self._loop = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def cancel(self) -> None:
         """Cancel the game."""
@@ -147,10 +169,8 @@ class AsyncChessGame:
             move_timeout_seconds: Optional timeout for each move in seconds
         """
         is_white = True
-        try:
+        with contextlib.suppress(RuntimeError):
             self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            pass
 
         # Start clock if provided
         if self.clock:
@@ -161,6 +181,9 @@ class AsyncChessGame:
                and len(self.moves) < self.max_moves):
             # Handle pause/resume - wait if paused
             if self._paused:
+                if not self.interactive:
+                    self._cancelled = True
+                    break
                 # Send paused state to UI
                 paused_state = GameState(
                     board=self.board.copy(),
@@ -186,10 +209,8 @@ class AsyncChessGame:
                         self.moves.pop()
                     if self.moves:
                         popped_move = self.moves.pop()
-                        try:
+                        with contextlib.suppress(IndexError):
                             self.board.pop()
-                        except IndexError:
-                            pass
                         self.stats.total_moves = max(0, self.stats.total_moves - 1)
                         if popped_move.is_capture:
                             self.stats.capture_moves = max(0, self.stats.capture_moves - 1)
@@ -241,7 +262,6 @@ class AsyncChessGame:
             except Exception as exc:
                 _log.error("Player %s move execution failed on turn %d: %s", current_player.name, len(self.moves), exc)
 
-                # Pause the game instead of terminating
                 error_type = type(exc).__name__
                 is_chess_loss = isinstance(exc, MoveExhaustedError)
                 is_timeout = isinstance(exc, asyncio.TimeoutError)
@@ -274,6 +294,17 @@ class AsyncChessGame:
                     reason = "error"
                     error_msg = f"{error_type}: {exc}"
 
+                if not self.interactive:
+                    # Headless run: nobody can dismiss a pause, so pausing would
+                    # deadlock the benchmark forever. End the game as failed;
+                    # the runner logs it as a problem game.
+                    if self.moves and getattr(self.moves[-1], "is_illegal", False):
+                        self.moves.pop()
+                    self.last_failure_reason = reason
+                    self.last_failure_error = error_msg
+                    break
+
+                # Pause the game instead of terminating
                 self.pause(
                     reason=reason,
                     error=error_msg,
@@ -305,10 +336,8 @@ class AsyncChessGame:
                         self.moves.pop()
                     if self.moves:
                         popped_move = self.moves.pop()
-                        try:
+                        with contextlib.suppress(IndexError):
                             self.board.pop()
-                        except IndexError:
-                            pass
                         self.stats.total_moves = max(0, self.stats.total_moves - 1)
                         if popped_move.is_capture:
                             self.stats.capture_moves = max(0, self.stats.capture_moves - 1)
@@ -354,7 +383,6 @@ class AsyncChessGame:
 
             # End the player's turn on the clock
             if self.clock:
-                elapsed_ms = int(time.time() * 1000 - self._turn_start_time)
                 self.clock.end_turn(is_white, int(time.time() * 1000))
 
                 # We do not enforce time loss here to ensure the LLMs can play full games
@@ -380,14 +408,35 @@ class AsyncChessGame:
                 is_promotion = move.promotion is not None
                 is_castling = self.board.is_castling(move)
 
+                # Calculate rich telemetry prior to pushing move
+                piece_count = len(self.board.piece_map())
+                queens = len(self.board.pieces(chess.QUEEN, chess.WHITE)) + len(self.board.pieces(chess.QUEEN, chess.BLACK))
+                move_count = self.board.fullmove_number
+
+                if move_count <= 10 or piece_count >= 28:
+                    phase = "opening"
+                elif queens == 0 or piece_count <= 12:
+                    phase = "endgame"
+                else:
+                    phase = "middlegame"
+
+                piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
+                w_mat = sum(len(self.board.pieces(pt, chess.WHITE)) * val for pt, val in piece_values.items())
+                b_mat = sum(len(self.board.pieces(pt, chess.BLACK)) * val for pt, val in piece_values.items())
+                complexity = len(list(self.board.legal_moves))
+                clock_rem = self.clock.remaining_seconds(is_white) if self.clock else None
+
                 self.board.push(move)
                 is_checkmate = self.board.is_checkmate()
 
+                cp_score = None
+                mate_in = None
                 if self.evaluator and self.evaluator._available:
                     try:
                         eval_res = await self.evaluator.evaluate(self.board)
-                        cp_score = eval_res.cp_score
-                        mate_in = eval_res.mate_in
+                        if eval_res is not None:
+                            cp_score = eval_res.cp_score
+                            mate_in = eval_res.mate_in
                     except Exception as e:
                         _log.warning("Stockfish eval failed: %s", e)
 
@@ -408,7 +457,13 @@ class AsyncChessGame:
                     tokens_in=completion_result.tokens_in if completion_result else None,
                     tokens_out=completion_result.tokens_out if completion_result else None,
                     reasoning=extract_thinking(completion_result.text) if completion_result else None,
-                    validation_retries=completion_result.validation_retries if completion_result else 0
+                    validation_retries=completion_result.validation_retries if completion_result else 0,
+                    game_phase=phase,
+                    material_white=w_mat,
+                    material_black=b_mat,
+                    material_imbalance=w_mat - b_mat,
+                    position_complexity=complexity,
+                    clock_remaining_sec=clock_rem,
                 )
 
                 self.moves.append(game_move)
@@ -435,7 +490,12 @@ class AsyncChessGame:
 
         # Final state
         self.stats.game_duration = time.time() - self.start_time
-        if self._cancelled and not self.board.is_game_over(claim_draw=True):
+        if self.last_failure_reason is not None:
+            # Failed move in headless mode: keep the real cause; board outcome
+            # is meaningless here.
+            self.stats.winner = None
+            self.stats.termination_reason = self.last_failure_reason
+        elif self._cancelled and not self.board.is_game_over(claim_draw=True):
             self.stats.winner = "Cancelled"
             self.stats.termination_reason = "cancelled"
         elif len(self.moves) >= self.max_moves:

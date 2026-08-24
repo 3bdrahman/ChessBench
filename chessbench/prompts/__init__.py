@@ -9,7 +9,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Tiktoken for accurate token counting (guarded import)
+try:
+    import tiktoken
+    TIKTOKEN_AVAILABLE = True
+except ImportError:
+    TIKTOKEN_AVAILABLE = False
+    tiktoken = None  # type: ignore
+
+import chess
 import yaml
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate token count using tiktoken if available, otherwise fallback to chars//4."""
+    if TIKTOKEN_AVAILABLE and tiktoken is not None:
+        try:
+            encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(text))
+        except Exception:
+            # Fallback to chars//4 if tiktoken fails for any reason
+            pass
+    return len(text) // 4
 
 _log = logging.getLogger(__name__)
 
@@ -103,6 +124,7 @@ class PromptValidationResult:
     unrecognized_variables: list[str] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
     estimated_tokens: int = 0
+    rendered_tokens_estimate: int = 0
     used_fallback: bool = False
     fallback_reason: str | None = None
     sanitized_system_prompt: str = ""
@@ -168,8 +190,15 @@ class PromptTemplate:
 
         return "\n\n".join(rendered_parts)
 
-    def render_messages(self, context: dict[str, Any], truncate: bool = True) -> list[Any]:
-        """Render prompt split into system and user ChatMessage objects with background structured I/O contract."""
+    def render_messages(self, context: dict[str, Any], truncate: bool = True, include_output_contract: bool = True, system_suffix: str | None = None) -> list[Any]:
+        """Render prompt split into system and user ChatMessage objects with background structured I/O contract.
+
+        Args:
+            context: Template variables for rendering
+            truncate: Whether to truncate sections if they exceed max_tokens
+            include_output_contract: Whether to append the system output contract to the user message
+            system_suffix: Optional string to append to the system message (if any system messages exist)
+        """
         from chessbench.common.common_types import ChatMessage
 
         system_parts = []
@@ -185,11 +214,15 @@ class PromptTemplate:
 
         messages = []
         if system_parts:
-            messages.append(ChatMessage(role="system", content="\n\n".join(system_parts)))
+            system_content = "\n\n".join(system_parts)
+            # Append system suffix if provided
+            if system_suffix is not None:
+                system_content += system_suffix
+            messages.append(ChatMessage(role="system", content=system_content))
 
         user_content = "\n\n".join(user_parts) if user_parts else ""
         # Background structured I/O contract enforcement
-        if SYSTEM_OUTPUT_CONTRACT.strip() not in user_content:
+        if include_output_contract and SYSTEM_OUTPUT_CONTRACT.strip() not in user_content:
             user_content += SYSTEM_OUTPUT_CONTRACT
 
         if user_content:
@@ -205,25 +238,32 @@ class PromptTemplate:
         return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
-def sanitize_prompt_text(text: str) -> tuple[str, list[str]]:
-    """Sanitize prompt text against known prompt injection patterns."""
-    if not text:
-        return "", []
+def sanitize_prompt_text(text: str, do_sanitize: bool = False) -> tuple[str, list[str]]:
+        """Sanitize prompt text against known prompt injection patterns.
 
-    warnings: list[str] = []
-    sanitized = text
+        Args:
+            text: Input text to sanitize
+            do_sanitize: If True, perform sanitization rewriting. If False (default),
+                        only warn about threats without modifying text.
+        """
+        if not text:
+            return "", []
 
-    for pattern, desc in PROMPT_INJECTION_PATTERNS:
-        if re.search(pattern, sanitized, re.IGNORECASE):
-            warnings.append(f"Prompt injection threat: {desc}")
-            sanitized = re.sub(
-                pattern,
-                lambda m: f'"[SANITIZED_INJECTION: {m.group(0)}]"',
-                sanitized,
-                flags=re.IGNORECASE,
-            )
+        warnings: list[str] = []
+        sanitized = text
 
-    return sanitized, warnings
+        for pattern, desc in PROMPT_INJECTION_PATTERNS:
+            if re.search(pattern, sanitized, re.IGNORECASE):
+                warnings.append(f"Prompt injection threat: {desc}")
+                if do_sanitize:
+                    sanitized = re.sub(
+                        pattern,
+                        lambda m: f'"[SANITIZED_INJECTION: {m.group(0)}]"',
+                        sanitized,
+                        flags=re.IGNORECASE,
+                    )
+
+        return sanitized, warnings
 
 
 def _find_closest_variable(typo: str) -> str | None:
@@ -276,6 +316,12 @@ def validate_prompt_text(
             else:
                 suggestions.append(f"Unrecognized placeholder `{{{v}}}`")
 
+    # Warn for missing recommended rich-context variables
+    recommended_rich_vars = {"last_move_san", "move_history_san"}
+    missing_recommended = recommended_rich_vars - all_vars
+    for var in missing_recommended:
+        warnings.append(f"Missing recommended rich-context variable: {{{var}}}")
+
     # Mandatory Category 1: Player Color ({color})
     if not (all_vars & MANDATORY_COLOR_VARS):
         missing_vars.append("{color}")
@@ -291,8 +337,30 @@ def validate_prompt_text(
         missing_vars.append("{forcing_moves} or {legal_moves_uci}")
         errors.append("Missing mandatory legal moves placeholder: `{forcing_moves}` or `{legal_moves_uci}`")
 
-    # Estimate token count (chars / 4)
-    estimated_tokens = (len(sanitized_sys) + len(sanitized_turn)) // 4
+    # Estimate token count using tiktoken if available, otherwise fallback to chars//4
+    estimated_tokens = _estimate_tokens(sanitized_sys) + _estimate_tokens(sanitized_turn)
+
+    # Compute rendered token estimate using realistic sample context values
+    rendered_tokens_estimate = 0
+    try:
+        from chessbench.prompts.sample_context import build_sample_context
+        # Create a sample context with realistic values for token estimation
+        sample_board = chess.Board()
+        sample_context = build_sample_context(
+            sample_board,
+            move_history=[],
+            reasoning_level="high",
+            stagnation_threshold=3,
+            prompt_template=None,  # Compute all possible variables for realistic estimate
+            evaluator=None,  # Will create a new one
+        )
+        # Render both system and turn prompts with the sample context
+        rendered_sys = sanitized_sys.format(**sample_context)
+        rendered_turn = sanitized_turn.format(**sample_context)
+        rendered_tokens_estimate = _estimate_tokens(rendered_sys) + _estimate_tokens(rendered_turn)
+    except Exception:
+        # If sample context building fails, fall back to the basic estimate
+        rendered_tokens_estimate = estimated_tokens
 
     # Syntax test against dummy context
     dummy_context = {
@@ -348,25 +416,27 @@ def validate_prompt_text(
             unrecognized_variables=unrecognized_vars,
             suggestions=suggestions,
             estimated_tokens=estimated_tokens,
+            rendered_tokens_estimate=rendered_tokens_estimate,
             used_fallback=True,
             fallback_reason=fallback_reason,
             sanitized_system_prompt=DEFAULT_SYSTEM_PROMPT,
             sanitized_turn_prompt=DEFAULT_TURN_PROMPT,
-        )
+)
 
     return PromptValidationResult(
-        is_valid=True,
-        errors=[],
-        warnings=warnings,
-        missing_variables=[],
-        unrecognized_variables=unrecognized_vars,
-        suggestions=suggestions,
-        estimated_tokens=estimated_tokens,
-        used_fallback=False,
-        fallback_reason=None,
-        sanitized_system_prompt=sanitized_sys,
-        sanitized_turn_prompt=sanitized_turn,
-    )
+            is_valid=True,
+            errors=[],
+            warnings=warnings,
+            missing_variables=[],
+            unrecognized_variables=unrecognized_vars,
+            suggestions=suggestions,
+            estimated_tokens=estimated_tokens,
+            rendered_tokens_estimate=rendered_tokens_estimate,
+            used_fallback=False,
+            fallback_reason=None,
+            sanitized_system_prompt=sanitized_sys,
+            sanitized_turn_prompt=sanitized_turn,
+        )
 
 
 def create_safe_prompt_template(

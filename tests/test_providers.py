@@ -241,8 +241,15 @@ class TestGoogleProvider:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
+            part = MagicMock()
+            part.text = "e2e4"
+            part.function_call = None
+            content = MagicMock()
+            content.parts = [part]
+            candidate = MagicMock()
+            candidate.content = content
             mock_response = MagicMock()
-            mock_response.text = "e2e4"
+            mock_response.candidates = [candidate]
             mock_response.usage_metadata = MagicMock(
                 prompt_token_count=100,
                 candidates_token_count=5

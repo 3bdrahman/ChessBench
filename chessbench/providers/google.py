@@ -24,6 +24,7 @@ from chessbench.common.exceptions import (
     RateLimitError,
     TimeoutError,
 )
+from chessbench.constants import DEFAULT_HTTP_TIMEOUT
 from chessbench.providers.registry import register_provider
 
 _log = logging.getLogger(__name__)
@@ -38,13 +39,16 @@ class GoogleProvider(ModelProvider):
         pass
 
     def validate_key(self, api_key: str) -> bool:
-        return len(api_key) > 20
+        return len(api_key.strip()) > 20
 
     def _key_prefix_hint(self) -> str:
         return "Google AI key"
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=int(DEFAULT_HTTP_TIMEOUT * 1000)),
+        )
         try:
             models_response = client.models.list()
             # Handle both sync and async versions
@@ -85,7 +89,10 @@ class GoogleProvider(ModelProvider):
         messages: list[ChatMessage],
         **params: Any,
     ) -> CompletionResult:
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=int(DEFAULT_HTTP_TIMEOUT * 1000)),
+        )
 
         # Build a proper multi-turn conversation history so the model sees prior
         # assistant moves. We collapse the chat history into a single generate_content
@@ -136,14 +143,15 @@ class GoogleProvider(ModelProvider):
                     func_name = tc["function"]["name"]
                     config_kwargs["tool_config"] = types.ToolConfig(
                         function_calling_config=types.FunctionCallingConfig(
-                            mode="ANY",
+                            mode=types.FunctionCallingConfigMode.ANY,
                             allowed_function_names=[func_name]
                         )
                     )
 
-            response = await client.models.generate_content(
+
+            response = await client.models.generate_content(  # type: ignore[misc]
                 model=model,
-                contents=contents,
+                contents=contents,  # type: ignore[arg-type]
                 config=types.GenerateContentConfig(**config_kwargs),  # type: ignore[arg-type]
             )
         except Exception as exc:
@@ -159,9 +167,12 @@ class GoogleProvider(ModelProvider):
             tokens_out = response.usage_metadata.candidates_token_count
 
         tool_calls_out = None
-        text_out = response.text if response.text else ""
-        if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-            for part in response.candidates[0].content.parts:
+        candidates = getattr(response, "candidates", None) or []
+        first = candidates[0] if candidates else None
+        parts = getattr(getattr(first, "content", None), "parts", None) or []
+        text_out = "".join(getattr(p, "text", "") or "" for p in parts).strip()
+        if parts:
+            for part in parts:
                 if part.function_call:
                     if tool_calls_out is None:
                         tool_calls_out = []

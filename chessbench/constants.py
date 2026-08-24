@@ -23,7 +23,7 @@ DEFAULT_MAX_BACKOFF: float = 15.0
 # Reasoning Levels
 # =============================================================================
 REASONING_LEVELS: tuple[str, ...] = ("low", "mid", "high")
-DEFAULT_REASONING_LEVEL: str = "mid"
+DEFAULT_REASONING_LEVEL: str = "high"
 REASONING_MAX_TOKENS: dict[str, int] = {
     "low": 256,
     "mid": 1024,
@@ -73,7 +73,7 @@ DEFAULT_COLORS_MODE: str = "alternating"
 DEFAULT_MAX_PARALLEL_GAMES: int = 1
 DEFAULT_MOVE_TIMEOUT_SECONDS: int = 120
 # ^ MUST exceed the worst-case move cycle inside get_move_with_result
-# (every retry × (DEFAULT_HTTP_TIMEOUT + DEFAULT_MAX_BACKOFF)).
+# (every retry x (DEFAULT_HTTP_TIMEOUT + DEFAULT_MAX_BACKOFF)).
 # If this falls below that ceiling, asyncio.wait_for cancels the move coroutine
 # mid-retry — the game false-pauses with reason="timeout" and the move is never
 # recorded even though the API key is valid and a request would have succeeded.
@@ -235,8 +235,6 @@ MOVE_PARSE_CONFIDENCE: dict[str, float] = {
     "target_square_only": 0.3,
     "fallback_uci": 0.6,
     "fallback_no_board": 0.5,
-    "disambiguation_resolved": 0.85,
-    "piece_hint_resolved": 0.8,
 }
 
 # =============================================================================

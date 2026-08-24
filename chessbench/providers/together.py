@@ -31,6 +31,7 @@ from chessbench.common.exceptions import (
     RateLimitError,
     TimeoutError,
 )
+from chessbench.providers._openai_compat import extract_chat_message
 from chessbench.providers.registry import register_provider
 
 _log = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ class TogetherProvider(ModelProvider):
 
     def validate_key(self, api_key: str) -> bool:
         # Together AI keys typically start with specific prefixes
-        return len(api_key) >= 20
+        return len(api_key.strip()) >= 20
 
     def _key_prefix_hint(self) -> str:
         return "Together AI key"
@@ -116,7 +117,7 @@ class TogetherProvider(ModelProvider):
 
         completion_kwargs: dict[str, Any] = {
             "model": model,
-            "messages": openai_messages,  # type: ignore[arg-type]
+            "messages": openai_messages,
             "temperature": temperature,
         }
         if max_tokens is not None:
@@ -137,7 +138,7 @@ class TogetherProvider(ModelProvider):
         latency_ms = int((time.time() - start) * 1000)
 
         tool_calls_out = None
-        message = response.choices[0].message
+        message = extract_chat_message(response, "together", model)
         if hasattr(message, "tool_calls") and message.tool_calls:
             import json
             tool_calls_out = []

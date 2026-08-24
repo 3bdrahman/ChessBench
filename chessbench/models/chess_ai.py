@@ -9,7 +9,7 @@ all handled here.
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import chess
 
@@ -22,9 +22,39 @@ from chessbench.common.exceptions import (
     is_retryable,
 )
 from chessbench.models.evaluation import PositionEvaluator
-from chessbench.prompts import prompt_registry
+from chessbench.prompts import PromptTemplate, prompt_registry
+
+if TYPE_CHECKING:
+    from chessbench.common.common_types import ChatMessage
 
 _log = logging.getLogger(__name__)
+
+
+def get_reasoning_directive(level: str) -> str:
+    """Return reasoning directive string for given reasoning level.
+
+    Args:
+        level: Reasoning level ("low", "mid", "high").
+
+    Returns:
+        The reasoning directive string for the given level.
+        For unknown/invalid level, falls back to "high".
+    """
+    reasoning_directives = {
+        "low": (
+            "\n\n[REASONING LEVEL: LOW]\n"
+            "Be extremely fast and concise. Keep reasoning under 30 words, or output the move directly in <move>uci_move</move> tags."
+        ),
+        "mid": (
+            "\n\n[REASONING LEVEL: MID]\n"
+            "Provide concise strategic and tactical reasoning (under 150 words) in <think> tags before your chosen move in <move>uci_move</move> tags."
+        ),
+        "high": (
+            "\n\n[REASONING LEVEL: HIGH]\n"
+            "Perform deep step-by-step tactical calculation, candidate move evaluation, and king safety analysis in <think> tags before your move in <move>uci_move</move> tags."
+        ),
+    }
+    return reasoning_directives.get(level, reasoning_directives["high"])
 
 
 class ChessAI(ABC):
@@ -32,7 +62,7 @@ class ChessAI(ABC):
         self,
         name: str | None = None,
         prompt_version: str = "v1_baseline",
-        reasoning_level: str = "mid",
+        reasoning_level: str = "high",
         system_prompt: str | None = None,
         turn_prompt: str | None = None,
     ):
@@ -43,9 +73,10 @@ class ChessAI(ABC):
 
         self.last_completion_result: CompletionResult | None = None
         self.prompt_version = prompt_version
+        self.prompt_template: PromptTemplate
 
         if reasoning_level not in ("low", "mid", "high"):
-            reasoning_level = "mid"
+            reasoning_level = "high"
         self.reasoning_level = reasoning_level
 
         # Initialize position evaluator
@@ -60,9 +91,10 @@ class ChessAI(ABC):
         else:
             self.used_fallback_prompt = False
             self.fallback_reason = None
-            self.prompt_template = prompt_registry.get(prompt_version)
-            if self.prompt_template is None:
+            pt = prompt_registry.get(prompt_version)
+            if pt is None:
                 raise ValueError(f"Unknown prompt version: {prompt_version}. Available: {prompt_registry.list_versions()}")
+            self.prompt_template = pt
 
     def reset_game(self) -> None:
         """Reset per-game history (move_history, position_history, last_completion_result)."""
@@ -223,119 +255,20 @@ class ChessAI(ABC):
     def _get_prompt_context(self, board: chess.Board) -> dict[str, Any]:
         """Compute the demand-driven prompt context dictionary for the given board position."""
         assert self.prompt_template is not None, "Prompt template should be initialized"
+        from chessbench.prompts.sample_context import build_sample_context
 
-        # Determine which variables the active template actually references
-        # so we only compute what's needed — no dead-weight evaluation.
-        needed = self.prompt_template.referenced_variables()
-
-        # --- Always-cheap variables (trivial to compute) ---
-        context: dict[str, Any] = {
-            "fen": board.fen(),
-            "color": "White" if board.turn == chess.WHITE else "Black",
-            "reasoning_level": self.reasoning_level,
-        }
-
-        # --- Rich context helpers ---
-        if "legal_moves_annotated" in needed:
-            context["legal_moves_annotated"] = self._get_annotated_legal_moves(board)
-
-        if "last_move_san" in needed:
-            context["last_move_san"] = self._get_last_move_san(board)
-
-        if "move_history_san" in needed:
-            context["move_history_san"] = self._get_move_history_san(board)
-
-        if needed & {"white_pieces", "black_pieces"}:
-            w_str, b_str = self._get_piece_locations_str(board)
-            context["white_pieces"] = w_str
-            context["black_pieces"] = b_str
-
-        # --- Move categorization (needed by all current templates) ---
-        # Shared dependency: categorize_moves is needed by the UCI-list
-        # variables AND the PositionEval object variables.
-        needs_moves = needed & {
-            "forcing_moves", "developing_moves", "positional_moves",
-            "legal_moves_uci", "forcing_uci", "developing_uci", "positional_uci",
-        }
-        moves = None
-        if needs_moves:
-            moves = self.evaluator.categorize_moves(board)
-
-            if needed & {"forcing_moves", "developing_moves", "positional_moves"}:
-                context["forcing_moves"] = moves["forcing_moves"]
-                context["developing_moves"] = moves["developing_moves"]
-                context["positional_moves"] = moves["positional_moves"]
-
-            if needed & {"legal_moves_uci", "forcing_uci", "developing_uci", "positional_uci"}:
-                def extract_uci_moves(pos_eval: "PositionEval") -> list[str]:
-                    uci_moves = []
-                    for desc in pos_eval.pv or []:
-                        if "[" in desc and "]" in desc:
-                            uci = desc[desc.rfind("[") + 1 : desc.rfind("]")]
-                            if len(uci) in (4, 5):
-                                uci_moves.append(uci)
-                    return uci_moves
-
-                forcing_uci = extract_uci_moves(moves["forcing_moves"])
-                developing_uci = extract_uci_moves(moves["developing_moves"])
-                positional_uci = extract_uci_moves(moves["positional_moves"])
-
-                context["legal_moves_uci"] = " ".join(forcing_uci + developing_uci + positional_uci)
-                context["forcing_uci"] = " ".join(forcing_uci)
-                context["developing_uci"] = " ".join(developing_uci)
-                context["positional_uci"] = " ".join(positional_uci)
-
-        # --- Board representation ---
-        if "ascii_board" in needed:
-            context["ascii_board"] = str(board)
-
-        # --- Repetition / stagnation analysis ---
-        if needed & {"position_repetitions", "stagnation_status", "position_progress"}:
-            position_analysis = self._analyze_position_repetition(board)
-            context["position_repetitions"] = position_analysis["repetitions"]
-            context["stagnation_status"] = (
-                "STAGNATING - Force dynamic play!" if position_analysis["is_stagnating"] else "Normal"
-            )
-            context["position_progress"] = f"{position_analysis['progress_score']:.2f}"
-
-        # --- Evaluations: only computed when the template references them ---
-        _eval_map: dict[str, Any] = {
-            "material_tension": lambda: str(self.evaluator.analyze_material_tension(board)),
-            "position_dynamism": lambda: str(self.evaluator.analyze_position_dynamism(board)),
-            "development_score": lambda: str(self.evaluator.calculate_development_score(board)),
-            "defense_analysis": lambda: str(self.evaluator.analyze_defense(board)),
-            "vulnerability_analysis": lambda: str(self.evaluator.analyze_vulnerabilities(board)),
-            "capture_analysis": lambda: str(self.evaluator.analyze_captures(board)),
-            "king_safety": lambda: str(self.evaluator.analyze_king_safety(board)),
-            "undefended_pieces": lambda: str(self.evaluator.analyze_undefended_pieces(board)),
-            "exposed_pieces": lambda: str(self.evaluator.analyze_exposed_pieces(board)),
-            "material_count": lambda: str(self.evaluator.get_material_count(board)),
-            "material_balance": lambda: str(self.evaluator.analyze_material_balance(board)),
-            "center_control": lambda: str(self.evaluator.analyze_center_control(board)),
-            "development_status": lambda: str(self.evaluator.analyze_development_status(board)),
-        }
-        for var_name in needed & _eval_map.keys():
-            context[var_name] = _eval_map[var_name]()
-
-        return context
+        return build_sample_context(
+            board,
+            move_history=self.move_history,
+            reasoning_level=self.reasoning_level,
+            stagnation_threshold=self.stagnation_threshold,
+            prompt_template=self.prompt_template,
+            evaluator=self.evaluator,
+        )
 
     def _get_reasoning_directive(self) -> str:
         """Return reasoning directive string for current reasoning level."""
-        reasoning_directives = {
-            "low": (
-                "\n\n[REASONING LEVEL: LOW]\n"
-                "Be extremely fast and concise. Keep reasoning under 30 words, or output the move directly in <move>uci_move</move> tags."
-            ),
-            "mid": (
-                "\n\n[REASONING LEVEL: MID]\n"
-                "Provide concise strategic and tactical reasoning (under 150 words) in <think> tags before your chosen move in <move>uci_move</move> tags."
-            ),
-            "high": (
-                "\n\n[REASONING LEVEL: HIGH]\n"
-                "Perform deep step-by-step tactical calculation, candidate move evaluation, and king safety analysis in <think> tags before your move in <move>uci_move</move> tags."
-            ),
-        }
-        return reasoning_directives.get(self.reasoning_level, reasoning_directives["mid"])
+        return get_reasoning_directive(self.reasoning_level)
 
     def _create_prompt(self, fen: str) -> str:
         assert self.prompt_template is not None, "Prompt template should be initialized"
@@ -351,7 +284,11 @@ class ChessAI(ABC):
         context = self._get_prompt_context(board)
 
         try:
-            messages = self.prompt_template.render_messages(context)
+            messages = self.prompt_template.render_messages(
+                context,
+                include_output_contract=True,
+                system_suffix=self._get_reasoning_directive()
+            )
         except Exception as exc:
             _log.warning("Prompt rendering failed: %s. Using default fallback prompt.", exc)
             from chessbench.prompts import create_safe_prompt_template
@@ -359,11 +296,11 @@ class ChessAI(ABC):
             self.prompt_template = fallback_template
             self.used_fallback_prompt = True
             self.fallback_reason = f"Runtime rendering error: {exc}"
-            messages = self.prompt_template.render_messages(context)
-
-        reasoning_directive = self._get_reasoning_directive()
-        if (messages and messages[0].role == "system") or messages:
-            messages[0].content += reasoning_directive
+            messages = self.prompt_template.render_messages(
+                context,
+                include_output_contract=True,
+                system_suffix=self._get_reasoning_directive()
+            )
 
         return messages
 
@@ -401,6 +338,7 @@ class ChessAI(ABC):
         )
 
     async def _invoke_get_move_from_model(self, fen: str, validation_attempt: int, network_attempts: int) -> str:
+        # Subclass implementations may have different signatures; try progressively fewer args
         try:
             return await self._get_move_from_model(fen, validation_attempt, network_attempts)
         except TypeError:
@@ -543,7 +481,7 @@ class ChessAI(ABC):
         )
 
     @abstractmethod
-    async def _get_move_from_model(self, fen: str, validation_attempt: int = 0) -> str:
+    async def _get_move_from_model(self, fen: str, validation_attempt: int = 0, network_attempts: int = 0) -> str:
         """Return the model's UCI move suggestion for the given FEN position.
 
         Implementations should populate ``self.last_completion_result`` with

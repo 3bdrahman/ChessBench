@@ -58,6 +58,7 @@ class AnthropicProvider(ModelProvider):
         pass
 
     def validate_key(self, api_key: str) -> bool:
+        api_key = api_key.strip()
         return api_key.startswith("sk-ant-") and len(api_key) > 30
 
     def _key_prefix_hint(self) -> str:

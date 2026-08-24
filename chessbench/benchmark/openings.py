@@ -37,7 +37,16 @@ class OpeningBook:
             board = chess.Board()
             valid = True
             for move_uci in moves:
-                move = chess.Move.from_uci(move_uci)
+                try:
+                    move = chess.Move.from_uci(move_uci)
+                except ValueError:
+                    self.invalid_openings.append({
+                        'eco': eco,
+                        'name': name,
+                        'reason': f'Malformed UCI {move_uci!r}'
+                    })
+                    valid = False
+                    break
                 if move in board.legal_moves:
                     board.push(move)
                 else:
@@ -49,16 +58,18 @@ class OpeningBook:
                     valid = False
                     break
 
-            if valid:
-                # Check if position has immediate mate
-                if board.is_checkmate():
-                    self.invalid_openings.append({
-                        'eco': eco,
-                        'name': name,
-                        'reason': 'Immediate checkmate in opening position'
-                    })
-                    continue
+            if valid and board.is_game_over(claim_draw=False):
+                # Terminal opening positions (mate, stalemate, bare kings, ...)
+                # would end every game before it starts — reject them outright.
+                reason = 'checkmate' if board.is_checkmate() else 'game-over position'
+                self.invalid_openings.append({
+                    'eco': eco,
+                    'name': name,
+                    'reason': f'Immediate {reason} in opening position'
+                })
+                continue
 
+            if valid:
                 self.opening_fens.append({
                     'eco': eco,
                     'name': name,

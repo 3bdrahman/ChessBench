@@ -62,6 +62,19 @@ def cli() -> None:
     """
 
 
+def _sanitize_run_name(ctx, param, value):
+    """Sanitize run name to prevent path traversal."""
+    if value is None:
+        return value
+    import os
+    # Reject path separators and parent directory references
+    if os.path.sep in value or (os.path.altsep and os.path.altsep in value):
+        raise click.BadParameter(f"Run name cannot contain path separators: {value}")
+    if os.path.basename(value) != value:
+        raise click.BadParameter(f"Run name cannot contain directory components: {value}")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Run Command
 # ---------------------------------------------------------------------------
@@ -91,19 +104,6 @@ def cli() -> None:
 @click.option("--move-timeout", type=int, help="Per-move timeout in seconds")
 @click.option("--game-timeout", type=int, help="Per-game wall-clock failsafe in seconds")
 @click.option("--output", "-o", type=click.Path(path_type=Path), default="runs", help="Output directory")
-def _sanitize_run_name(ctx, param, value):
-    """Sanitize run name to prevent path traversal."""
-    if value is None:
-        return value
-    import os
-    # Reject path separators and parent directory references
-    if os.path.sep in value or (os.path.altsep and os.path.altsep in value):
-        raise click.BadParameter(f"Run name cannot contain path separators: {value}")
-    if os.path.basename(value) != value:
-        raise click.BadParameter(f"Run name cannot contain directory components: {value}")
-    return value
-
-
 @click.option("--name", "-n", help="Run name (default: timestamp)", callback=_sanitize_run_name)
 @click.option("--seed", type=int, help="Random seed for reproducibility")
 @click.option("--colors", type=click.Choice(["alternating", "fixed"]), help="Color assignment mode")

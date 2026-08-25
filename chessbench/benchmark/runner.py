@@ -106,12 +106,9 @@ class BenchmarkConfig:
     # API keys (loaded from env or config)
     api_keys: dict[str, str] = field(default_factory=dict)
 
-    # Custom Prompts
-    system_prompts: dict[str, str] = field(default_factory=dict)
-    turn_prompts: dict[str, str] = field(default_factory=dict)
-    # Color-keyed prompt overrides (additive, for same-model A/B testing)
-    system_prompts_by_color: dict[str, str] = field(default_factory=dict)
-    turn_prompts_by_color: dict[str, str] = field(default_factory=dict)
+    # Custom prompts (optional, for A/B testing)
+    system_prompt: str | None = None
+    turn_prompt: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -264,8 +261,8 @@ class BenchmarkRunner:
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
                 reasoning_level=self.config.reasoning_level,
-                system_prompt=self.config.system_prompts.get(player_spec),
-                turn_prompt=self.config.turn_prompts.get(player_spec),
+                system_prompt=self.config.system_prompt,
+                turn_prompt=self.config.turn_prompt,
             )
             players[player_spec] = ai
 
@@ -295,25 +292,10 @@ class BenchmarkRunner:
 
         Args:
             player_spec: Player specification in format "provider:model_id"
-            color: Optional color ("white" or "black") for prompt override selection
+            color: Optional color ("white" or "black") - kept for API compatibility
         """
         provider_name, model_id = player_spec.split(':', 1)
         api_key = self.config.api_keys.get(provider_name, '')
-
-        # Determine prompts with precedence: color-specific > spec-keyed > None
-        system_prompt = None
-        turn_prompt = None
-
-        if color:
-            # Try color-specific override first
-            system_prompt = self.config.system_prompts_by_color.get(color)
-            turn_prompt = self.config.turn_prompts_by_color.get(color)
-
-        # Fall back to spec-keyed prompts
-        if system_prompt is None:
-            system_prompt = self.config.system_prompts.get(player_spec)
-        if turn_prompt is None:
-            turn_prompt = self.config.turn_prompts.get(player_spec)
 
         return ProviderChessAI(
             provider_name=provider_name,
@@ -322,8 +304,8 @@ class BenchmarkRunner:
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
             reasoning_level=self.config.reasoning_level,
-            system_prompt=system_prompt,
-            turn_prompt=turn_prompt,
+            system_prompt=self.config.system_prompt,
+            turn_prompt=self.config.turn_prompt,
         )
 
     def request_continue_after_problem(self) -> None:

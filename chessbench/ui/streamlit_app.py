@@ -380,7 +380,9 @@ def render_provider_keys_section():
                 status_list.append((provider_name, False, "local offline"))
             continue
 
-        secret_key = _get_secret_or_env(provider_name)
+        secret_key = st.session_state.get(
+            f"user_key_{provider_name}"
+        ) or _get_secret_or_env(provider_name)
         env_var_name = f"{provider_name.upper()}_API_KEY"
         if secret_key and provider.validate_key(secret_key):
             available_providers.append((provider_name, secret_key))
@@ -405,6 +407,24 @@ def render_provider_keys_section():
                 grid_html += f'<div class="sb-provider-badge-inactive"><span>🔒 {pname.capitalize()}</span><span style="font-size:0.64rem; opacity:0.65;">{label}</span></div>'
         grid_html += "</div>"
         st.markdown(grid_html, unsafe_allow_html=True)
+
+        inactive_keyed = [
+            pname for pname, is_active, label in status_list
+            if not is_active and label.startswith("Needs ")
+        ]
+        if inactive_keyed:
+            st.caption(
+                "Paste your own key to unlock a provider for this session. "
+                "Keys are never stored or sent anywhere except the provider's API."
+            )
+            for pname in inactive_keyed:
+                env_var_name = f"{pname.upper()}_API_KEY"
+                st.text_input(
+                    env_var_name,
+                    type="password",
+                    key=f"user_key_{pname}",
+                    placeholder=f"Paste your {pname.capitalize()} key…",
+                )
 
         with st.popover("📋 Streamlit Secrets Template"):
             st.markdown(

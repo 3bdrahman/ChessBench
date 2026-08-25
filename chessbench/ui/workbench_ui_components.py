@@ -8,11 +8,12 @@ from difflib import unified_diff
 import chess
 import streamlit as st
 
-from chessbench.models.chess_ai import get_reasoning_directive
 from chessbench.prompts import (
-    create_safe_prompt_template,
+    SYSTEM_PROMPT,
+    TURN_PROMPT,
+    build_prompt_context,
 )
-from chessbench.prompts.sample_context import build_sample_context
+from chessbench.common.common_types import ChatMessage
 
 
 def render_preview_popover(
@@ -39,23 +40,25 @@ def render_preview_popover(
     )
     selected_fen = position_options[selected_position_name]
 
-    # Build context and render
+    # Build context and render using simplified prompts API
     try:
-        tmpl, _ = create_safe_prompt_template(prompt_sys, prompt_turn)
-        sample_ctx = build_sample_context(
-            chess.Board(selected_fen),
-            move_history=[],
-            reasoning_level=reasoning_level,
-            stagnation_threshold=3,
-            prompt_template=tmpl,
-        )
-        msgs = tmpl.render_messages(
-            sample_ctx,
-            system_suffix=get_reasoning_directive(reasoning_level),
-        )
-        for msg in msgs:
-            st.markdown(f"**[{msg.role.upper()}]**")
-            st.code(msg.content, language="text")
+        board = chess.Board(selected_fen)
+        ctx = build_prompt_context(board, "white")
+
+        reasoning_directives = {
+            "low": "Be concise. Reasoning under 30 words.",
+            "mid": "Concise strategic & tactical reasoning (under 150 words).",
+            "high": "Deep step-by-step tactical calculation and candidate move evaluation.",
+        }
+        reasoning = reasoning_directives.get(reasoning_level, reasoning_directives["high"])
+
+        system_content = prompt_sys.format(**ctx) + f"\n\n[REASONING LEVEL: {reasoning_level.upper()}]\n{reasoning}"
+        user_content = prompt_turn.format(**ctx)
+
+        st.markdown("**[SYSTEM]**")
+        st.code(system_content, language="text")
+        st.markdown("**[USER]**")
+        st.code(user_content, language="text")
         if rendered_tokens_estimate is not None:
             st.caption(f"~{rendered_tokens_estimate} tokens rendered")
     except Exception as e:
@@ -73,28 +76,25 @@ def render_prompt_diff(
     if st.button("🔍 P1↔P2 DIFF", key="btn_prompt_diff"):
         # Render final prompts with reasoning directive for both players
         try:
-            tmpl1, _ = create_safe_prompt_template(sys_1, turn_1)
-            tmpl2, _ = create_safe_prompt_template(sys_2, turn_2)
-            # Use a neutral board for diff (starting position)
-            sample_ctx = build_sample_context(
-                chess.Board(chess.STARTING_FEN),
-                move_history=[],
-                reasoning_level=reasoning_level,
-                stagnation_threshold=3,
-                prompt_template=None,  # We'll use the template's own variables
-            )
-            # Render messages including system suffix (reasoning directive)
-            msgs1 = tmpl1.render_messages(
-                sample_ctx,
-                system_suffix=get_reasoning_directive(reasoning_level),
-            )
-            msgs2 = tmpl2.render_messages(
-                sample_ctx,
-                system_suffix=get_reasoning_directive(reasoning_level),
-            )
-            # Extract the user message content (last message) for diff
-            user_msg1 = msgs1[-1].content if msgs1 else ""
-            user_msg2 = msgs2[-1].content if msgs2 else ""
+            board = chess.Board(chess.STARTING_FEN)
+            ctx = build_prompt_context(board, "white")
+
+            reasoning_directives = {
+                "low": "Be concise. Reasoning under 30 words.",
+                "mid": "Concise strategic & tactical reasoning (under 150 words).",
+                "high": "Deep step-by-step tactical calculation and candidate move evaluation.",
+            }
+            reasoning = reasoning_directives.get(reasoning_level, reasoning_directives["high"])
+
+            system_content_1 = sys_1.format(**ctx) + f"\n\n[REASONING LEVEL: {reasoning_level.upper()}]\n{reasoning}"
+            user_content_1 = turn_1.format(**ctx)
+            system_content_2 = sys_2.format(**ctx) + f"\n\n[REASONING LEVEL: {reasoning_level.upper()}]\n{reasoning}"
+            user_content_2 = turn_2.format(**ctx)
+
+            # Extract user message content for diff
+            user_msg1 = user_content_1
+            user_msg2 = user_content_2
+
             # Compute unified diff
             diff_lines = unified_diff(
                 user_msg1.splitlines(keepends=True),

@@ -204,38 +204,41 @@ def render_variable_reference(m1_spec: str, m2_spec: str) -> None:
                     "Description": meta["description"],
                     "Sample Value": str(sample_val)[:50] + ("..." if len(str(sample_val)) > 50 else ""),
                 })
-                st.dataframe(
-                    table_data,
-                    hide_index=True,
-                    width="stretch",
-                    column_config={
-                        "Variable": st.column_config.TextColumn("Variable", width="small"),
-                        "Category": st.column_config.TextColumn("Category", width="medium"),
-                        "Description": st.column_config.TextColumn("Description", width="large"),
-                        "Sample Value": st.column_config.TextColumn("Sample Value", width="medium"),
-                    },
-                )
-                # Insert buttons
-                st.markdown("**Insert variable into active tab's turn prompt:**")
-                col_var1, col_var2 = st.columns([3, 1])
-                insert_var = col_var1.selectbox(
-                    "Select variable to insert",
-                    options=["-- Select --", *list(filtered_vars.keys())],
-                    index=0,
-                    key=f"insert_variable_select_{m1_spec}_{m2_spec}",
-                )
-                if col_var2.button("➕ Insert", key=f"btn_insert_variable_{m1_spec}_{m2_spec}") and insert_var != "-- Select --":  # noqa: RUF001
-                    # Determine active tab (we need to know which tab is active)
-                    # Since we can't easily get the active tab from st.tabs, we'll use a session state to track
-                    # For simplicity, we'll insert into the last active tab stored in session state
-                    # We'll set this in the tab callbacks below
-                    active_tab = st.session_state.get("active_prompt_tab", "P1")
-                    if active_tab == "P1":
-                        current_turn = st.session_state[f"turn_prompt_{m1_spec}"]
-                        st.session_state[f"turn_prompt_{m1_spec}"] = current_turn + "{" + insert_var + "}"
-                    else:
-                        current_turn = st.session_state[f"turn_prompt_{m2_spec}"]
-                        st.session_state[f"turn_prompt_{m2_spec}"] = current_turn + "{" + insert_var + "}"
-                    st.rerun()
+            
+            # Display the dataframe once
+            st.dataframe(
+                table_data,
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "Variable": st.column_config.TextColumn("Variable", width="small"),
+                    "Category": st.column_config.TextColumn("Category", width="medium"),
+                    "Description": st.column_config.TextColumn("Description", width="large"),
+                    "Sample Value": st.column_config.TextColumn("Sample Value", width="medium"),
+                },
+            )
+            
+            # Insert buttons (only once, outside the loop)
+            st.markdown("**Insert variable into active tab's turn prompt:**")
+            col_var1, col_var2 = st.columns([3, 1])
+            insert_var = col_var1.selectbox(
+                "Select variable to insert",
+                options=["-- Select --", *list(filtered_vars.keys())],
+                index=0,
+                key=f"insert_variable_select_{m1_spec}_{m2_spec}",
+            )
+            if col_var2.button("➕ Insert", key=f"btn_insert_variable_{m1_spec}_{m2_spec}") and insert_var != "-- Select --":  # noqa: RUF001
+                # Determine active tab (we need to know which tab is active)
+                # Since we can't easily get the active tab from st.tabs, we'll use a session state to track
+                # For simplicity, we'll insert into the last active tab stored in session state
+                # We'll set this in the tab callbacks below
+                active_tab = st.session_state.get("active_prompt_tab", "P1")
+                if active_tab == "P1":
+                    current_turn = st.session_state[f"turn_prompt_{m1_spec}"]
+                    st.session_state[f"turn_prompt_{m1_spec}"] = current_turn + "{" + insert_var + "}"
+                else:
+                    current_turn = st.session_state[f"turn_prompt_{m2_spec}"]
+                    st.session_state[f"turn_prompt_{m2_spec}"] = current_turn + "{" + insert_var + "}"
+                st.rerun()
         else:
             st.info("No variables match the selected filter.")

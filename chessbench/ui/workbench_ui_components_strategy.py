@@ -36,7 +36,7 @@ def render_strategy_store(
         "Load Saved Strategy",
         options=strategy_options,
         index=0,
-        key="strategy_selector",
+        key=f"strategy_selector_{m1_spec}_{m2_spec}",
         label_visibility="collapsed",
     )
     if selected_strategy != "-- New Strategy --":
@@ -56,11 +56,11 @@ def render_strategy_store(
     strategy_name = col_save1.text_input(
         "Save current as…",
         value="",
-        key="strategy_name_input",
+        key=f"strategy_name_input_{m1_spec}_{m2_spec}",
         placeholder="Enter strategy name",
     )
-    overwrite = col_save2.checkbox("Overwrite if exists", value=False, key="overwrite_checkbox")
-    if col_save3.button("💾 Save", key="btn_save_strategy"):
+    overwrite = col_save2.checkbox("Overwrite if exists", value=False, key=f"overwrite_checkbox_{m1_spec}_{m2_spec}")
+    if col_save3.button("💾 Save", key=f"btn_save_strategy_{m1_spec}_{m2_spec}"):
         if not strategy_name:
             st.error("Strategy name cannot be empty")
         else:
@@ -85,10 +85,10 @@ def render_strategy_store(
             "Delete Strategy",
             options=["-- Select --", *[s.name for s in saved_strategies]],
             index=0,
-            key="delete_strategy_select",
+            key=f"delete_strategy_select_{m1_spec}_{m2_spec}",
             label_visibility="collapsed",
         )
-        if col_del2.button("🗑️ Delete", key="btn_delete_strategy") and del_strategy != "-- Select --":
+        if col_del2.button("🗑️ Delete", key=f"btn_delete_strategy_{m1_spec}_{m2_spec}") and del_strategy != "-- Select --":
             try:
                 delete_strategy(del_strategy)
                 st.success(f"Strategy '{del_strategy}' deleted")
@@ -103,10 +103,10 @@ def render_strategy_store(
             "Export Strategy",
             options=["-- Select --", *[s.name for s in saved_strategies]],
             index=0,
-            key="export_strategy_select",
+            key=f"export_strategy_select_{m1_spec}_{m2_spec}",
             label_visibility="collapsed",
         )
-        if col_exp2.button("📥 Export YAML", key="btn_export_yaml") and exp_strategy != "-- Select --":
+        if col_exp2.button("📥 Export YAML", key=f"btn_export_yaml_{m1_spec}_{m2_spec}") and exp_strategy != "-- Select --":
             try:
                 yaml_text = export_yaml(exp_strategy)
                 st.download_button(
@@ -114,7 +114,7 @@ def render_strategy_store(
                     data=yaml_text,
                     file_name=f"{exp_strategy}.yaml",
                     mime="text/yaml",
-                    key="dl_yaml",
+                    key=f"dl_yaml_{m1_spec}_{m2_spec}",
                 )
             except Exception as e:
                 st.error(f"Failed to export strategy: {e}")
@@ -122,7 +122,7 @@ def render_strategy_store(
     uploaded_file = st.file_uploader(
         "Import Strategy YAML",
         type=["yaml", "yml"],
-        key="strategy_file_uploader",
+        key=f"strategy_file_uploader_{m1_spec}_{m2_spec}",
         help="Upload a YAML file to import a strategy",
     )
     if uploaded_file is not None:
@@ -132,10 +132,10 @@ def render_strategy_store(
             import_name = st.text_input(
                 "Strategy name (optional)",
                 value="",
-                key="import_strategy_name",
+                key=f"import_strategy_name_{m1_spec}_{m2_spec}",
                 help="If empty, uses name from YAML file",
             )
-            if st.button("📤 Import", key="btn_import_strategy"):
+            if st.button("📤 Import", key=f"btn_import_strategy_{m1_spec}_{m2_spec}"):
                 import_yaml(yaml_text, import_name if import_name else None)
                 st.success("Strategy imported")
                 st.rerun()
@@ -183,7 +183,7 @@ def render_variable_reference(m1_spec: str, m2_spec: str) -> None:
             "Filter by category",
             options=["All", *categories],
             index=0,
-            key="variable_category_filter",
+            key=f"variable_category_filter_{m1_spec}_{m2_spec}",
         )
 
         # Display variables
@@ -222,9 +222,9 @@ def render_variable_reference(m1_spec: str, m2_spec: str) -> None:
                     "Select variable to insert",
                     options=["-- Select --", *list(filtered_vars.keys())],
                     index=0,
-                    key="insert_variable_select",
+                    key=f"insert_variable_select_{m1_spec}_{m2_spec}",
                 )
-                if col_var2.button("➕ Insert", key="btn_insert_variable") and insert_var != "-- Select --":  # noqa: RUF001
+                if col_var2.button("➕ Insert", key=f"btn_insert_variable_{m1_spec}_{m2_spec}") and insert_var != "-- Select --":  # noqa: RUF001
                     # Determine active tab (we need to know which tab is active)
                     # Since we can't easily get the active tab from st.tabs, we'll use a session state to track
                     # For simplicity, we'll insert into the last active tab stored in session state

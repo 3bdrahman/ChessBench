@@ -26,6 +26,10 @@ Legal moves (UCI): {legal_moves_uci}
 
 Select the best move for {color}."""
 
+# Backward compatibility aliases for UI components
+DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPT
+DEFAULT_TURN_PROMPT = TURN_PROMPT
+
 
 def build_prompt_context(board: chess.Board, color: str) -> dict[str, str]:
     """Build minimal context for the prompt — only what's actually needed."""

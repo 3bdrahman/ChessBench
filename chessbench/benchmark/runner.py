@@ -106,9 +106,9 @@ class BenchmarkConfig:
     # API keys (loaded from env or config)
     api_keys: dict[str, str] = field(default_factory=dict)
 
-    # Custom prompts (optional, for A/B testing)
-    system_prompt: str | None = None
-    turn_prompt: str | None = None
+    # Custom prompts (optional, for A/B testing) - can be single string or dict[spec, str]
+    system_prompt: str | dict[str, str] | None = None
+    turn_prompt: str | dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -261,8 +261,8 @@ class BenchmarkRunner:
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
                 reasoning_level=self.config.reasoning_level,
-                system_prompt=self.config.system_prompt,
-                turn_prompt=self.config.turn_prompt,
+                system_prompt=self.config.system_prompt.get(player_spec, self.config.system_prompt) if isinstance(self.config.system_prompt, dict) else self.config.system_prompt,
+                turn_prompt=self.config.turn_prompt.get(player_spec, self.config.turn_prompt) if isinstance(self.config.turn_prompt, dict) else self.config.turn_prompt,
             )
             players[player_spec] = ai
 
@@ -304,8 +304,8 @@ class BenchmarkRunner:
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
             reasoning_level=self.config.reasoning_level,
-            system_prompt=self.config.system_prompt,
-            turn_prompt=self.config.turn_prompt,
+            system_prompt=self.config.system_prompt.get(player_spec, self.config.system_prompt) if isinstance(self.config.system_prompt, dict) else self.config.system_prompt,
+            turn_prompt=self.config.turn_prompt.get(player_spec, self.config.turn_prompt) if isinstance(self.config.turn_prompt, dict) else self.config.turn_prompt,
         )
 
     def request_continue_after_problem(self) -> None:

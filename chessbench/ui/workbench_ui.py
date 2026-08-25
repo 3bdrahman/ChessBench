@@ -17,10 +17,6 @@ from chessbench.ui.workbench_ui_components import (
     render_preview_popover,
     render_prompt_diff,
 )
-from chessbench.ui.workbench_ui_components_strategy import (
-    render_strategy_store,
-    render_variable_reference,
-)
 
 
 def render_prompt_management(

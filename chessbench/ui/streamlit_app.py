@@ -46,7 +46,7 @@ from chessbench.models import GameMove, GameStats
 from chessbench.prompts import validate_prompt_text
 from chessbench.providers import get_provider, list_providers
 from chessbench.providers.chess_ai import ProviderChessAI
-from chessbench.ui.dry_run import render_dry_run
+
 from chessbench.ui.error_display import render_error
 from chessbench.ui.helpers import (
     format_duration_ms,
@@ -1610,8 +1610,6 @@ def main():
     system_prompts_by_spec, turn_prompts_by_spec, _prompts_by_color = (
         render_prompt_management(model_1_config, model_2_config)
     )
-    # Strategy Dry-Run
-    render_dry_run(model_1_config, model_2_config)
 
     # Game Controls Section
     st.sidebar.markdown(

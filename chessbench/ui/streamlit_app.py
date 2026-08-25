@@ -424,6 +424,7 @@ def render_provider_keys_section():
                     type="password",
                     key=f"user_key_{pname}",
                     placeholder=f"Paste your {pname.capitalize()} key…",
+                    on_change=lambda pn=pname: st.session_state.update({f"_key_validated_{pn}": False}) or st.rerun(),
                 )
 
         with st.popover("📋 Streamlit Secrets Template"):

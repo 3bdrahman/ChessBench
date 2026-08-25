@@ -36,4 +36,4 @@ def render_variable_reference(m1_spec: str, m2_spec: str) -> None:
 # Stub for compatibility - strategy store removed
 def render_strategy_store(m1_spec: str, m2_spec: str) -> None:
     """Strategy store feature removed in simplified version."""
-    pass
+

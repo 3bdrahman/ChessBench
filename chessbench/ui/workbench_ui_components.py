@@ -9,11 +9,8 @@ import chess
 import streamlit as st
 
 from chessbench.prompts import (
-    SYSTEM_PROMPT,
-    TURN_PROMPT,
     build_prompt_context,
 )
-from chessbench.common.common_types import ChatMessage
 
 
 def render_preview_popover(
@@ -79,19 +76,9 @@ def render_prompt_diff(
             board = chess.Board(chess.STARTING_FEN)
             ctx = build_prompt_context(board, "white")
 
-            reasoning_directives = {
-                "low": "Be concise. Reasoning under 30 words.",
-                "mid": "Concise strategic & tactical reasoning (under 150 words).",
-                "high": "Deep step-by-step tactical calculation and candidate move evaluation.",
-            }
-            reasoning = reasoning_directives.get(reasoning_level, reasoning_directives["high"])
-
-            system_content_1 = sys_1.format(**ctx) + f"\n\n[REASONING LEVEL: {reasoning_level.upper()}]\n{reasoning}"
             user_content_1 = turn_1.format(**ctx)
-            system_content_2 = sys_2.format(**ctx) + f"\n\n[REASONING LEVEL: {reasoning_level.upper()}]\n{reasoning}"
             user_content_2 = turn_2.format(**ctx)
 
-            # Extract user message content for diff
             user_msg1 = user_content_1
             user_msg2 = user_content_2
 

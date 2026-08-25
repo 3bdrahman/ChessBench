@@ -46,7 +46,6 @@ from chessbench.models import GameMove, GameStats
 from chessbench.prompts import validate_prompt_text
 from chessbench.providers import get_provider, list_providers
 from chessbench.providers.chess_ai import ProviderChessAI
-
 from chessbench.ui.error_display import render_error
 from chessbench.ui.helpers import (
     format_duration_ms,

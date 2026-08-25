@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import chess
 
 from chessbench.common.common_types import ChatMessage
-
 
 # ─── The One Prompt That Works ───
 SYSTEM_PROMPT = (
@@ -123,3 +121,4 @@ def validate_prompt_text(
         errors=errors,
         used_fallback=not is_valid,
     )
+

@@ -8,7 +8,7 @@ from typing import Any
 
 import chess
 
-from chessbench.common.common_types import ChatMessage, CompletionResult
+from chessbench.common.common_types import CompletionResult
 from chessbench.common.exceptions import (
     MoveFormatError,
     MoveValidationError,
@@ -57,7 +57,6 @@ class ProviderChessAI(ChessAI):
 
     async def _get_move_from_model(self, fen: str, validation_attempt: int = 0, network_attempts: int = 0) -> str:
         board = chess.Board(fen)
-        legal_moves_uci = " ".join(m.uci() for m in board.legal_moves)
 
         # Use the base class's message creation (handles custom prompts + reasoning level)
         messages = self._create_messages(fen)
@@ -179,3 +178,4 @@ class ProviderChessAI(ChessAI):
         """
         from chessbench.move_parser import extract_move
         return extract_move(text) or ""
+

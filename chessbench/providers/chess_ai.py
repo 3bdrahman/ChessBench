@@ -19,7 +19,7 @@ from chessbench.common.exceptions import (
 from chessbench.constants import REASONING_MAX_TOKENS
 from chessbench.models.chess_ai import ChessAI
 from chessbench.models.thinking import extract_and_analyze_thinking
-from chessbench.move_parser import extract_move
+from chessbench.move_parser import parse_move
 from chessbench.providers.registry import get_provider
 
 
@@ -59,36 +59,15 @@ class ProviderChessAI(ChessAI):
         board = chess.Board(fen)
         legal_moves_uci = " ".join(m.uci() for m in board.legal_moves)
 
-        if validation_attempt == 0:
-            messages = self._create_messages(fen)
-        elif validation_attempt == 1:
-            # First retry: append a stern warning to the full prompt and enforce Structured Output via tools
-            prompt = self._create_prompt(fen)
-            prompt += (
-                f"\n\n[SYSTEM WARNING]: Your previous attempt FAILED. You either "
-                f"reasoned for too long without outputting a move, or your output "
-                f"format was wrong. You MUST use the provided tool to output your move.\n"
-                f"Legal moves: {legal_moves_uci}"
-            )
-            messages = [ChatMessage(role="user", content=prompt)]
-        else:
-            # Second+ retry: explicit instruction demanding tool usage without truncating thinking.
-            color = "White" if board.turn == chess.WHITE else "Black"
-            prompt = (
-                f"You are playing chess as {color}.\n"
-                f"FEN: {fen}\n"
-                f"Legal moves (UCI): {legal_moves_uci}\n\n"
-                f"CRITICAL INSTRUCTION: You MUST use the make_chess_move tool to submit your move."
-            )
-            messages = [ChatMessage(role="user", content=prompt)]
+        # Use the base class's message creation (handles custom prompts + reasoning level)
+        messages = self._create_messages(fen)
 
         # Pass FEN explicitly so providers like Stockfish can use it directly
-        # instead of trying to parse it from the full prompt.
         params = dict(self.params)
         params["fen"] = fen
         params["reasoning_level"] = self.reasoning_level
 
-        # Inject Tool constraints on Retry
+        # Inject Tool constraints on Retry (validation_attempt >= 1)
         if validation_attempt >= 1:
             params["tools"] = [{
                 "type": "function",
@@ -115,10 +94,9 @@ class ProviderChessAI(ChessAI):
             params["tool_choice"] = {"type": "function", "function": {"name": "make_chess_move"}}
 
         # Determine max_tokens: increase on retries so reasoning models
-        # (like Nemotron or Qwen-Thinking) never get cut off mid-thought.
+        # never get cut off mid-thought.
         base_max_tokens = REASONING_MAX_TOKENS.get(self.reasoning_level, 1024)
         if validation_attempt >= 1:
-            # Give ample headroom on retries so thinking preambles don't cause truncation
             retry_max_tokens = max(1536, int(base_max_tokens * 1.5))
         else:
             retry_max_tokens = base_max_tokens
@@ -135,7 +113,6 @@ class ProviderChessAI(ChessAI):
                 )
                 break
             except (RateLimitError, TimeoutError) as exc:
-                # Populate last_completion_result with error info before re-raising
                 self.last_completion_result = CompletionResult(
                     text=str(exc),
                     error=str(exc),
@@ -173,7 +150,6 @@ class ProviderChessAI(ChessAI):
                     if uci_move in [m.uci() for m in board.legal_moves]:
                         return uci_move
 
-        from chessbench.move_parser import parse_move
         parsed = parse_move(result.text, board)
 
         if not parsed.uci:
@@ -201,5 +177,5 @@ class ProviderChessAI(ChessAI):
         for backward compatibility — returns ``""`` when no legal-looking
         move is found, matching the historical contract.
         """
+        from chessbench.move_parser import extract_move
         return extract_move(text) or ""
-

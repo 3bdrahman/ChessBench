@@ -49,7 +49,6 @@ class NIMProvider(ModelProvider):
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
         verified_models = [
-            "google/gemma-4-31b-it",
             "nvidia/nemotron-3.5-lightning-30b-a3b",
             "nvidia/nemotron-3-super-120b-a12b",
             "stepfun-ai/step-3.7-flash",

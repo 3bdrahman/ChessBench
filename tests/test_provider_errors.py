@@ -230,7 +230,7 @@ class TestNIMErrorHandling:
             with pytest.raises(AuthenticationError) as exc_info:
                 await provider.complete(
                     "nim-valid-key-but-no-access",
-                    "google/gemma-4-31b-it",
+                    "nvidia/nemotron-3.5-lightning-30b-a3b",
                     [ChatMessage(role="user", content="test")],
                 )
         assert exc_info.value.provider == "nim"

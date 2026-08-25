@@ -1602,14 +1602,9 @@ def main():
     games = st.sidebar.number_input(
         "Games to play", min_value=1, max_value=20, value=1, step=1, key="game_count"
     )
-    reasoning_level = st.sidebar.radio(
-        "Reasoning Level",
-        options=["low", "mid", "high"],
-        index=2,  # default to high
-        horizontal=True,
-        key="reasoning_level_selector",
-        help="Select reasoning level for the match.",
-    )
+    # Reasoning level is selected once in the strategy workbench
+    # (key="reasoning_level_selector"); read it here to avoid a duplicate key.
+    reasoning_level = st.session_state.get("reasoning_level_selector", "high")
 
     colors_mode = "alternating" if games > 1 else "fixed"
 

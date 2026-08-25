@@ -1085,8 +1085,8 @@ def run_in_process_benchmark(
         reasoning_level=reasoning_level,
         api_keys=api_keys,
         colors=colors,
-        system_prompts=system_prompts or {},
-        turn_prompts=turn_prompts or {},
+        system_prompt=system_prompts or {},
+        turn_prompt=turn_prompts or {},
     )
 
     # Immersive Theater Mode: hide the sidebar ONLY while a benchmark is

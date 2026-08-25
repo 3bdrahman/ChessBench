@@ -10,7 +10,6 @@ import streamlit as st
 from chessbench.prompts import (
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_TURN_PROMPT,
-    prompt_registry,
     validate_prompt_text,
 )
 from chessbench.ui.prompt_workbench import compute_budget_state
@@ -56,48 +55,7 @@ def render_prompt_management(
         st.session_state[f"turn_prompt_{m2_spec}"] = DEFAULT_TURN_PROMPT
 
     with st.sidebar.expander("⚡ Prompt Strategy Workbench", expanded=False):
-        # Preset loader
-        st.markdown("**🎯 Benchmark Strategy Presets**")
-        preset_versions = prompt_registry.list_versions()
-        col_pr1, col_pr2 = st.columns([3, 2])
-        selected_preset = col_pr1.selectbox(
-            "Load Tested Strategy Preset",
-            options=preset_versions,
-            index=0,
-            key="preset_selector_dropdown",
-            label_visibility="collapsed",
-        )
-        if col_pr2.button("Apply Both", key="btn_apply_preset_both", help="Apply preset to both White & Black"):
-            sys_p, turn_p = prompt_registry.get_preset_prompts(selected_preset)
-            st.session_state[f"sys_prompt_{m1_spec}"] = sys_p
-            st.session_state[f"turn_prompt_{m1_spec}"] = turn_p
-            st.session_state[f"sys_prompt_{m2_spec}"] = sys_p
-            st.session_state[f"turn_prompt_{m2_spec}"] = turn_p
-            st.success(f"Preset `{selected_preset}` loaded!")
-            st.rerun()
-
-        # Strategy store integration
-        render_strategy_store(m1_spec, m2_spec)
-
-        # Key variables reference
-        st.markdown(
-            '<div style="margin: 8px 0 4px 0; font-size: 0.72rem; color: var(--arena-text-muted); font-weight:600;">KEY VARIABLES</div>',
-            unsafe_allow_html=True,
-        )
-        # Show mandatory category chips
-        mandatory_color = "{color}"
-        mandatory_board = "{fen}"
-        mandatory_move = "{legal_moves_uci}"
-        st.markdown(
-            f'<span class="sb-var-chip">{mandatory_color}</span><span class="sb-var-chip">{mandatory_board}</span><span class="sb-var-chip">{mandatory_move}</span>'
-            '<span class="sb-var-chip-info">→ <a href="#variable-reference" style="color:var(--arena-link); text-decoration:none;">Reference</a></span>',
-            unsafe_allow_html=True,
-        )
-
-        # Variable reference expander
-        render_variable_reference(m1_spec, m2_spec)
-
-        # Reasoning level selector (moved from main sidebar to here for preview)
+        # Reasoning level selector
         st.markdown("**🧠 Reasoning Level**")
         reasoning_level = st.radio(
             "Select reasoning level",

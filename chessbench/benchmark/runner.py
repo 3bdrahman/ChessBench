@@ -110,8 +110,21 @@ class BenchmarkConfig:
     system_prompt: str | dict[str, str] | None = None
     turn_prompt: str | dict[str, str] | None = None
 
+    @property
+    def system_prompts(self) -> dict[str, str] | None:
+        return self.system_prompt
+
+    @property
+    def turn_prompts(self) -> dict[str, str] | None:
+        return self.turn_prompt
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        if d.get('system_prompt') is not None:
+            d['system_prompts'] = d['system_prompt']
+        if d.get('turn_prompt') is not None:
+            d['turn_prompts'] = d['turn_prompt']
+        return d
 
     @classmethod
     def from_yaml(cls, path: str) -> 'BenchmarkConfig':

@@ -63,7 +63,7 @@ def render_prompt_management(
         )
 
         # Player tabs
-        tab_p1, tab_p2 = st.tabs(["♔ P1 (White)", "♚ P2 (Black)"])
+        tab_p1, tab_p2 = st.tabs(["♔ P1", "♚ P2"])
 
         # We'll track active tab via session state for variable insertion
         def set_active_p1():

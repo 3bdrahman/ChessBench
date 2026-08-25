@@ -508,10 +508,10 @@ def render_model_selectors(available_providers: list):
     m1_options = [m for m in model_options if m != cur_2]
     m1_idx = m1_options.index(sel_1) if sel_1 in m1_options else 0
 
-    # Player 1 (White) Card
+    # Player 1 Card
     st.sidebar.markdown(
         '<div class="sb-player-card sb-player-card-white">'
-        '  <div class="sb-player-header"><span>Player 1</span><span class="sb-player-badge-white">♔ WHITE</span></div>',
+        '  <div class="sb-player-header"><span>Player 1</span><span class="sb-player-badge-white">P1</span></div>',
         unsafe_allow_html=True,
     )
     col_m1, col_t1 = st.sidebar.columns([4, 1])
@@ -556,14 +556,14 @@ def render_model_selectors(available_providers: list):
         on_click=_swap_player_models,
     )
 
-    # Player 2 (Black) Card
+    # Player 2 Card
     m2_options = [m for m in model_options if m != model_1]
     cur_2_val = st.session_state.get("player_model_2")
     m2_idx = m2_options.index(cur_2_val) if cur_2_val in m2_options else 0
 
     st.sidebar.markdown(
         '<div class="sb-player-card sb-player-card-black">'
-        '  <div class="sb-player-header"><span>Player 2</span><span class="sb-player-badge-black">♚ BLACK</span></div>',
+        '  <div class="sb-player-header"><span>Player 2</span><span class="sb-player-badge-black">P2</span></div>',
         unsafe_allow_html=True,
     )
     col_m2, col_t2 = st.sidebar.columns([4, 1])
@@ -1634,9 +1634,9 @@ def main():
         st.sidebar.markdown(
             '<div class="sb-match-summary">'
             '  <div class="sb-match-vs">'
-            f'    <div class="sb-match-vs-model" title="{m1_name}">♔ {m1_name}</div>'
+            f'    <div class="sb-match-vs-model" title="{m1_name}">{m1_name}</div>'
             '    <div class="sb-match-vs-divider">VS</div>'
-            f'    <div class="sb-match-vs-model" title="{m2_name}" style="text-align:right;">♚ {m2_name}</div>'
+            f'    <div class="sb-match-vs-model" title="{m2_name}" style="text-align:right;">{m2_name}</div>'
             "  </div>"
             '  <div class="sb-match-details">'
             f'    <span>{games} Game{"s" if games > 1 else ""} ({colors_mode})</span>'

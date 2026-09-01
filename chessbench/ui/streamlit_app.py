@@ -247,18 +247,43 @@ def _safe_async_run(coro: Any) -> Any:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def _cached_list_models(provider_name: str, api_key: str) -> list[Any]:
-    """Cache model list responses to accelerate Streamlit Cloud reruns."""
+    """Cache successful model-list responses to accelerate Streamlit Cloud reruns.
+
+    IMPORTANT: failures raise instead of returning [] — st.cache_data only
+    caches successful returns, so a transient error (bad key, flaky network)
+    must NOT be cached for the full 30-minute TTL.
+    """
     provider = get_provider(provider_name)
     if not provider:
-        return []
-    try:
-        return _safe_async_run(provider.list_models(api_key))  # type: ignore[no-any-return]
-    except Exception:
-        return []
+        raise ProviderError(f"Unknown provider: {provider_name}", provider=provider_name)
+    return _safe_async_run(provider.list_models(api_key))  # type: ignore[no-any-return]
+
+
+def _invalidate_model_cache() -> None:
+    """Drop all cached model lists (called on key changes / manual refresh)."""
+    _cached_list_models.clear()
+
+
+def _on_provider_key_changed(provider_name: str) -> None:
+    """New key entered: force re-validation and drop stale cached model lists.
+
+    Cached lists were fetched with the old (or absent) key, so they must not
+    survive a key change — otherwise the UI keeps showing models the new key
+    cannot access.
+    """
+    st.session_state[f"_key_validated_{provider_name}"] = False
+    st.session_state.pop("player_model_1", None)
+    st.session_state.pop("player_model_2", None)
+    _invalidate_model_cache()
 
 
 async def fetch_models_for_provider(provider_name: str, api_key: str) -> list:
-    """Fetch available models for a provider with caching."""
+    """Fetch available models for a provider with caching.
+
+    Uses the cached list when available; on a cache miss or cached failure,
+    falls back to a live, uncached fetch so transient errors never poison
+    the cache and the freshest data is always retrievable.
+    """
     provider = get_provider(provider_name)
     if not provider:
         return []
@@ -266,6 +291,9 @@ async def fetch_models_for_provider(provider_name: str, api_key: str) -> list:
         models = _cached_list_models(provider_name, api_key)
         if models:
             return models
+    except Exception:
+        pass  # Fall through to a live fetch — errors are not cached.
+    try:
         return await provider.list_models(api_key)
     except ProviderError as exc:
         render_error(st, exc)
@@ -357,9 +385,6 @@ def render_sidebar_header_and_nav():
 def render_provider_keys_section():
     """Render provider status badges in sidebar based on Streamlit Secrets / Env Vars."""
     providers = list_providers()
-    if "nim" in providers:
-        providers.remove("nim")
-        providers.insert(0, "nim")
     available_providers = []
     status_list = []
 
@@ -423,7 +448,8 @@ def render_provider_keys_section():
                     type="password",
                     key=f"user_key_{pname}",
                     placeholder=f"Paste your {pname.capitalize()} key…",
-                    on_change=lambda pn=pname: st.session_state.update({f"_key_validated_{pn}": False}) or st.rerun(),
+                    on_change=_on_provider_key_changed,
+                    args=(pname,),
                 )
 
         with st.popover("📋 Streamlit Secrets Template"):
@@ -450,10 +476,16 @@ def render_provider_keys_section():
 
 def render_model_selectors(available_providers: list):
     """Render model selection for White and Black players."""
-    st.sidebar.markdown(
+    col_header, col_refresh = st.sidebar.columns([5, 1])
+    col_header.markdown(
         '<div style="font-weight:650; font-size:0.95rem; margin-bottom:8px; color:var(--arena-text);">⚔️ Player Matchup</div>',
         unsafe_allow_html=True,
     )
+    if col_refresh.button(
+        "↻", key="btn_refresh_models", help="Refetch model lists from all providers"
+    ):
+        _invalidate_model_cache()
+        st.rerun()
 
     all_models: dict[str, dict] = {}
     filtered_count = 0
@@ -489,23 +521,29 @@ def render_model_selectors(available_providers: list):
 
     model_options = list(all_models.keys())
 
-    # Ensure initial session state picks 2 distinct models
-    sel_1 = st.session_state.get("player_model_1")
-    sel_2 = st.session_state.get("player_model_2")
+    # Only touch selection state here and in on_change callbacks — mutating a
+    # selectbox's key mid-render (or passing index=) resets the user's choice.
+    if st.session_state.get("player_model_1") not in model_options:
+        st.session_state["player_model_1"] = model_options[0]
 
-    if not sel_1 or sel_1 not in model_options:
-        sel_1 = model_options[0]
-        st.session_state["player_model_1"] = sel_1
+    if st.session_state.get("player_model_2") not in model_options:
+        st.session_state["player_model_2"] = model_options[1 % len(model_options)]
 
-    if not sel_2 or sel_2 not in model_options or sel_2 == sel_1:
-        remaining = [m for m in model_options if m != sel_1]
-        sel_2 = remaining[0] if remaining else model_options[0]
-        st.session_state["player_model_2"] = sel_2
+    def _first_alternative(exclude: str) -> str:
+        return next(m for m in model_options if m != exclude)
 
-    # Filter options for Model 1 (exclude currently selected Model 2)
-    cur_2 = st.session_state.get("player_model_2")
-    m1_options = [m for m in model_options if m != cur_2]
-    m1_idx = m1_options.index(sel_1) if sel_1 in m1_options else 0
+    if st.session_state["player_model_2"] == st.session_state["player_model_1"]:
+        st.session_state["player_model_2"] = _first_alternative(st.session_state["player_model_1"])
+
+    def _on_model_1_changed() -> None:
+        p1 = st.session_state["player_model_1"]
+        if st.session_state.get("player_model_2") == p1:
+            st.session_state["player_model_2"] = _first_alternative(p1)
+
+    def _on_model_2_changed() -> None:
+        p2 = st.session_state["player_model_2"]
+        if st.session_state.get("player_model_1") == p2:
+            st.session_state["player_model_1"] = _first_alternative(p2)
 
     # Player 1 Card
     st.sidebar.markdown(
@@ -516,9 +554,9 @@ def render_model_selectors(available_providers: list):
     col_m1, col_t1 = st.sidebar.columns([4, 1])
     model_1 = col_m1.selectbox(
         "Select First Model",
-        options=m1_options,
-        index=m1_idx,
+        options=[m for m in model_options if m != st.session_state["player_model_2"]],
         key="player_model_1",
+        on_change=_on_model_1_changed,
         label_visibility="collapsed",
     )
     if col_t1.button(
@@ -556,10 +594,6 @@ def render_model_selectors(available_providers: list):
     )
 
     # Player 2 Card
-    m2_options = [m for m in model_options if m != model_1]
-    cur_2_val = st.session_state.get("player_model_2")
-    m2_idx = m2_options.index(cur_2_val) if cur_2_val in m2_options else 0
-
     st.sidebar.markdown(
         '<div class="sb-player-card sb-player-card-black">'
         '  <div class="sb-player-header"><span>Player 2</span><span class="sb-player-badge-black">P2</span></div>',
@@ -568,9 +602,9 @@ def render_model_selectors(available_providers: list):
     col_m2, col_t2 = st.sidebar.columns([4, 1])
     model_2 = col_m2.selectbox(
         "Select Second Model",
-        options=m2_options,
-        index=m2_idx,
+        options=[m for m in model_options if m != st.session_state["player_model_1"]],
         key="player_model_2",
+        on_change=_on_model_2_changed,
         label_visibility="collapsed",
     )
     if col_t2.button(

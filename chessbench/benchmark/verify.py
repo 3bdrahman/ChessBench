@@ -149,7 +149,9 @@ async def _run_behavioral_check(
 
                 # Compare timing if available
                 if original_game.moves and game_log is not None and game_log.moves:
-                    for i, (orig, new) in enumerate(zip(original_game.moves, game_log.moves, strict=True)):  # type: ignore[assignment]
+                    orig_moves = original_game.moves
+                    new_moves = game_log.moves
+                    for i, (orig, new) in enumerate(zip(orig_moves, new_moves, strict=True)):
                         if hasattr(orig, 'llm_latency_ms') and hasattr(new, 'llm_latency_ms') and orig.llm_latency_ms is not None and new.llm_latency_ms is not None:
                             diff = abs(orig.llm_latency_ms - new.llm_latency_ms)
                             behavioral_checks["timing_diffs"].append(diff)
@@ -237,8 +239,16 @@ async def verify_run_reproducibility(
         if dep in current_deps and orig_ver != current_deps[dep]:
             diffs.append(f"Dependency {dep} version changed: original={orig_ver}, current={current_deps[dep]}")
 
-    # If only config hash check is needed (no API keys available)
-    if not os.getenv("RUN_FULL_REPRODUCIBILITY") and not full_behavioral_check:
+    # Enable full behavioral check by default when API keys are available
+    # (requires at least one provider key in environment)
+    has_api_keys = any(
+        os.getenv(f"{p.upper()}_API_KEY") for p in [
+            "openai", "anthropic", "google", "groq", "openrouter",
+            "deepinfra", "fireworks", "together", "nim"
+        ]
+    )
+
+    if not has_api_keys and not full_behavioral_check:
         return ReproductionReport(
             status="PASS" if not diffs else "FAIL",
             config_hash_match=(original_hash == new_hash) if original_hash else None,
@@ -248,7 +258,7 @@ async def verify_run_reproducibility(
         )
 
     # Full behavioral check - run a subset of games to verify behavioral reproducibility
-    if full_behavioral_check or os.getenv("RUN_FULL_REPRODUCIBILITY"):
+    if full_behavioral_check or has_api_keys or os.getenv("RUN_FULL_REPRODUCIBILITY"):
         behavioral_diffs, behavioral_checks = await _run_behavioral_check(
             original, move_timing_tolerance_ms, token_tolerance, max_game_diffs
         )

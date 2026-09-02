@@ -22,6 +22,7 @@ from chessbench.common.common_types import (
     ModelInfo,
     ModelProvider,
 )
+from chessbench import constants
 from chessbench.common.exceptions import (
     AuthenticationError,
     ConnectionError,
@@ -102,7 +103,7 @@ class GroqProvider(ModelProvider):
                         id=model_id,
                         name=model_id + (" ★free" if is_free else ""),
                         provider="groq",
-                        context_window=DEFAULT_CONTEXT_WINDOW,
+                        context_window=constants.get_context_window(model_id),
                         pricing_tier="free" if is_free else "paid",
                         capabilities=[CAP_CHESS],
                     )

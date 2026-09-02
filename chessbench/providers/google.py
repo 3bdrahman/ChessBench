@@ -25,6 +25,7 @@ from chessbench.common.exceptions import (
     TimeoutError,
 )
 from chessbench.constants import DEFAULT_HTTP_TIMEOUT
+from chessbench import constants
 from chessbench.providers.registry import register_provider
 
 _log = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ class GoogleProvider(ModelProvider):
                 id=model_id,
                 name=model_id,
                 provider="google",
-                context_window=DEFAULT_CONTEXT_WINDOW,
+                context_window=constants.get_context_window(model_id),
                 capabilities=[CAP_CHESS],
             ))
         return chat_models
@@ -148,11 +149,11 @@ class GoogleProvider(ModelProvider):
                         )
                     )
 
-
-            response = await client.models.generate_content(  # type: ignore[misc]
+            # google-genai types are not fully typed; use explicit Any to satisfy mypy
+            response: Any = await client.models.generate_content(
                 model=model,
-                contents=contents,  # type: ignore[arg-type]
-                config=types.GenerateContentConfig(**config_kwargs),  # type: ignore[arg-type]
+                contents=contents,
+                config=types.GenerateContentConfig(**config_kwargs),
             )
         except Exception as exc:
             latency_ms = int((time.time() - start) * 1000)

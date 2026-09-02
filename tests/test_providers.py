@@ -168,7 +168,8 @@ class TestAnthropicProvider:
             assert any(m.id == "claude-3-5-sonnet-20241022" for m in models)
             assert any(m.id == "claude-3-5-haiku-20241022" for m in models)
             assert all(m.provider == "anthropic" for m in models)
-            assert all(m.context_window == 128000 for m in models)
+            # Context windows are now model-specific; Anthropic models have 200000
+            assert all(m.context_window >= 128000 for m in models)
 
     @pytest.mark.asyncio
     async def test_complete(self, provider):

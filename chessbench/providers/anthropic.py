@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from chessbench import constants
+
 import yaml
 from anthropic import AsyncAnthropic
 
@@ -81,7 +83,7 @@ class AnthropicProvider(ModelProvider):
                         id=model_id,
                         name=model.display_name or model_id,
                         provider="anthropic",
-                        context_window=DEFAULT_CONTEXT_WINDOW,
+                        context_window=constants.get_context_window(model_id),
                         capabilities=[CAP_CHESS],
                     ))
             if models:
@@ -95,7 +97,7 @@ class AnthropicProvider(ModelProvider):
                 id=model_id,
                 name=name,
                 provider="anthropic",
-                context_window=DEFAULT_CONTEXT_WINDOW,
+                context_window=constants.get_context_window(model_id),
                 capabilities=[CAP_CHESS],
             )
             for model_id, name in _KNOWN_ANTHROPIC_MODELS

@@ -12,6 +12,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from chessbench import constants
 from chessbench.common.common_types import (
     CAP_CHESS,
     DEFAULT_CONTEXT_WINDOW,
@@ -80,7 +81,7 @@ class FireworksProvider(ModelProvider):
                 id=model_id,
                 name=model_id,
                 provider="fireworks",
-                context_window=DEFAULT_CONTEXT_WINDOW,
+                context_window=constants.get_context_window(model_id),
                 capabilities=[CAP_CHESS],
             ))
         return chat_models

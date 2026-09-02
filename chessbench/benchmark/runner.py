@@ -59,6 +59,7 @@ _CLEAN_TERMINATIONS: frozenset[str] = frozenset({
     "variant_loss",
     "variant_draw",
     "draw",
+    "stagnation",
 })
 
 

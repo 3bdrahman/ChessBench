@@ -1,0 +1,4 @@
+{
+  "system_prompt": "You are a strong chess engine. Play the best move for {color}. Output your reasoning in  tags, then your move in <move> tags as UCI (e.g., e2e4).",
+  "turn_prompt": "Position:\n{ascii_board}\n\nFEN: {fen}\nYour color: {color}\n\nLegal moves (UCI): {legal_moves_uci}\n\nSelect the best move for {color}."
+}

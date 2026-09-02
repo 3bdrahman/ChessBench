@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import chess
 
 from chessbench.common.common_types import ChatMessage
 
-# ─── The One Prompt That Works ───
-SYSTEM_PROMPT = (
-    "You are a strong chess engine. Play the best move for {color}. "
-    "Output your reasoning in  tags, then your move in <move> tags as UCI (e.g., e2e4)."
-)
+_PROMPTS_PATH = Path(__file__).parent.parent / "data" / "prompts.json"
 
-TURN_PROMPT = """Position:
+def _load_prompts() -> dict[str, str]:
+    """Load prompt templates from external JSON file."""
+    try:
+        with open(_PROMPTS_PATH) as f:
+            return json.load(f)
+    except Exception:
+        # Fallback to built-in defaults
+        return {
+            "system_prompt": (
+                "You are a strong chess engine. Play the best move for {color}. "
+                "Output your reasoning in <think> tags, then your move in <move> tags as UCI (e.g., e2e4)."
+            ),
+            "turn_prompt": """Position:
 {ascii_board}
 
 FEN: {fen}
@@ -23,6 +33,12 @@ Your color: {color}
 Legal moves (UCI): {legal_moves_uci}
 
 Select the best move for {color}."""
+        }
+
+_PROMPTS = _load_prompts()
+
+SYSTEM_PROMPT = _PROMPTS["system_prompt"]
+TURN_PROMPT = _PROMPTS["turn_prompt"]
 
 # Backward compatibility aliases for UI components
 DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPT

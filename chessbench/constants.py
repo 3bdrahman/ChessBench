@@ -43,6 +43,165 @@ DEFAULT_SEED: int | None = 42
 DEFAULT_CONTEXT_WINDOW: int = 128_000
 MIN_CONTEXT_WINDOW_FOR_CHESS: int = 256
 
+# Model-specific context windows (override DEFAULT_CONTEXT_WINDOW when known)
+MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    # OpenAI models
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    "gpt-4o-2024-05-13": 128_000,
+    "gpt-4o-2024-08-06": 128_000,
+    "gpt-4o-2024-11-20": 128_000,
+    "gpt-4.1": 1_000_000,
+    "gpt-4.1-mini": 1_000_000,
+    "gpt-4.1-nano": 1_000_000,
+    "gpt-4-turbo": 128_000,
+    "gpt-4-turbo-2024-04-09": 128_000,
+    "gpt-4-turbo-preview": 128_000,
+    "gpt-4": 8_192,
+    "gpt-4-0613": 8_192,
+    "gpt-4-32k": 32_768,
+    "gpt-4-32k-0613": 32_768,
+    "gpt-3.5-turbo": 16_384,
+    "gpt-3.5-turbo-0125": 16_384,
+    "gpt-3.5-turbo-1106": 16_384,
+    "gpt-3.5-turbo-16k": 16_384,
+    "gpt-3.5-turbo-instruct": 4_096,
+    "o1-preview": 128_000,
+    "o1-mini": 128_000,
+    "o1": 200_000,
+    "o3-mini": 200_000,
+    # Anthropic models
+    "claude-3-5-sonnet-20241022": 200_000,
+    "claude-3-5-sonnet-20240620": 200_000,
+    "claude-3-5-haiku-20241022": 200_000,
+    "claude-3-opus-20240229": 200_000,
+    "claude-3-sonnet-20240229": 200_000,
+    "claude-3-haiku-20240307": 200_000,
+    "claude-2.1": 200_000,
+    "claude-2.0": 100_000,
+    "claude-instant-1.2": 100_000,
+    # Google models
+    "gemini-1.5-pro": 2_000_000,
+    "gemini-1.5-flash": 1_000_000,
+    "gemini-1.5-flash-8b": 1_000_000,
+    "gemini-1.0-pro": 32_768,
+    "gemini-1.0-pro-vision": 12_288,
+    # Groq models
+    "llama3-70b-8192": 8_192,
+    "llama3-8b-8192": 8_192,
+    "mixtral-8x7b-32768": 32_768,
+    "gemma-7b-it": 8_192,
+    "gemma2-9b-it": 8_192,
+    # DeepInfra models
+    "meta-llama/Meta-Llama-3.1-405B-Instruct": 128_000,
+    "meta-llama/Meta-Llama-3.1-70B-Instruct": 128_000,
+    "meta-llama/Meta-Llama-3.1-8B-Instruct": 128_000,
+    "meta-llama/Llama-3.3-70B-Instruct": 128_000,
+    "mistralai/Mistral-Large-2407": 128_000,
+    "mistralai/Mixtral-8x7B-Instruct-v0.1": 32_768,
+    # Fireworks models
+    "accounts/fireworks/models/llama-v3p1-405b-instruct": 128_000,
+    "accounts/fireworks/models/llama-v3p1-70b-instruct": 128_000,
+    "accounts/fireworks/models/llama-v3p1-8b-instruct": 128_000,
+    "accounts/fireworks/models/mixtral-8x7b-instruct": 32_768,
+    # Together models
+    "meta-llama/Llama-3.1-405B-Instruct-Turbo": 128_000,
+    "meta-llama/Llama-3.1-70B-Instruct-Turbo": 128_000,
+    "meta-llama/Llama-3.1-8B-Instruct-Turbo": 128_000,
+    "mistralai/Mixtral-8x7B-Instruct-v0.1": 32_768,
+    # NIM models
+    "meta/llama-3.1-405b-instruct": 128_000,
+    "meta/llama-3.1-70b-instruct": 128_000,
+    "meta/llama-3.1-8b-instruct": 128_000,
+    "mistralai/mixtral-8x7b-instruct-v0.1": 32_768,
+}
+
+# Model-specific temperature defaults (override DEFAULT_TEMPERATURE when known)
+# Lower temperatures for reasoning models, higher for creative tasks
+MODEL_TEMPERATURES: dict[str, float] = {
+    # OpenAI models
+    "gpt-4o": 0.0,
+    "gpt-4o-mini": 0.0,
+    "gpt-4o-2024-05-13": 0.0,
+    "gpt-4o-2024-08-06": 0.0,
+    "gpt-4o-2024-11-20": 0.0,
+    "gpt-4.1": 0.0,
+    "gpt-4.1-mini": 0.0,
+    "gpt-4.1-nano": 0.0,
+    "gpt-4-turbo": 0.0,
+    "gpt-4-turbo-2024-04-09": 0.0,
+    "gpt-4-turbo-preview": 0.0,
+    "gpt-4": 0.0,
+    "gpt-4-0613": 0.0,
+    "gpt-4-32k": 0.0,
+    "gpt-4-32k-0613": 0.0,
+    "gpt-3.5-turbo": 0.1,
+    "gpt-3.5-turbo-0125": 0.1,
+    "gpt-3.5-turbo-1106": 0.1,
+    "gpt-3.5-turbo-16k": 0.1,
+    "gpt-3.5-turbo-instruct": 0.0,
+    "o1-preview": 1.0,  # o1 models require temperature=1
+    "o1-mini": 1.0,
+    "o1": 1.0,
+    "o3-mini": 1.0,
+    # Anthropic models
+    "claude-3-5-sonnet-20241022": 0.0,
+    "claude-3-5-sonnet-20240620": 0.0,
+    "claude-3-5-haiku-20241022": 0.0,
+    "claude-3-opus-20240229": 0.0,
+    "claude-3-sonnet-20240229": 0.0,
+    "claude-3-haiku-20240307": 0.0,
+    "claude-2.1": 0.0,
+    "claude-2.0": 0.0,
+    "claude-instant-1.2": 0.0,
+    # Google models
+    "gemini-1.5-pro": 0.0,
+    "gemini-1.5-flash": 0.0,
+    "gemini-1.5-flash-8b": 0.0,
+    "gemini-1.0-pro": 0.0,
+    "gemini-1.0-pro-vision": 0.0,
+    # Groq models
+    "llama3-70b-8192": 0.0,
+    "llama3-8b-8192": 0.0,
+    "mixtral-8x7b-32768": 0.0,
+    "gemma-7b-it": 0.0,
+    "gemma2-9b-it": 0.0,
+    # DeepInfra models
+    "meta-llama/Meta-Llama-3.1-405B-Instruct": 0.0,
+    "meta-llama/Meta-Llama-3.1-70B-Instruct": 0.0,
+    "meta-llama/Meta-Llama-3.1-8B-Instruct": 0.0,
+    "meta-llama/Llama-3.3-70B-Instruct": 0.0,
+    "mistralai/Mistral-Large-2407": 0.0,
+    "mistralai/Mixtral-8x7B-Instruct-v0.1": 0.0,
+    # Fireworks models
+    "accounts/fireworks/models/llama-v3p1-405b-instruct": 0.0,
+    "accounts/fireworks/models/llama-v3p1-70b-instruct": 0.0,
+    "accounts/fireworks/models/llama-v3p1-8b-instruct": 0.0,
+    "accounts/fireworks/models/mixtral-8x7b-instruct": 0.0,
+    # Together models
+    "meta-llama/Llama-3.1-405B-Instruct-Turbo": 0.0,
+    "meta-llama/Llama-3.1-70B-Instruct-Turbo": 0.0,
+    "meta-llama/Llama-3.1-8B-Instruct-Turbo": 0.0,
+    "mistralai/Mixtral-8x7B-Instruct-v0.1": 0.0,
+    # NIM models
+    "meta/llama-3.1-405b-instruct": 0.0,
+    "meta/llama-3.1-70b-instruct": 0.0,
+    "meta/llama-3.1-8b-instruct": 0.0,
+    "mistralai/mixtral-8x7b-instruct-v0.1": 0.0,
+}
+
+
+def get_temperature(model_id: str) -> float:
+    """Get temperature for a specific model, falling back to DEFAULT_TEMPERATURE."""
+    model_lower = model_id.lower()
+    for key, value in MODEL_TEMPERATURES.items():
+        if key.lower() == model_lower:
+            return value
+    for key, value in MODEL_TEMPERATURES.items():
+        if model_lower.startswith(key.lower()):
+            return value
+    return DEFAULT_TEMPERATURE
+
 # =============================================================================
 # Stockfish Engine Defaults
 # =============================================================================
@@ -168,43 +327,31 @@ DEFAULT_MAX_PROMPT_TOKENS: int = 2000
 MIN_PROMPT_TOKENS_FOR_TRUNCATION: int = 50
 
 # =============================================================================
-# Thinking Analysis Keywords (moved from common_types.py for externalization)
+# Thinking Analysis Keywords (loaded from external JSON file)
 # =============================================================================
-THINKING_KEYWORDS: dict[str, list[str]] = {
-    "tactics": [
-        "tactic", "tactics", "capture", "fork", "pin", "skewer", "discovered",
-        "checkmate", "mate", "combination", "sacrifice", "tactical", "threat",
-        "attack", "defend", "counter", "intermezzo", "zwischenzug"
-    ],
-    "strategy": [
-        "strategy", "strategic", "plan", "planning", "long-term", "outpost",
-        "weakness", "control", "space", "development", "initiative", "prophylaxis",
-        "pawn structure", "open file", "open diagonal", "bishop pair", "minority attack"
-    ],
-    "time_pressure": [
-        "time", "clock", "hurry", "rush", "quick", "fast", "seconds", "minutes",
-        "increment", "time trouble", "zeitnot", "low on time", "running out"
-    ],
-    "material": [
-        "material", "pawn", "piece", "queen", "rook", "bishop", "knight", "king",
-        "exchange", "advantage", "down", "up", "equal", "sacrifice", "win", "lose",
-        "points", "value", "count"
-    ],
-    "positional": [
-        "positional", "position", "square", "control", "center", "weak", "strong",
-        "outpost", "backward", "isolated", "doubled", "passed", "blockade",
-        "hole", "space", "cramped", "open", "closed"
-    ],
-    "king_safety": [
-        "king safety", "castle", "castling", "king", "exposed", "shelter",
-        "pawn shield", "attack on king", "king hunt", "mated", "checkmate"
-    ],
-    "structured_indicators": [
-        "1.", "2.", "3.", "first", "second", "third", "then", "next",
-        "because", "therefore", "thus", "so", "however", "but", "if", "then",
-        "consider", "evaluate", "analyze", "compare", "option", "alternative"
-    ],
-}
+import json
+from pathlib import Path
+
+_THINKING_KEYWORDS_PATH = Path(__file__).parent / "data" / "thinking_keywords.json"
+
+def _load_thinking_keywords() -> dict[str, list[str]]:
+    """Load thinking analysis keywords from external JSON file."""
+    try:
+        with open(_THINKING_KEYWORDS_PATH) as f:
+            return json.load(f)
+    except Exception:
+        # Fallback to minimal defaults if file not found
+        return {
+            "tactics": ["tactic", "tactics", "capture", "fork", "pin", "skewer"],
+            "strategy": ["strategy", "plan", "planning", "development"],
+            "time_pressure": ["time", "clock", "hurry", "rush"],
+            "material": ["material", "piece", "exchange"],
+            "positional": ["position", "control", "center"],
+            "king_safety": ["king safety", "castle", "castling"],
+            "structured_indicators": ["1.", "2.", "3.", "first", "then"],
+        }
+
+THINKING_KEYWORDS: dict[str, list[str]] = _load_thinking_keywords()
 
 # =============================================================================
 # Non-chat model tokens (for filtering)
@@ -321,3 +468,17 @@ def get_piece_value_cp(piece_type: str) -> int:
 def get_piece_value_material(piece_type: str) -> int:
     """Get material value for piece type."""
     return PIECE_VALUES_MATERIAL.get(piece_type.upper(), 0)
+
+
+def get_context_window(model_id: str) -> int:
+    """Get context window for a specific model, falling back to DEFAULT_CONTEXT_WINDOW."""
+    model_lower = model_id.lower()
+    # Try exact match first
+    for key, value in MODEL_CONTEXT_WINDOWS.items():
+        if key.lower() == model_lower:
+            return value
+    # Try prefix match (e.g., "gpt-4o" matches "gpt-4o-2024-05-13")
+    for key, value in MODEL_CONTEXT_WINDOWS.items():
+        if model_lower.startswith(key.lower()):
+            return value
+    return DEFAULT_CONTEXT_WINDOW

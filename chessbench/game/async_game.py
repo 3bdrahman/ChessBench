@@ -4,12 +4,14 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 import chess
 
+from chessbench import constants
 from chessbench.benchmark.evaluator import StockfishEvaluator
 from chessbench.common.common_types import CompletionResult
 from chessbench.common.exceptions import MoveExhaustedError
@@ -101,6 +103,8 @@ class AsyncChessGame:
         self._force_move = False
         self._rewind_turn = False
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._position_counts: Counter[str] = Counter()
+        self._record_position()
 
     def cancel(self) -> None:
         """Cancel the game."""
@@ -154,6 +158,21 @@ class AsyncChessGame:
     @property
     def paused_turn(self) -> int:
         return self._paused_turn
+
+    def _position_key(self) -> str:
+        """Return FEN without move counters for position comparison."""
+        fen = self.board.fen()
+        return " ".join(fen.split(" ")[:4])
+
+    def _record_position(self) -> None:
+        """Record current position for stagnation detection."""
+        key = self._position_key()
+        self._position_counts[key] += 1
+
+    def _check_stagnation(self) -> bool:
+        """Check if position has occurred STAGNATION_THRESHOLD times."""
+        key = self._position_key()
+        return self._position_counts[key] >= constants.STAGNATION_THRESHOLD
 
     async def play_game(
         self,
@@ -379,98 +398,167 @@ class AsyncChessGame:
                 # Retry the same turn - continue loop without advancing move count
                 continue
 
-            move = chess.Move.from_uci(move_str)
+            # Parse and validate move defensively
+            try:
+                move = chess.Move.from_uci(move_str)
+            except ValueError as e:
+                _log.error("Failed to parse UCI move '%s': %s", move_str, e)
+                if not self.interactive:
+                    self.last_failure_reason = "illegal_move"
+                    self.last_failure_error = f"Invalid UCI format: {move_str}"
+                    break
+                self.pause(
+                    reason="illegal_move",
+                    error=f"Invalid UCI format: {move_str}",
+                    player=current_player.name
+                )
+                paused_state = GameState(
+                    board=self.board.copy(),
+                    moves=self.moves.copy(),
+                    stats=self.stats,
+                    current_player=current_player.name,
+                    is_game_over=False,
+                    fen_before=fen_before,
+                    clock_state=self.clock.get_state() if self.clock else None,
+                    is_paused=True,
+                    pause_reason="illegal_move",
+                    pause_error=f"Invalid UCI format: {move_str}",
+                    paused_player=current_player.name,
+                    paused_turn=len(self.moves),
+                )
+                await ui_callback(paused_state)
+                await self._pause_event.wait()
+                if self._rewind_turn or not self._retry_current_turn:
+                    self._cancelled = True
+                    break
+                continue
 
             # End the player's turn on the clock
             if self.clock:
                 self.clock.end_turn(is_white, int(time.time() * 1000))
 
-                # We do not enforce time loss here to ensure the LLMs can play full games
-                # even if they take a long time or hit rate limits.
+            # We do not enforce time loss here to ensure the LLMs can play full games
+            # even if they take a long time or hit rate limits.
 
-            if move in self.board.legal_moves:
-                cp_score = None
-                mate_in = None
-
-                move_san = self.board.san(move)
-                is_capture = self.board.is_capture(move)
-
-                captured_piece = None
-                if is_capture:
-                    if self.board.is_en_passant(move):
-                        captured_piece = "p"
-                    else:
-                        p = self.board.piece_at(move.to_square)
-                        if p:
-                            captured_piece = p.symbol().lower()
-
-                is_check = self.board.gives_check(move)
-                is_promotion = move.promotion is not None
-                is_castling = self.board.is_castling(move)
-
-                # Calculate rich telemetry prior to pushing move
-                piece_count = len(self.board.piece_map())
-                queens = len(self.board.pieces(chess.QUEEN, chess.WHITE)) + len(self.board.pieces(chess.QUEEN, chess.BLACK))
-                move_count = self.board.fullmove_number
-
-                if move_count <= 10 or piece_count >= 28:
-                    phase = "opening"
-                elif queens == 0 or piece_count <= 12:
-                    phase = "endgame"
-                else:
-                    phase = "middlegame"
-
-                piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
-                w_mat = sum(len(self.board.pieces(pt, chess.WHITE)) * val for pt, val in piece_values.items())
-                b_mat = sum(len(self.board.pieces(pt, chess.BLACK)) * val for pt, val in piece_values.items())
-                complexity = len(list(self.board.legal_moves))
-                clock_rem = self.clock.remaining_seconds(is_white) if self.clock else None
-
-                self.board.push(move)
-                is_checkmate = self.board.is_checkmate()
-
-                cp_score = None
-                mate_in = None
-                if self.evaluator and self.evaluator._available:
-                    try:
-                        eval_res = await self.evaluator.evaluate(self.board)
-                        if eval_res is not None:
-                            cp_score = eval_res.cp_score
-                            mate_in = eval_res.mate_in
-                    except Exception as e:
-                        _log.warning("Stockfish eval failed: %s", e)
-
-                game_move = GameMove(
-                    player=current_player.name,
-                    move=move_str,
-                    move_san=move_san,
-                    timestamp=time.time(),
-                    is_capture=is_capture,
-                    captured_piece=captured_piece,
-                    is_check=is_check,
-                    is_checkmate=is_checkmate,
-                    is_promotion=is_promotion,
-                    is_castling=is_castling,
-                    cp_score=cp_score,
-                    mate_in=mate_in,
-                    latency_ms=completion_result.latency_ms if completion_result else None,
-                    tokens_in=completion_result.tokens_in if completion_result else None,
-                    tokens_out=completion_result.tokens_out if completion_result else None,
-                    reasoning=extract_thinking(completion_result.text) if completion_result else None,
-                    validation_retries=completion_result.validation_retries if completion_result else 0,
-                    game_phase=phase,
-                    material_white=w_mat,
-                    material_black=b_mat,
-                    material_imbalance=w_mat - b_mat,
-                    position_complexity=complexity,
-                    clock_remaining_sec=clock_rem,
+            if move not in self.board.legal_moves:
+                _log.error("Move '%s' is not legal in current position", move_str)
+                if not self.interactive:
+                    self.last_failure_reason = "illegal_move"
+                    self.last_failure_error = f"Illegal move: {move_str}"
+                    break
+                self.pause(
+                    reason="illegal_move",
+                    error=f"Illegal move: {move_str}",
+                    player=current_player.name
                 )
+                paused_state = GameState(
+                    board=self.board.copy(),
+                    moves=self.moves.copy(),
+                    stats=self.stats,
+                    current_player=current_player.name,
+                    is_game_over=False,
+                    fen_before=fen_before,
+                    clock_state=self.clock.get_state() if self.clock else None,
+                    is_paused=True,
+                    pause_reason="illegal_move",
+                    pause_error=f"Illegal move: {move_str}",
+                    paused_player=current_player.name,
+                    paused_turn=len(self.moves),
+                )
+                await ui_callback(paused_state)
+                await self._pause_event.wait()
+                if self._rewind_turn or not self._retry_current_turn:
+                    self._cancelled = True
+                    break
+                continue
 
-                self.moves.append(game_move)
-                self._update_stats(game_move)
+            cp_score = None
+            mate_in = None
+
+            move_san = self.board.san(move)
+            is_capture = self.board.is_capture(move)
+
+            captured_piece = None
+            if is_capture:
+                if self.board.is_en_passant(move):
+                    captured_piece = "p"
+                else:
+                    p = self.board.piece_at(move.to_square)
+                    if p:
+                        captured_piece = p.symbol().lower()
+
+            is_check = self.board.gives_check(move)
+            is_promotion = move.promotion is not None
+            is_castling = self.board.is_castling(move)
+
+            # Calculate rich telemetry prior to pushing move
+            piece_count = len(self.board.piece_map())
+            queens = len(self.board.pieces(chess.QUEEN, chess.WHITE)) + len(self.board.pieces(chess.QUEEN, chess.BLACK))
+            move_count = self.board.fullmove_number
+
+            if move_count <= 10 or piece_count >= 28:
+                phase = "opening"
+            elif queens == 0 or piece_count <= 12:
+                phase = "endgame"
             else:
-                # This shouldn't happen due to validation in get_move
-                raise ValueError(f"Illegal move {move_str}")
+                phase = "middlegame"
+
+            piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
+            w_mat = sum(len(self.board.pieces(pt, chess.WHITE)) * val for pt, val in piece_values.items())
+            b_mat = sum(len(self.board.pieces(pt, chess.BLACK)) * val for pt, val in piece_values.items())
+            complexity = len(list(self.board.legal_moves))
+            clock_rem = self.clock.remaining_seconds(is_white) if self.clock else None
+
+            self.board.push(move)
+            is_checkmate = self.board.is_checkmate()
+
+            cp_score = None
+            mate_in = None
+            if self.evaluator and self.evaluator._available:
+                try:
+                    eval_res = await self.evaluator.evaluate(self.board)
+                    if eval_res is not None:
+                        cp_score = eval_res.cp_score
+                        mate_in = eval_res.mate_in
+                except Exception as e:
+                    _log.warning("Stockfish eval failed: %s", e)
+
+            game_move = GameMove(
+                player=current_player.name,
+                move=move_str,
+                move_san=move_san,
+                timestamp=time.time(),
+                is_capture=is_capture,
+                captured_piece=captured_piece,
+                is_check=is_check,
+                is_checkmate=is_checkmate,
+                is_promotion=is_promotion,
+                is_castling=is_castling,
+                cp_score=cp_score,
+                mate_in=mate_in,
+                latency_ms=completion_result.latency_ms if completion_result else None,
+                tokens_in=completion_result.tokens_in if completion_result else None,
+                tokens_out=completion_result.tokens_out if completion_result else None,
+                reasoning=extract_thinking(completion_result.text) if completion_result else None,
+                validation_retries=completion_result.validation_retries if completion_result else 0,
+                game_phase=phase,
+                material_white=w_mat,
+                material_black=b_mat,
+                material_imbalance=w_mat - b_mat,
+                position_complexity=complexity,
+                clock_remaining_sec=clock_rem,
+            )
+
+            self.moves.append(game_move)
+            self._update_stats(game_move)
+
+            self._record_position()
+            if self._check_stagnation():
+                _log.info("Stagnation detected: position repeated %d times", constants.STAGNATION_THRESHOLD)
+                self._cancelled = True
+                self.last_failure_reason = "stagnation"
+                self.last_failure_error = f"Position repeated {constants.STAGNATION_THRESHOLD} times"
+                break
 
             # Update UI with completion result and clock state
             state = GameState(

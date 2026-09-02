@@ -22,6 +22,7 @@ from chessbench.common.common_types import (
     ModelInfo,
     ModelProvider,
 )
+from chessbench import constants
 from chessbench.common.exceptions import (
     AuthenticationError,
     ConnectionError,
@@ -89,7 +90,7 @@ class TogetherProvider(ModelProvider):
                 id=model_id,
                 name=model_id,
                 provider="together",
-                context_window=DEFAULT_CONTEXT_WINDOW,
+                context_window=constants.get_context_window(model_id),
                 capabilities=[CAP_CHESS],
             ))
         return chat_models

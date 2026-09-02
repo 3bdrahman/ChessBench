@@ -246,7 +246,7 @@ def _safe_async_run(coro: Any) -> Any:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def _cached_list_models(provider_name: str, api_key: str) -> list[Any]:
+def _cached_list_models(provider_name: str, api_key: str) -> list:
     """Cache successful model-list responses to accelerate Streamlit Cloud reruns.
 
     IMPORTANT: failures raise instead of returning [] — st.cache_data only
@@ -256,7 +256,7 @@ def _cached_list_models(provider_name: str, api_key: str) -> list[Any]:
     provider = get_provider(provider_name)
     if not provider:
         raise ProviderError(f"Unknown provider: {provider_name}", provider=provider_name)
-    return _safe_async_run(provider.list_models(api_key))  # type: ignore[no-any-return]
+    return _safe_async_run(provider.list_models(api_key))
 
 
 def _invalidate_model_cache() -> None:

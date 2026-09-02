@@ -398,52 +398,57 @@ def parse_move(text: str, board: chess.Board | None = None) -> MoveParseResult:
 
 
 def validate_move(move_str: str, board: chess.Board) -> str:
-    """
-    Validate a UCI move string against the board.
-
-    Args:
-        move_str: UCI move string
-        board: Current chess board
-
-    Returns:
-        Validated UCI move string
-
-    Raises:
-        ValueError: If move is invalid or illegal
-    """
     move_str = move_str.strip().lower()
+
+    uci_pattern = r'\b([a-h][1-8][a-h][1-8][qrbn]?)\b'
+    uci_match = re.search(uci_pattern, move_str)
+    if uci_match:
+        candidate = uci_match.group(1)
+        try:
+            move = chess.Move.from_uci(candidate)
+            if move in board.legal_moves:
+                return candidate
+        except ValueError:
+            pass
 
     prefixes = ["move:", "i choose", "my move is", "play", "'", '"', "`"]
     suffixes = ["'", '"', "`", ".", ",", ":", ";"]
+    cleaned = move_str
     for _ in range(8):
         stripped = False
         for prefix in prefixes:
-            if move_str.startswith(prefix):
-                move_str = move_str[len(prefix):].strip()
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):].strip()
                 stripped = True
         for suffix in suffixes:
-            if move_str.endswith(suffix):
-                move_str = move_str[:-len(suffix)].strip()
+            if cleaned.endswith(suffix):
+                cleaned = cleaned[:-len(suffix)].strip()
                 stripped = True
         if not stripped:
             break
 
-    # Basic UCI format validation
-    if not (4 <= len(move_str) <= 5):
+    if 4 <= len(cleaned) <= 5:
+        try:
+            move = chess.Move.from_uci(cleaned)
+            if move in board.legal_moves:
+                return cleaned
+        except ValueError:
+            pass
+
+    if 4 <= len(move_str) <= 5:
+        try:
+            move = chess.Move.from_uci(move_str)
+            if move in board.legal_moves:
+                return move_str
+        except ValueError:
+            pass
+
+    # Invalid UCI format (not 4-5 chars or contains invalid chars)
+    if not (4 <= len(move_str) <= 5) or not re.match(r'^[a-h][1-8][a-h][1-8][qrbn]?$', move_str):
         raise ValueError(f"Invalid move format: {move_str}")
 
-    # Create chess.Move object
-    try:
-        move = chess.Move.from_uci(move_str)
-    except ValueError as err:
-        raise ValueError(f"Invalid UCI format: {move_str}") from err
-
-    # Check if move is legal in current position
-    if move not in board.legal_moves:
-        legal_moves = [m.uci() for m in board.legal_moves]
-        raise ValueError(f"Illegal move {move_str}. Legal moves are: {', '.join(legal_moves)}")
-
-    return move_str
+    legal_moves = [m.uci() for m in board.legal_moves]
+    raise ValueError(f"Illegal move {move_str}. Legal moves are: {', '.join(legal_moves)}")
 
 
 def extract_move(text: str, legal_moves: list[chess.Move] | None = None) -> str | None:

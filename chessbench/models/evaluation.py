@@ -323,7 +323,7 @@ class PositionEvaluator:
         if not captures:
             return PositionEval(
                 cp_score=0,
-                components={"captures_available": 0.0, "best_capture_uci": None}
+                components={"captures_available": 0.0, "best_capture_uci": ""}
             )
 
         captures.sort(key=lambda x: x[0], reverse=True)

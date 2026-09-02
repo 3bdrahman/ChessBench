@@ -1,6 +1,6 @@
 """Shared helpers for OpenAI-compatible chat-completion providers."""
 
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from chessbench.common.common_types import CompletionResult
 from chessbench.common.exceptions import ProviderAPIError
@@ -14,6 +14,16 @@ class ChatMessage:
     reasoning: str | None
 
 
+@runtime_checkable
+class _HasChoices(Protocol):
+    choices: list[Any]
+
+
+@runtime_checkable
+class _HasMessage(Protocol):
+    message: ChatMessage
+
+
 def extract_chat_message(response: object, provider: str, model: str) -> ChatMessage:
     """Return ``response.choices[0].message`` or raise a typed error.
 
@@ -21,7 +31,14 @@ def extract_chat_message(response: object, provider: str, model: str) -> ChatMes
     (content filters, upstream truncation); indexing blindly raises a bare
     IndexError that bypasses the typed exception hierarchy.
     """
-    choices = getattr(response, "choices", None)
+    if not isinstance(response, _HasChoices):
+        raise ProviderAPIError(
+            provider=provider,
+            status_code=500,
+            detail="Chat completion response missing 'choices' attribute",
+            raw_response={"provider": provider, "model": model},
+        )
+    choices = response.choices
     if not choices:
         raise ProviderAPIError(
             provider=provider,
@@ -32,8 +49,15 @@ def extract_chat_message(response: object, provider: str, model: str) -> ChatMes
             ),
             raw_response={"provider": provider, "model": model},
         )
-    # The OpenAI SDK message object has the attributes we need
-    return choices[0].message  # type: ignore[no-any-return]
+    first_choice = choices[0]
+    if not isinstance(first_choice, _HasMessage):
+        raise ProviderAPIError(
+            provider=provider,
+            status_code=500,
+            detail="Chat completion choice missing 'message' attribute",
+            raw_response={"provider": provider, "model": model},
+        )
+    return first_choice.message
 
 
 def usage_of(response: object) -> tuple[int | None, int | None]:

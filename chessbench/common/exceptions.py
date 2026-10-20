@@ -61,10 +61,7 @@ class InvalidApiKeyError(AuthError):
         expected_prefix: str,
         http_status: int = 401,
     ) -> None:
-        detail = (
-            f"Invalid API key format. Expected prefix '{expected_prefix}…', "
-            f"got '{got_prefix}…'"
-        )
+        detail = f"Invalid API key format. Expected prefix '{expected_prefix}…'"
         super().__init__(provider, detail, http_status)
         self.got_prefix = got_prefix
         self.expected_prefix = expected_prefix

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import json
 import logging
 import os
+import re
+import socket
 import time
 from collections.abc import Mapping, Sequence
 from typing import Any, NoReturn
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlsplit, urlunsplit
 
+import httpx
 from openai import AsyncOpenAI
 
 from chessbench.common.common_types import (
@@ -31,13 +35,26 @@ from chessbench.common.exceptions import (
     RateLimitError,
     TimeoutError,
 )
-from chessbench.providers._openai_compat import extract_chat_message, usage_of
+from chessbench.providers._openai_compat import (
+    extract_chat_message,
+    message_text,
+    tool_calls_of,
+    usage_of,
+)
 from chessbench.providers.registry import register_provider
 
 _log = logging.getLogger(__name__)
 
 _ENV_PREFIX = "OPENAI_COMPATIBLE_"
 _ALLOWED_MAX_TOKEN_FIELDS = {"max_tokens", "max_completion_tokens", ""}
+_HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_FORBIDDEN_HEADERS = {"content-length", "host", "transfer-encoding"}
+_RESOURCE_SUFFIXES = ("/chat/completions", "/completions", "/models")
+_MAX_CONFIG_JSON_CHARS = 32_768
+_MAX_HEADER_VALUE_CHARS = 8_192
+_MAX_MODELS = 1_000
+_MAX_MODEL_ID_CHARS = 512
+_MAX_COMPLETION_CHARS = 200_000
 
 
 def _json_mapping(value: Mapping[str, Any] | str | None, setting: str) -> dict[str, Any]:
@@ -45,6 +62,8 @@ def _json_mapping(value: Mapping[str, Any] | str | None, setting: str) -> dict[s
         return {}
     if isinstance(value, Mapping):
         return dict(value)
+    if len(value) > _MAX_CONFIG_JSON_CHARS:
+        raise ValueError(f"{setting} exceeds the {_MAX_CONFIG_JSON_CHARS}-character limit")
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as exc:
@@ -58,7 +77,17 @@ def _model_ids(value: Sequence[str] | str | None) -> tuple[str, ...]:
     if value is None:
         return ()
     items = value.split(",") if isinstance(value, str) else value
-    return tuple(dict.fromkeys(item.strip() for item in items if item.strip()))
+    normalized: list[str] = []
+    for raw_item in items:
+        item = str(raw_item).strip()
+        if not item:
+            continue
+        if len(item) > _MAX_MODEL_ID_CHARS or any(ord(char) < 32 for char in item):
+            raise ValueError("Model IDs must be printable and at most 512 characters")
+        normalized.append(item)
+        if len(normalized) > _MAX_MODELS:
+            raise ValueError(f"At most {_MAX_MODELS} model IDs may be configured")
+    return tuple(dict.fromkeys(normalized))
 
 
 def _bool_setting(value: bool | str | None, default: bool) -> bool:
@@ -74,69 +103,128 @@ def _bool_setting(value: bool | str | None, default: bool) -> bool:
     raise ValueError(f"Invalid boolean value: {value!r}")
 
 
-def _normalize_base_url(value: str | None) -> str:
+def normalize_base_url(value: str | None) -> str:
+    """Return a canonical API root or reject an ambiguous/malicious URL."""
     if not value:
         return ""
-    base_url = value.strip().rstrip("/")
-    parsed = urlparse(base_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if len(value) > 2048 or any(ord(character) < 32 for character in value):
+        raise ValueError("OpenAI-compatible base_url contains invalid characters")
+    if value != value.strip() or any(character.isspace() for character in value):
+        raise ValueError("OpenAI-compatible base_url must not contain whitespace")
+
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError(
             "OpenAI-compatible base_url must be an absolute http(s) URL "
             "including its API prefix, for example http://localhost:8000/v1"
         )
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("OpenAI-compatible base_url must not contain user info")
+    if parsed.query or parsed.fragment:
+        raise ValueError(
+            "OpenAI-compatible base_url must not contain a query or fragment; "
+            "use OPENAI_COMPATIBLE_QUERY for query parameters"
+        )
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("OpenAI-compatible base_url contains an invalid port") from exc
+
+    hostname = parsed.hostname.rstrip(".").lower()
+    if not hostname or "%" in hostname:
+        raise ValueError("OpenAI-compatible base_url contains an invalid host")
+    try:
+        canonical_host = hostname.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError("OpenAI-compatible base_url contains an invalid host") from exc
+
+    decoded_path = unquote(parsed.path)
+    if "\\" in parsed.path or "\\" in decoded_path:
+        raise ValueError("OpenAI-compatible base_url path must not contain backslashes")
+    if any(segment in {".", ".."} for segment in decoded_path.split("/")):
+        raise ValueError("OpenAI-compatible base_url path must not contain dot segments")
+    path = parsed.path.rstrip("/")
+    if path.lower().endswith(_RESOURCE_SUFFIXES):
+        raise ValueError(
+            "OpenAI-compatible base_url must be an API root, not a models or "
+            "completion resource URL"
+        )
+
+    try:
+        address = ipaddress.ip_address(canonical_host)
+    except ValueError:
+        host_for_url = canonical_host
+    else:
+        host_for_url = f"[{canonical_host}]" if address.version == 6 else canonical_host
+    netloc = f"{host_for_url}:{port}" if port is not None else host_for_url
+    return urlunsplit((parsed.scheme.lower(), netloc, path, "", ""))
+
+
+def validate_endpoint_url(
+    value: str,
+    *,
+    enforce_public_networks: bool = False,
+    allow_private_networks: bool = False,
+    allowed_hosts: Sequence[str] | str | None = None,
+    require_https: bool = False,
+) -> str:
+    """Validate URL shape and, when requested, its resolved network targets."""
+    base_url = normalize_base_url(value)
+    if not base_url:
+        raise ValueError("OpenAI-compatible base_url is required")
+    parsed = urlsplit(base_url)
+    hostname = parsed.hostname or ""
+    if require_https and parsed.scheme != "https":
+        raise ValueError("This endpoint requires HTTPS")
+
+    allowed = {host.lower().rstrip(".") for host in _model_ids(allowed_hosts)}
+    if allowed and hostname.lower().rstrip(".") not in allowed:
+        raise ValueError("Endpoint host is not in OPENAI_COMPATIBLE_ALLOWED_HOSTS")
+
+    if not enforce_public_networks or allow_private_networks:
+        return base_url
+
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
+        raise ValueError("Private/local endpoints are disabled on public deployments")
+    try:
+        literal_address = ipaddress.ip_address(hostname)
+    except ValueError:
+        literal_address = None
+    if literal_address is not None and not literal_address.is_global:
+        raise ValueError("Private/local endpoints are disabled on public deployments")
+
+    try:
+        resolved = {
+            item[4][0]
+            for item in socket.getaddrinfo(
+                hostname,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+        }
+    except socket.gaierror as exc:
+        raise ValueError(f"Could not resolve endpoint host: {hostname}") from exc
+    if not resolved or any(not ipaddress.ip_address(address).is_global for address in resolved):
+        raise ValueError("Private/local endpoints are disabled on public deployments")
     return base_url
 
 
-def _message_text(message: object) -> str:
-    content = getattr(message, "content", None)
-    if isinstance(content, str):
-        text_content = content
-    elif isinstance(content, list):
-        parts: list[str] = []
-        for part in content:
-            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
-            if isinstance(text, str):
-                parts.append(text)
-        text_content = "".join(parts)
-    else:
-        text_content = ""
-
-    model_extra = getattr(message, "model_extra", None)
-    reasoning = (
-        getattr(message, "reasoning", None)
-        or getattr(message, "reasoning_content", None)
-        or (
-            model_extra.get("reasoning") or model_extra.get("reasoning_content")
-            if isinstance(model_extra, dict)
-            else None
-        )
-    )
-    if isinstance(reasoning, str) and reasoning:
-        return f"<reasoning>\n{reasoning}\n</reasoning>\n{text_content}"
-    return text_content
-
-
-def _tool_calls(message: object) -> list[dict[str, Any]] | None:
-    calls = getattr(message, "tool_calls", None)
-    if not calls:
-        return None
-
-    output: list[dict[str, Any]] = []
-    for call in calls:
-        function = getattr(call, "function", None)
-        if function is None:
-            continue
-        arguments = getattr(function, "arguments", "")
-        if isinstance(arguments, str):
-            with contextlib.suppress(json.JSONDecodeError):
-                arguments = json.loads(arguments)
-        output.append(
-            {
-                "name": getattr(function, "name", ""),
-                "arguments": arguments,
-            }
-        )
-    return output or None
+def _validated_headers(
+    value: Mapping[str, Any] | str | None,
+) -> dict[str, str]:
+    headers = _json_mapping(value, f"{_ENV_PREFIX}HEADERS")
+    output: dict[str, str] = {}
+    for raw_name, raw_value in headers.items():
+        name = str(raw_name)
+        header_value = str(raw_value)
+        if not _HEADER_NAME.fullmatch(name) or name.lower() in _FORBIDDEN_HEADERS:
+            raise ValueError(f"Unsafe custom HTTP header name: {name!r}")
+        if len(header_value) > _MAX_HEADER_VALUE_CHARS or any(
+            character in header_value for character in ("\r", "\n", "\0")
+        ):
+            raise ValueError(f"Unsafe custom HTTP header value for {name!r}")
+        output[name] = header_value
+    return output
 
 
 @register_provider
@@ -166,23 +254,55 @@ class OpenAICompatibleProvider(ModelProvider):
         max_tokens_field: str | None = None,
         timeout: float | None = None,
         probe_timeout: float | None = None,
+        enforce_public_networks: bool | str | None = None,
+        allow_private_networks: bool | str | None = None,
+        allowed_hosts: Sequence[str] | str | None = None,
+        trust_env: bool | str | None = None,
     ) -> None:
-        self.base_url = _normalize_base_url(base_url or os.getenv(f"{_ENV_PREFIX}BASE_URL"))
+        self.enforce_public_networks = _bool_setting(
+            enforce_public_networks
+            if enforce_public_networks is not None
+            else os.getenv(f"{_ENV_PREFIX}ENFORCE_PUBLIC_NETWORKS"),
+            False,
+        )
+        self.allow_private_networks = _bool_setting(
+            allow_private_networks
+            if allow_private_networks is not None
+            else os.getenv(f"{_ENV_PREFIX}ALLOW_PRIVATE_NETWORKS"),
+            False,
+        )
+        self.allowed_hosts = _model_ids(
+            allowed_hosts if allowed_hosts is not None else os.getenv(f"{_ENV_PREFIX}ALLOWED_HOSTS")
+        )
+        self.trust_env = _bool_setting(
+            trust_env
+            if trust_env is not None
+            else os.getenv(f"{_ENV_PREFIX}TRUST_ENV"),
+            False,
+        )
+        raw_base_url = base_url or os.getenv(f"{_ENV_PREFIX}BASE_URL")
+        self.base_url = (
+            validate_endpoint_url(
+                raw_base_url,
+                enforce_public_networks=self.enforce_public_networks,
+                allow_private_networks=self.allow_private_networks,
+                allowed_hosts=self.allowed_hosts,
+                require_https=(
+                    self.enforce_public_networks and not self.allow_private_networks
+                ),
+            )
+            if raw_base_url
+            else ""
+        )
         self.configured_models = _model_ids(
             models if models is not None else os.getenv(f"{_ENV_PREFIX}MODELS")
         )
         self.context_window = int(
             context_window or os.getenv(f"{_ENV_PREFIX}CONTEXT_WINDOW") or DEFAULT_CONTEXT_WINDOW
         )
-        self.default_headers = {
-            str(name): str(value)
-            for name, value in _json_mapping(
-                default_headers
-                if default_headers is not None
-                else os.getenv(f"{_ENV_PREFIX}HEADERS"),
-                f"{_ENV_PREFIX}HEADERS",
-            ).items()
-        }
+        self.default_headers = _validated_headers(
+            default_headers if default_headers is not None else os.getenv(f"{_ENV_PREFIX}HEADERS")
+        )
         self.default_query = _json_mapping(
             default_query if default_query is not None else os.getenv(f"{_ENV_PREFIX}QUERY"),
             f"{_ENV_PREFIX}QUERY",
@@ -233,13 +353,31 @@ class OpenAICompatibleProvider(ModelProvider):
                     "to the server's API root, including /v1 when required."
                 ),
             )
+        self.base_url = validate_endpoint_url(
+            self.base_url,
+            enforce_public_networks=self.enforce_public_networks,
+            allow_private_networks=self.allow_private_networks,
+            allowed_hosts=self.allowed_hosts,
+            require_https=(
+                self.enforce_public_networks and not self.allow_private_networks
+            ),
+        )
+        normalized_key = api_key.strip()
+        if len(normalized_key) > _MAX_HEADER_VALUE_CHARS or any(
+            character in normalized_key for character in ("\r", "\n", "\0")
+        ):
+            raise ValueError("API key contains invalid characters or is too long")
         return AsyncOpenAI(
-            api_key=api_key.strip() or "not-needed",
+            api_key=normalized_key or "not-needed",
             base_url=self.base_url,
             timeout=timeout or self.timeout,
             default_headers=self.default_headers,
             default_query=self.default_query,
             max_retries=0,
+            http_client=httpx.AsyncClient(
+                follow_redirects=False,
+                trust_env=self.trust_env,
+            ),
         )
 
     def _configured_model_info(self) -> list[ModelInfo]:
@@ -275,18 +413,29 @@ class OpenAICompatibleProvider(ModelProvider):
                 ),
                 raw_response={"error": str(exc), "base_url": self.base_url},
             ) from exc
+        finally:
+            with contextlib.suppress(Exception):
+                await client.close()
 
-        models = [
-            ModelInfo(
-                id=model.id,
-                name=model.id,
-                provider=self.name,
-                context_window=self.context_window,
-                capabilities=[CAP_CHESS],
+        models: list[ModelInfo] = []
+        for model in response.data[:_MAX_MODELS]:
+            model_id = getattr(model, "id", None)
+            if (
+                not isinstance(model_id, str)
+                or not model_id
+                or len(model_id) > _MAX_MODEL_ID_CHARS
+                or any(ord(char) < 32 for char in model_id)
+            ):
+                continue
+            models.append(
+                ModelInfo(
+                    id=model_id,
+                    name=model_id,
+                    provider=self.name,
+                    context_window=self.context_window,
+                    capabilities=[CAP_CHESS],
+                )
             )
-            for model in response.data
-            if getattr(model, "id", None)
-        ]
         return models or self._configured_model_info()
 
     async def complete(
@@ -330,18 +479,32 @@ class OpenAICompatibleProvider(ModelProvider):
         except Exception as exc:
             latency_ms = int((time.perf_counter() - start) * 1000)
             self._raise_api_error(exc, model, api_key, timeout, latency_ms)
+        finally:
+            with contextlib.suppress(Exception):
+                await client.close()
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         message = extract_chat_message(response, self.name, model)
         tokens_in, tokens_out = usage_of(response)
-        raw_response = response.model_dump() if hasattr(response, "model_dump") else None
+        text = message_text(message)
+        if len(text) > _MAX_COMPLETION_CHARS:
+            raise ProviderAPIError(
+                provider=self.name,
+                status_code=502,
+                detail="Completion response exceeded the safe size limit",
+            )
+        raw_response = {
+            "id": str(getattr(response, "id", ""))[:256],
+            "model": str(getattr(response, "model", model))[:_MAX_MODEL_ID_CHARS],
+            "finish_reason": str(getattr(response.choices[0], "finish_reason", ""))[:128],
+        }
         return CompletionResult(
-            text=_message_text(message),
+            text=text,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,
             raw_response=raw_response,
-            tool_calls=_tool_calls(message),
+            tool_calls=tool_calls_of(message),
         )
 
     def _raise_api_error(
@@ -388,12 +551,12 @@ class OpenAICompatibleProvider(ModelProvider):
             raise TimeoutError(
                 provider=self.name,
                 timeout_seconds=timeout,
-                host=urlparse(self.base_url).hostname,
+                host=urlsplit(self.base_url).hostname,
             ) from exc
         if isinstance(exc, APIConnectionError):
             raise ConnectionError(
                 provider=self.name,
-                host=urlparse(self.base_url).hostname,
+                host=urlsplit(self.base_url).hostname,
                 detail=str(exc),
             ) from exc
         if isinstance(exc, NotFoundError):
@@ -414,4 +577,8 @@ class OpenAICompatibleProvider(ModelProvider):
         ) from exc
 
 
-__all__ = ["OpenAICompatibleProvider"]
+__all__ = [
+    "OpenAICompatibleProvider",
+    "normalize_base_url",
+    "validate_endpoint_url",
+]

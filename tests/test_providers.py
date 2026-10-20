@@ -304,6 +304,39 @@ class TestNIMProvider:
                 assert result.tokens_in == 100
                 assert result.tokens_out == 5
 
+    @pytest.mark.asyncio
+    async def test_complete_preserves_reasoning_content_when_text_is_empty(
+        self, provider
+    ):
+        with patch("chessbench.providers.nim.AsyncOpenAI") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+            message = MagicMock(
+                content="",
+                reasoning=None,
+                reasoning_content="Calculated candidate moves and chose e2e4.",
+                model_extra=None,
+                tool_calls=None,
+            )
+            response = MagicMock(
+                id="completion-1",
+                model="nvidia/test-model",
+                choices=[MagicMock(message=message, finish_reason="stop")],
+                usage=MagicMock(prompt_tokens=10, completion_tokens=8),
+            )
+            mock_client.chat.completions.create = AsyncMock(return_value=response)
+
+            result = await provider.complete(
+                "test_key",
+                "nvidia/test-model",
+                [ChatMessage(role="user", content="test")],
+                max_tokens=100,
+            )
+
+        assert "<reasoning>" in result.text
+        assert "e2e4" in result.text
+        mock_client.close.assert_awaited_once()
+
 
 class TestOpenRouterProvider:
     @pytest.fixture

@@ -176,6 +176,11 @@ sudo systemctl enable --now chessbench
 | `OPENAI_COMPATIBLE_SUPPORTS_TOOLS` | Custom endpoint | Forward tools/tool choice when `true` (default: `false`) |
 | `OPENAI_COMPATIBLE_MAX_TOKENS_FIELD` | Custom endpoint | `max_tokens`, `max_completion_tokens`, or blank |
 | `OPENAI_COMPATIBLE_PROBE_TIMEOUT` | Custom endpoint | Timeout in seconds for live model discovery (default: `10`) |
+| `OPENAI_COMPATIBLE_ENFORCE_PUBLIC_NETWORKS` | Custom endpoint | Resolve and reject private/link-local targets before every request |
+| `OPENAI_COMPATIBLE_ALLOW_PRIVATE_NETWORKS` | Trusted local endpoint | Explicitly allow private targets for CLI/YAML deployments |
+| `OPENAI_COMPATIBLE_ALLOWED_HOSTS` | Custom endpoint | Optional comma-separated exact hostname allowlist |
+| `OPENAI_COMPATIBLE_TRUST_ENV` | Custom endpoint | Opt into environment HTTP proxies (default: `false`) |
+| `CHESSBENCH_PUBLIC_DEPLOYMENT` | Hosted UI | Enforce public-target validation for session-added endpoints |
 | `CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS` | Hosted custom endpoints | Allow loopback/private endpoint URLs when explicitly set to `true` |
 | `STOCKFISH_PATH` | Stockfish evaluation | Custom binary path (defaults to system `stockfish`) |
 | `CHESS_FIGHT_RUNS_ROOT` | Run storage | Root directory for benchmark run logs (default: `runs/`) |

@@ -11,6 +11,8 @@ so the entire app stays on-brand.
 
 from __future__ import annotations
 
+import re
+from html import escape
 from typing import Any
 
 import chess
@@ -30,6 +32,13 @@ QUALITY_HUES: dict[str, str] = {
     "mistake": "mistake",
     "blunder": "blunder",
 }
+
+_MARKDOWN_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+.!|>~-])")
+
+
+def escape_markdown(value: object) -> str:
+    """Escape untrusted text before inserting it into Streamlit Markdown."""
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", str(value))
 
 
 def quality_pill_html(quality: str | None) -> str:
@@ -67,8 +76,16 @@ def format_duration_ms(ms: int | float | None) -> str:
 
 def render_html_card(klass: str, title: str | None, body_html: str) -> None:
     """Render an arbitrary HTML card with optional title header."""
-    title_html = f'<div style="font-weight:600;font-size:0.95rem;margin-bottom:8px;color:var(--arena-text)">{title}</div>' if title else ""
-    st.markdown(f'<div class="{klass}">{title_html}{body_html}</div>', unsafe_allow_html=True)
+    title_html = (
+        f'<div style="font-weight:600;font-size:0.95rem;margin-bottom:8px;'
+        f'color:var(--arena-text)">{escape(title)}</div>'
+        if title
+        else ""
+    )
+    st.markdown(
+        f'<div class="{escape(klass, quote=True)}">{title_html}{body_html}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def framed_board_html(
@@ -164,7 +181,8 @@ def render_move_ticker_html(moves: list) -> str:
         prefix = f"{turn_num}. " if i % 2 == 0 else ""
 
         # We can add quality classes later if evaluated, for now just standard pill
-        pills.append(f'<span class="cf-move-pill{is_current}">{prefix}{san}{cap_suffix}</span>')
+        label = escape(f"{prefix}{san}{cap_suffix}")
+        pills.append(f'<span class="cf-move-pill{is_current}">{label}</span>')
 
     return f'<div class="cf-move-ticker">{"".join(pills)}</div>'
 
@@ -189,13 +207,15 @@ def render_loading_card(title: str, stage: str, provider: str | None = None, con
         import streamlit as st
         container = st
 
-    provider_label = f" · {provider.capitalize()}" if provider else ""
+    provider_label = f" · {escape(provider.capitalize())}" if provider else ""
+    safe_title = escape(title)
+    safe_stage = escape(stage)
     body = f"""
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
             <span class="cf-turn-dot"></span>
-            <span style="color:var(--arena-text);font-weight:600;font-size:0.875rem">{title}</span>
+            <span style="color:var(--arena-text);font-weight:600;font-size:0.875rem">{safe_title}</span>
         </div>
-        <div style="color:var(--arena-text-muted);font-size:0.8125rem;margin-bottom:14px">{stage}{provider_label}</div>
+        <div style="color:var(--arena-text-muted);font-size:0.8125rem;margin-bottom:14px">{safe_stage}{provider_label}</div>
     """
     rows = "".join('<div class="cf-skeleton"></div>' for _ in range(3))
     container.markdown(
@@ -287,13 +307,15 @@ def player_banner_html(
     active_cls = " active" if is_turn else ""
     avatar_cls = "cf-avatar-white" if color == "white" else "cf-avatar-black"
     glyph = "♔" if color == "white" else "♚"
-    spec_html = spec or "&nbsp;"
+    spec_html = escape(spec) if spec else "&nbsp;"
     turn_dot = '<span class="cf-turn-dot"></span>' if is_turn else ""
     result_mark = ""
     if is_winner:
         res_str = "1 — 0" if color == "white" else "0 — 1"
         result_mark = f'<span style="margin-left:auto;font-family:var(--font-mono);font-size:0.75rem;color:var(--arena-good);font-weight:700">{res_str}</span>'
-    display_name = f"White: {name}" if color == "white" else f"Black: {name}"
+    display_name = escape(
+        f"White: {name}" if color == "white" else f"Black: {name}"
+    )
     html = f"""
 <div class="cf-player{active_cls}">
 {turn_dot}

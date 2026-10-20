@@ -84,6 +84,7 @@ environment variables:
 ```bash
 export OPENAI_COMPATIBLE_BASE_URL="http://localhost:8000/v1"
 export OPENAI_COMPATIBLE_API_KEY=""  # Optional for local servers
+export CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS="true"  # Required for localhost UI targets
 
 # Only needed when the server does not implement GET /models
 export OPENAI_COMPATIBLE_MODELS="model-a,model-b"
@@ -101,9 +102,12 @@ prefix (usually `/v1`). Advanced endpoints can use JSON values in
 `max_completion_tokens` can set
 `OPENAI_COMPATIBLE_MAX_TOKENS_FIELD=max_completion_tokens`.
 
-On hosted deployments, private/loopback targets are blocked by default to
-prevent server-side request forgery. A trusted private deployment can opt in
-with `CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS=true`.
+On hosted deployments, private/loopback targets are blocked to prevent
+server-side request forgery. Set `CHESSBENCH_PUBLIC_DEPLOYMENT=true` when the
+hosted-provider filter is not configured. A trusted private deployment can opt
+in with `CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS=true`. Administrators can further
+restrict session-added endpoints with the exact-host allowlist
+`OPENAI_COMPATIBLE_ALLOWED_HOSTS`.
 
 ---
 

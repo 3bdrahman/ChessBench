@@ -6,34 +6,23 @@
 # =============================================================================
 FROM python:3.11-slim AS builder
 
-# Install system dependencies for building
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install Python dependencies
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY pyproject.toml requirements-lock.txt README.md ./
 COPY chessbench/ ./chessbench/
-COPY configs/ ./configs/
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -e ".[dev]"
+    pip install --no-cache-dir -r requirements-lock.txt && \
+    pip install --no-cache-dir --no-deps .
 
 # =============================================================================
 # Runtime Stage
 # =============================================================================
 FROM python:3.11-slim AS runtime
 
-# Install runtime dependencies (Stockfish, minimal system deps)
+# Install the only required runtime system dependency.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     stockfish \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -43,17 +32,16 @@ RUN groupadd -r chessbench && useradd -r -g chessbench chessbench
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy application code
+# Copy runtime entry points and configuration. The installed package remains
+# root-owned under site-packages; only the run-output directory is writable.
 WORKDIR /app
-COPY --from=builder /app/chessbench ./chessbench
-COPY --from=builder /app/configs ./configs
 COPY streamlit_app.py ./
 COPY benchmark.yaml ./
 COPY README.md ./
 COPY LICENSE ./
 
-# Create runs directory with correct permissions
-RUN mkdir -p /app/runs && chown -R chessbench:chessbench /app
+# Create the only writable application directory.
+RUN mkdir -p /app/runs && chown chessbench:chessbench /app/runs
 
 # Switch to non-root user
 USER chessbench

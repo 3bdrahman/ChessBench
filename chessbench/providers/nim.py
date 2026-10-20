@@ -8,9 +8,9 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from chessbench import constants
 from chessbench.common.common_types import (
     CAP_CHESS,
-    DEFAULT_CONTEXT_WINDOW,
     DEFAULT_HTTP_TIMEOUT,
     DEFAULT_TEMPERATURE,
     ChatMessage,
@@ -18,7 +18,6 @@ from chessbench.common.common_types import (
     ModelInfo,
     ModelProvider,
 )
-from chessbench import constants
 from chessbench.common.exceptions import (
     AuthenticationError,
     ConnectionError,
@@ -28,7 +27,12 @@ from chessbench.common.exceptions import (
     RateLimitError,
     TimeoutError,
 )
-from chessbench.providers._openai_compat import extract_chat_message
+from chessbench.providers._openai_compat import (
+    extract_chat_message,
+    message_text,
+    tool_calls_of,
+    usage_of,
+)
 from chessbench.providers.registry import register_provider
 
 _log = logging.getLogger(__name__)
@@ -104,46 +108,44 @@ class NIMProvider(ModelProvider):
 
         start = time.time()
         try:
-            response = await client.chat.completions.create(**completion_kwargs)
-        except Exception as exc:
-            # Fallback if NIM model rejects tool calling parameters (400 / 422)
-            if "tools" in completion_kwargs and getattr(exc, "status_code", None) in (400, 422):
-                _log.warning("NIM model %s rejected tools parameter; retrying without tools...", model)
-                completion_kwargs.pop("tools", None)
-                completion_kwargs.pop("tool_choice", None)
-                try:
-                    response = await client.chat.completions.create(**completion_kwargs)
-                except Exception as exc2:
+            try:
+                response = await client.chat.completions.create(**completion_kwargs)
+            except Exception as exc:
+                # Fallback if NIM model rejects tool calling parameters (400 / 422)
+                if "tools" in completion_kwargs and getattr(exc, "status_code", None) in (400, 422):
+                    _log.warning("NIM model %s rejected tools parameter; retrying without tools...", model)
+                    completion_kwargs.pop("tools", None)
+                    completion_kwargs.pop("tool_choice", None)
+                    try:
+                        response = await client.chat.completions.create(**completion_kwargs)
+                    except Exception as exc2:
+                        latency_ms = int((time.time() - start) * 1000)
+                        _classify_and_raise(exc2, "nim", model, latency_ms, api_key)
+                else:
                     latency_ms = int((time.time() - start) * 1000)
-                    _classify_and_raise(exc2, "nim", model, latency_ms, api_key)
-            else:
-                latency_ms = int((time.time() - start) * 1000)
-                _classify_and_raise(exc, "nim", model, latency_ms, api_key)
+                    _classify_and_raise(exc, "nim", model, latency_ms, api_key)
+        finally:
+            with contextlib.suppress(Exception):
+                await client.close()
 
         latency_ms = int((time.time() - start) * 1000)
 
-        tool_calls_out = None
         message = extract_chat_message(response, "nim", model)
-        if hasattr(message, "tool_calls") and message.tool_calls:
-            import json
-            tool_calls_out = []
-            for tc in message.tool_calls:
-                try:
-                    args = json.loads(tc.function.arguments)
-                except Exception:
-                    args = tc.function.arguments
-                tool_calls_out.append({
-                    "name": tc.function.name,
-                    "arguments": args
-                })
+        tokens_in, tokens_out = usage_of(response)
 
         return CompletionResult(
-            text=message.content or "",
-            tokens_in=response.usage.prompt_tokens if response.usage else None,
-            tokens_out=response.usage.completion_tokens if response.usage else None,
+            text=message_text(message),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
             latency_ms=latency_ms,
-            raw_response=response.model_dump() if hasattr(response, "model_dump") else None,
-            tool_calls=tool_calls_out,
+            raw_response={
+                "id": str(getattr(response, "id", ""))[:256],
+                "model": str(getattr(response, "model", model))[:512],
+                "finish_reason": str(
+                    getattr(response.choices[0], "finish_reason", "")
+                )[:128],
+            },
+            tool_calls=tool_calls_of(message),
         )
 
 

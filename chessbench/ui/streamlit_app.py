@@ -12,16 +12,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
-import ipaddress
 import json
 import os
 import re
-import socket
 import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import chess
 import chess.svg
@@ -53,8 +50,10 @@ from chessbench.models import GameMove, GameStats
 from chessbench.prompts import validate_prompt_text
 from chessbench.providers import get_provider, list_providers
 from chessbench.providers.chess_ai import ProviderChessAI
+from chessbench.providers.openai_compatible import validate_endpoint_url
 from chessbench.ui.error_display import render_error
 from chessbench.ui.helpers import (
+    escape_markdown,
     format_duration_ms,
     player_banner_html,
     render_board_with_evalbar,
@@ -323,7 +322,10 @@ async def fetch_models_for_provider(
         render_error(st, exc)
         return []
     except Exception as exc:
-        st.error(f"Failed to fetch models from {provider_name}: {exc}")
+        st.error(
+            "Failed to fetch models from "
+            f"{escape_markdown(provider_name)}: {escape_markdown(exc)}"
+        )
         return []
 
 
@@ -383,6 +385,11 @@ def _openai_compatible_config() -> dict[str, Any]:
         return {}
 
     config: dict[str, Any] = {"base_url": base_url}
+    enforce_public, allow_private, allowed_hosts = _endpoint_network_policy()
+    config["enforce_public_networks"] = enforce_public
+    config["allow_private_networks"] = allow_private
+    if allowed_hosts:
+        config["allowed_hosts"] = allowed_hosts
     models = _get_runtime_setting("OPENAI_COMPATIBLE_MODELS")
     if models:
         config["models"] = models
@@ -401,59 +408,38 @@ def _openai_compatible_config() -> dict[str, Any]:
 
 
 def _custom_provider_id(label: str) -> str:
+    if len(label) > 64 or any(ord(character) < 32 for character in label):
+        raise ValueError("Provider name must be printable and at most 64 characters")
     slug = re.sub(r"[^a-z0-9]+", "_", label.strip().lower()).strip("_")
     if not slug:
         raise ValueError("Provider name must contain a letter or number")
     return f"custom_{slug}"
 
 
-def _validate_user_endpoint(base_url: str, api_key: str) -> str:
-    """Validate a session-added endpoint before the server connects to it."""
-    normalized = base_url.strip().rstrip("/")
-    parsed = urlparse(normalized)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError(
-            "Base URL must be an absolute http(s) URL including the API prefix"
-        )
+def _endpoint_network_policy() -> tuple[bool, bool, str | None]:
+    public_deployment = bool(HOSTED_PROVIDERS) or os.getenv(
+        "CHESSBENCH_PUBLIC_DEPLOYMENT", "true"
+    ).lower() not in {"0", "false", "no", "off"}
+    allow_private = not public_deployment or os.getenv(
+        "CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS", ""
+    ).lower() in {"1", "true", "yes", "on"}
+    return (
+        public_deployment and not allow_private,
+        allow_private,
+        os.getenv("OPENAI_COMPATIBLE_ALLOWED_HOSTS"),
+    )
 
-    hosted = bool(HOSTED_PROVIDERS)
-    allow_private = os.getenv("CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS", "").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    if hosted and api_key and parsed.scheme != "https":
-        raise ValueError("Hosted deployments require HTTPS when an API key is used")
-    if hosted and not allow_private:
-        hostname = parsed.hostname.lower()
-        if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
-            raise ValueError("Private/local endpoints are disabled on hosted deployments")
-        try:
-            address = ipaddress.ip_address(hostname)
-        except ValueError:
-            address = None
-        if address is not None and not address.is_global:
-            raise ValueError(
-                "Private/local endpoints are disabled on hosted deployments"
-            )
-        if address is None:
-            try:
-                resolved = {
-                    item[4][0]
-                    for item in socket.getaddrinfo(
-                        hostname,
-                        parsed.port or (443 if parsed.scheme == "https" else 80),
-                        type=socket.SOCK_STREAM,
-                    )
-                }
-            except socket.gaierror as exc:
-                raise ValueError(f"Could not resolve endpoint host: {hostname}") from exc
-            if any(not ipaddress.ip_address(item).is_global for item in resolved):
-                raise ValueError(
-                    "Private/local endpoints are disabled on hosted deployments"
-                )
-    return normalized
+
+def _validate_user_endpoint(base_url: str) -> str:
+    """Validate a session-added endpoint before the server connects to it."""
+    enforce_public, allow_private, allowed_hosts = _endpoint_network_policy()
+    return validate_endpoint_url(
+        base_url,
+        enforce_public_networks=enforce_public,
+        allow_private_networks=allow_private,
+        allowed_hosts=allowed_hosts,
+        require_https=enforce_public,
+    )
 
 
 def _custom_provider_entries() -> list[dict[str, Any]]:
@@ -605,20 +591,24 @@ def render_provider_keys_section():
             custom_label = st.text_input(
                 "Provider name",
                 placeholder="Local vLLM",
+                max_chars=64,
             )
             custom_base_url = st.text_input(
                 "Base URL",
                 placeholder="http://localhost:8000/v1",
+                max_chars=2048,
             )
             custom_api_key = st.text_input(
                 "API key (optional)",
                 type="password",
                 placeholder="Leave blank for unauthenticated endpoints",
+                max_chars=8192,
             )
             custom_models = st.text_input(
                 "Fallback models (optional)",
                 placeholder="model-a,model-b",
                 help="Used only when the endpoint does not implement GET /models.",
+                max_chars=32768,
             )
             custom_tools = st.checkbox("Endpoint supports tool calling", value=False)
             custom_temperature = st.checkbox("Send temperature", value=True)
@@ -636,7 +626,10 @@ def render_provider_keys_section():
         if add_provider:
             try:
                 provider_id = _custom_provider_id(custom_label)
-                base_url = _validate_user_endpoint(custom_base_url, custom_api_key)
+                base_url = _validate_user_endpoint(custom_base_url)
+                enforce_public, allow_private, allowed_hosts = (
+                    _endpoint_network_policy()
+                )
                 custom_provider_config: dict[str, Any] = {
                     "adapter": "openai_compatible",
                     "base_url": base_url,
@@ -644,14 +637,21 @@ def render_provider_keys_section():
                     "send_temperature": custom_temperature,
                     "max_tokens_field": custom_token_field,
                     "probe_timeout": 5.0,
+                    "enforce_public_networks": enforce_public,
+                    "allow_private_networks": allow_private,
                 }
+                if allowed_hosts:
+                    custom_provider_config["allowed_hosts"] = allowed_hosts
                 if custom_models.strip():
                     custom_provider_config["models"] = custom_models.strip()
                 if get_provider(provider_id, **custom_provider_config) is None:
                     raise ValueError("OpenAI-compatible adapter is unavailable")
-                st.session_state.setdefault("custom_openai_providers", {})[
-                    provider_id
-                ] = {
+                custom_store = st.session_state.setdefault(
+                    "custom_openai_providers", {}
+                )
+                if provider_id not in custom_store and len(custom_store) >= 10:
+                    raise ValueError("At most 10 session providers may be configured")
+                custom_store[provider_id] = {
                     "id": provider_id,
                     "label": custom_label.strip(),
                     "api_key": custom_api_key.strip(),

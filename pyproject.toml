@@ -45,6 +45,13 @@ dev = [
 where = ["."]
 include = ["chessbench*"]
 
+[tool.setuptools.package-data]
+chessbench = [
+    "benchmark/data/*.json",
+    "data/*.json",
+    "providers/*.yaml",
+]
+
 [project.scripts]
 chessbench = "chessbench.cli:main"
 

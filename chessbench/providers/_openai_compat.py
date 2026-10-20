@@ -1,5 +1,7 @@
 """Shared helpers for OpenAI-compatible chat-completion providers."""
 
+import contextlib
+import json
 from typing import Any, Protocol, runtime_checkable
 
 from chessbench.common.common_types import CompletionResult
@@ -8,10 +10,12 @@ from chessbench.common.exceptions import ProviderAPIError
 
 class ChatMessage:
     """Minimal typed chat message from OpenAI-compatible API."""
+
     content: str | None
     tool_calls: list[Any] | None
     model_extra: dict[str, Any] | None
     reasoning: str | None
+    reasoning_content: str | None
 
 
 @runtime_checkable
@@ -71,4 +75,64 @@ def usage_of(response: object) -> tuple[int | None, int | None]:
     )
 
 
-__all__ = ["CompletionResult", "extract_chat_message", "usage_of"]
+def message_text(message: object) -> str:
+    """Extract text plus provider-specific reasoning content safely."""
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        text_content = content
+    elif isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        text_content = "".join(parts)
+    else:
+        text_content = ""
+
+    model_extra = getattr(message, "model_extra", None)
+    reasoning = (
+        getattr(message, "reasoning", None)
+        or getattr(message, "reasoning_content", None)
+        or (
+            model_extra.get("reasoning") or model_extra.get("reasoning_content")
+            if isinstance(model_extra, dict)
+            else None
+        )
+    )
+    if isinstance(reasoning, str) and reasoning:
+        return f"<reasoning>\n{reasoning}\n</reasoning>\n{text_content}"
+    return text_content
+
+
+def tool_calls_of(message: object) -> list[dict[str, Any]] | None:
+    """Convert SDK tool calls into ChessBench's provider-neutral structure."""
+    calls = getattr(message, "tool_calls", None)
+    if not calls:
+        return None
+
+    output: list[dict[str, Any]] = []
+    for call in calls:
+        function = getattr(call, "function", None)
+        if function is None:
+            continue
+        arguments = getattr(function, "arguments", "")
+        if isinstance(arguments, str):
+            with contextlib.suppress(json.JSONDecodeError):
+                arguments = json.loads(arguments)
+        output.append(
+            {
+                "name": getattr(function, "name", ""),
+                "arguments": arguments,
+            }
+        )
+    return output or None
+
+
+__all__ = [
+    "CompletionResult",
+    "extract_chat_message",
+    "message_text",
+    "tool_calls_of",
+    "usage_of",
+]

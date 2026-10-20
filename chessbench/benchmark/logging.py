@@ -549,24 +549,3 @@ class BenchmarkLogger:
         }
         with open(self.error_log_path, 'a') as f:
             f.write(json.dumps(entry) + '\n')
-
-
-if __name__ == "__main__":
-    # Test
-    logger = BenchmarkLogger("/tmp/test_run")
-    logger.start_run({"test": True})
-
-    logger.start_game("GPT-4o", "Claude-3.5-Sonnet", "openai", "anthropic", "A00", "Polish Opening")
-
-    board = chess.Board()
-    logger.log_move(1, "GPT-4o", "white", board.fen(), "b2b4", "b4", 500, 100, 5, "b4", "<thinking>...", 0, prompt_hash="hash1")
-    board.push(chess.Move.from_uci("b2b4"))
-
-    logger.log_move(1, "Claude-3.5-Sonnet", "black", board.fen(), "e7e5", "e5", 400, 100, 5, "e5", "<thinking>...", 0, prompt_hash="hash2")
-    board.push(chess.Move.from_uci("e7e5"))
-
-    logger.end_game("1-0", 1.0, 2, 2.0)
-    logger.write_summary()
-
-    print("Test complete!")
-    print(logger.get_pgn_content())

@@ -12,6 +12,7 @@ from chessbench.prompts import (
     DEFAULT_TURN_PROMPT,
     validate_prompt_text,
 )
+from chessbench.ui.helpers import escape_markdown
 from chessbench.ui.prompt_workbench import compute_budget_state
 from chessbench.ui.workbench_ui_components import (
     render_preview_popover,
@@ -73,7 +74,9 @@ def render_prompt_management(
 
         # --- Player 1 ---
         with tab_p1:
-            st.caption(f"Strategy for `{model_1_config['model_id'][:20]}`")
+            st.caption(
+                f"Strategy for {escape_markdown(model_1_config['model_id'][:80])}"
+            )
             sys_1 = st.text_area(
                 "System Prompt (P1)",
                 value=st.session_state[f"sys_prompt_{m1_spec}"],
@@ -131,7 +134,9 @@ def render_prompt_management(
 
         # --- Player 2 ---
         with tab_p2:
-            st.caption(f"Strategy for `{model_2_config['model_id'][:20]}`")
+            st.caption(
+                f"Strategy for {escape_markdown(model_2_config['model_id'][:80])}"
+            )
             sys_2 = st.text_area(
                 "System Prompt (P2)",
                 value=st.session_state[f"sys_prompt_{m2_spec}"],

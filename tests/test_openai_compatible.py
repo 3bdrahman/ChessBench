@@ -15,8 +15,13 @@ from chessbench.benchmark.runner import BenchmarkConfig, BenchmarkRunner
 from chessbench.cli import _load_api_keys
 from chessbench.common.common_types import ChatMessage, ModelInfo
 from chessbench.providers.chess_ai import ProviderChessAI
-from chessbench.providers.openai_compatible import OpenAICompatibleProvider
+from chessbench.providers.openai_compatible import (
+    OpenAICompatibleProvider,
+    normalize_base_url,
+    validate_endpoint_url,
+)
 from chessbench.providers.registry import get_provider, list_providers
+from chessbench.ui.helpers import player_banner_html, render_move_ticker_html
 
 
 @pytest.fixture
@@ -131,6 +136,128 @@ def test_api_key_is_optional_for_local_compatible_servers():
     assert provider.validate_key("arbitrary-provider-key") is True
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "javascript://attacker.example/v1",
+        "https://user:password@example.com/v1",
+        "https://example.com/v1?target=http://127.0.0.1",
+        "https://example.com/v1#@127.0.0.1",
+        "https://example.com/v1/../admin",
+        "https://example.com/v1/%2e%2e/admin",
+        "https://example.com/v1\\models",
+        "https://example.com/v1\r\nHost: 127.0.0.1",
+        "https://example.com/v1/models",
+        "https://example.com/v1/chat/completions",
+        "https://example.com:99999/v1",
+    ],
+)
+def test_malicious_or_ambiguous_endpoint_shapes_are_rejected(url):
+    with pytest.raises(
+        ValueError,
+        match=r"base_url|URL|port|query|path|host|user info|required",
+    ):
+        validate_endpoint_url(url)
+
+
+def test_endpoint_url_is_canonicalized_without_changing_api_path():
+    assert (
+        normalize_base_url("HTTPS://Example.COM.:443/custom/v1/")
+        == "https://example.com:443/custom/v1"
+    )
+
+
+def test_public_endpoint_validation_rejects_private_dns_resolution():
+    private_resolution = [
+        (2, 1, 6, "", ("127.0.0.1", 443)),
+    ]
+    with (
+        patch(
+            "chessbench.providers.openai_compatible.socket.getaddrinfo",
+            return_value=private_resolution,
+        ),
+        pytest.raises(ValueError, match="Private/local endpoints"),
+    ):
+        validate_endpoint_url(
+            "https://attacker.example/v1",
+            enforce_public_networks=True,
+        )
+
+
+def test_provider_revalidates_dns_before_each_request():
+    public_resolution = [(2, 1, 6, "", ("93.184.216.34", 443))]
+    private_resolution = [(2, 1, 6, "", ("169.254.169.254", 443))]
+    with (
+        patch(
+            "chessbench.providers.openai_compatible.socket.getaddrinfo",
+            side_effect=[public_resolution, private_resolution],
+        ),
+        patch("chessbench.providers.openai_compatible.AsyncOpenAI") as client,
+    ):
+        provider = OpenAICompatibleProvider(
+            base_url="https://attacker.example/v1",
+            enforce_public_networks=True,
+        )
+        with pytest.raises(ValueError, match="Private/local endpoints"):
+            provider._client("secret")
+
+    client.assert_not_called()
+
+
+def test_endpoint_host_allowlist_is_exact():
+    with pytest.raises(ValueError, match="ALLOWED_HOSTS"):
+        validate_endpoint_url(
+            "https://evil.example/v1",
+            allowed_hosts=["api.example"],
+        )
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Host": "internal.example"},
+        {"Content-Length": "0"},
+        {"X-Test\r\nInjected": "value"},
+        {"X-Test": "value\r\nInjected: yes"},
+    ],
+)
+def test_unsafe_custom_headers_are_rejected(headers):
+    with pytest.raises(ValueError, match="Unsafe custom HTTP header"):
+        OpenAICompatibleProvider(
+            base_url="https://example.com/v1",
+            default_headers=headers,
+        )
+
+
+def test_api_key_header_injection_is_rejected():
+    provider = OpenAICompatibleProvider(base_url="https://example.com/v1")
+
+    with pytest.raises(ValueError, match="API key contains invalid"):
+        provider._client("secret\r\nX-Injected: yes")
+
+
+def test_provider_and_move_html_escapes_untrusted_values():
+    banner = player_banner_html(
+        name='<img src=x onerror="alert(1)">',
+        spec="</div><script>alert(1)</script>",
+        color="white",
+    )
+    move = MagicMock(
+        is_illegal=True,
+        move='<svg onload="alert(1)">',
+        move_san=None,
+        captured_piece=None,
+    )
+    ticker = render_move_ticker_html([move])
+
+    assert "<script>" not in banner
+    assert "<img" not in banner
+    assert "<svg" not in ticker
+    assert "&lt;script&gt;" in banner
+    assert "&lt;svg" in ticker
+
+
 @pytest.mark.asyncio
 async def test_list_models_keeps_arbitrary_model_ids():
     provider = OpenAICompatibleProvider(
@@ -140,8 +267,13 @@ async def test_list_models_keeps_arbitrary_model_ids():
         default_query={"api-version": "2026-01-01"},
     )
 
-    with patch("chessbench.providers.openai_compatible.AsyncOpenAI") as client_class:
+    with (
+        patch("chessbench.providers.openai_compatible.AsyncOpenAI") as client_class,
+        patch("chessbench.providers.openai_compatible.httpx.AsyncClient") as http_client_class,
+    ):
         client = AsyncMock()
+        http_client = MagicMock()
+        http_client_class.return_value = http_client
         client.models.list = AsyncMock(
             return_value=MagicMock(
                 data=[
@@ -166,6 +298,11 @@ async def test_list_models_keeps_arbitrary_model_ids():
         default_headers={"X-Custom": "value"},
         default_query={"api-version": "2026-01-01"},
         max_retries=0,
+        http_client=http_client,
+    )
+    http_client_class.assert_called_once_with(
+        follow_redirects=False,
+        trust_env=False,
     )
 
 
@@ -447,10 +584,23 @@ def test_hosted_ui_blocks_private_endpoint_unless_explicitly_enabled(monkeypatch
     monkeypatch.delenv("CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS", raising=False)
 
     with pytest.raises(ValueError, match="Private/local endpoints"):
-        streamlit_app._validate_user_endpoint("http://127.0.0.1:8000/v1", "")
+        streamlit_app._validate_user_endpoint("https://127.0.0.1:8000/v1")
+    with pytest.raises(ValueError, match="requires HTTPS"):
+        streamlit_app._validate_user_endpoint("http://8.8.8.8/v1")
 
     monkeypatch.setenv("CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS", "true")
     assert (
-        streamlit_app._validate_user_endpoint("http://127.0.0.1:8000/v1/", "")
+        streamlit_app._validate_user_endpoint("http://127.0.0.1:8000/v1/")
         == "http://127.0.0.1:8000/v1"
     )
+
+
+def test_ui_endpoint_policy_is_public_by_default(monkeypatch):
+    from chessbench.ui import streamlit_app
+
+    monkeypatch.setattr(streamlit_app, "HOSTED_PROVIDERS", None)
+    monkeypatch.delenv("CHESSBENCH_PUBLIC_DEPLOYMENT", raising=False)
+    monkeypatch.delenv("CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS", raising=False)
+
+    with pytest.raises(ValueError, match="Private/local endpoints"):
+        streamlit_app._validate_user_endpoint("https://127.0.0.1:8000/v1")

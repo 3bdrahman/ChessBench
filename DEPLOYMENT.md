@@ -166,6 +166,17 @@ sudo systemctl enable --now chessbench
 | `TOGETHER_API_KEY` | Together AI | Access open-source model endpoints |
 | `FIREWORKS_API_KEY` | Fireworks AI | Access fast open-weights inference |
 | `DEEPINFRA_API_KEY` | DeepInfra | Access serverless open-source models |
+| `OPENAI_COMPATIBLE_BASE_URL` | Custom endpoint | Absolute API root, including `/v1` when required |
+| `OPENAI_COMPATIBLE_API_KEY` | Custom endpoint | Optional bearer token; may be blank for local servers |
+| `OPENAI_COMPATIBLE_MODELS` | Custom endpoint | Comma-separated fallback when `GET /models` is unavailable |
+| `OPENAI_COMPATIBLE_CONTEXT_WINDOW` | Custom endpoint | Context size used when model metadata omits it |
+| `OPENAI_COMPATIBLE_HEADERS` | Custom endpoint | Optional JSON object of additional request headers |
+| `OPENAI_COMPATIBLE_QUERY` | Custom endpoint | Optional JSON object of default query parameters |
+| `OPENAI_COMPATIBLE_EXTRA_BODY` | Custom endpoint | Optional JSON object merged into completion requests |
+| `OPENAI_COMPATIBLE_SUPPORTS_TOOLS` | Custom endpoint | Forward tools/tool choice when `true` (default: `false`) |
+| `OPENAI_COMPATIBLE_MAX_TOKENS_FIELD` | Custom endpoint | `max_tokens`, `max_completion_tokens`, or blank |
+| `OPENAI_COMPATIBLE_PROBE_TIMEOUT` | Custom endpoint | Timeout in seconds for live model discovery (default: `10`) |
+| `CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS` | Hosted custom endpoints | Allow loopback/private endpoint URLs when explicitly set to `true` |
 | `STOCKFISH_PATH` | Stockfish evaluation | Custom binary path (defaults to system `stockfish`) |
 | `CHESS_FIGHT_RUNS_ROOT` | Run storage | Root directory for benchmark run logs (default: `runs/`) |
 

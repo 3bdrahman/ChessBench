@@ -86,6 +86,18 @@ async def _run_behavioral_check(
         pairings = pairings[:2]
 
         # Create config for verification run
+        api_keys: dict[str, str] = {}
+        for player in players:
+            provider_name = player.split(":", 1)[0]
+            key = os.getenv(f"{provider_name.upper()}_API_KEY", "").strip()
+            provider_config = config.get("provider_configs", {}).get(
+                provider_name, {}
+            )
+            if not key and provider_config.get("adapter") == "openai_compatible":
+                key = os.getenv("OPENAI_COMPATIBLE_API_KEY", "").strip()
+            if key:
+                api_keys[provider_name] = key
+
         verify_config = BenchmarkConfig(
             time_control_seconds_per_move=config.get('time_control_seconds_per_move', constants.REPRODUCIBILITY_DEFAULTS["verification_time_control"]),
             opening_book="startpos",
@@ -99,7 +111,8 @@ async def _run_behavioral_check(
             game_timeout_seconds=constants.REPRODUCIBILITY_DEFAULTS["verification_game_timeout"],
             players=players,
             output_dir="runs",
-            api_keys=config.get('api_keys', {}),
+            api_keys=api_keys,
+            provider_configs=config.get("provider_configs", {}),
         )
 
         # Initialize runner components
@@ -244,7 +257,7 @@ async def verify_run_reproducibility(
     has_api_keys = any(
         os.getenv(f"{p.upper()}_API_KEY") for p in [
             "openai", "anthropic", "google", "groq", "openrouter",
-            "deepinfra", "fireworks", "together", "nim"
+            "deepinfra", "fireworks", "together", "nim", "openai_compatible"
         ]
     )
 

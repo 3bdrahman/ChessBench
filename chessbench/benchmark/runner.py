@@ -107,6 +107,9 @@ class BenchmarkConfig:
     # API keys (loaded from env or config)
     api_keys: dict[str, str] = field(default_factory=dict)
 
+    # Non-secret provider construction options (for example a custom base URL)
+    provider_configs: dict[str, dict[str, Any]] = field(default_factory=dict)
+
     # Custom prompts (optional, for A/B testing) - can be single string or dict[spec, str]
     system_prompt: str | dict[str, str] | None = None
     turn_prompt: str | dict[str, str] | None = None
@@ -119,8 +122,20 @@ class BenchmarkConfig:
     def turn_prompts(self) -> dict[str, str] | None:
         return self.turn_prompt
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, redact_secrets: bool = False) -> dict[str, Any]:
         d = asdict(self)
+        if redact_secrets:
+            d["api_keys"] = {
+                provider: "<redacted>"
+                for provider, value in self.api_keys.items()
+                if value
+            }
+            for provider_config in d.get("provider_configs", {}).values():
+                headers = provider_config.get("default_headers")
+                if isinstance(headers, dict):
+                    provider_config["default_headers"] = dict.fromkeys(headers, "<redacted>")
+                elif headers:
+                    provider_config["default_headers"] = "<redacted>"
         if d.get('system_prompt') is not None:
             d['system_prompts'] = d['system_prompt']
         if d.get('turn_prompt') is not None:
@@ -242,7 +257,8 @@ class BenchmarkRunner:
 
             api_key = (self.config.api_keys.get(provider_name) or '').strip()
 
-            provider = get_provider(provider_name)
+            provider_config = self.config.provider_configs.get(provider_name, {})
+            provider = get_provider(provider_name, **provider_config)
             if not provider:
                 raise SetupError(
                     f"Unknown provider '{provider_name}'. "
@@ -277,6 +293,7 @@ class BenchmarkRunner:
                 reasoning_level=self.config.reasoning_level,
                 system_prompt=self.config.system_prompt.get(player_spec, self.config.system_prompt) if isinstance(self.config.system_prompt, dict) else self.config.system_prompt,
                 turn_prompt=self.config.turn_prompt.get(player_spec, self.config.turn_prompt) if isinstance(self.config.turn_prompt, dict) else self.config.turn_prompt,
+                provider_config=self.config.provider_configs.get(provider_name, {}),
             )
             players[player_spec] = ai
 
@@ -320,6 +337,7 @@ class BenchmarkRunner:
             reasoning_level=self.config.reasoning_level,
             system_prompt=self.config.system_prompt.get(player_spec, self.config.system_prompt) if isinstance(self.config.system_prompt, dict) else self.config.system_prompt,
             turn_prompt=self.config.turn_prompt.get(player_spec, self.config.turn_prompt) if isinstance(self.config.turn_prompt, dict) else self.config.turn_prompt,
+            provider_config=self.config.provider_configs.get(provider_name, {}),
         )
 
     def request_continue_after_problem(self) -> None:
@@ -600,7 +618,7 @@ class BenchmarkRunner:
         _log.info("Openings: %s", len(self.openings))
         _log.info("Max parallel games: %s", self.config.max_parallel_games)
 
-        self.logger.start_run(self.config.to_dict())
+        self.logger.start_run(self.config.to_dict(redact_secrets=True))
 
         # Generate pairings
         pairings: list[tuple[str, str]] = []
@@ -891,8 +909,15 @@ async def main() -> None:
 
     # Load API keys from environment
     import os
-    for provider in list_providers():
+    providers = set(list_providers()) | set(config.provider_configs)
+    for provider in providers:
         key = (os.getenv(f"{provider.upper()}_API_KEY") or "").strip()
+        if (
+            not key
+            and config.provider_configs.get(provider, {}).get("adapter")
+            == "openai_compatible"
+        ):
+            key = (os.getenv("OPENAI_COMPATIBLE_API_KEY") or "").strip()
         if key:
             config.api_keys[provider] = key
 

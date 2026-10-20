@@ -20,6 +20,7 @@ _PROVIDER_MODULES = (
     "nim",
     "ollama",
     "openai",
+    "openai_compatible",
     "openrouter",
     "stockfish",
     "together",

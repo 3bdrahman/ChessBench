@@ -38,6 +38,7 @@ class ProviderChessAI(ChessAI):
             reasoning_level = params.pop("reasoning_level")
         system_prompt = params.pop("system_prompt", None)
         turn_prompt = params.pop("turn_prompt", None)
+        provider_config = params.pop("provider_config", None) or {}
         super().__init__(
             reasoning_level=reasoning_level,
             system_prompt=system_prompt,
@@ -48,7 +49,7 @@ class ProviderChessAI(ChessAI):
         self.api_key = api_key
         self.params = params  # temperature, max_tokens, etc.
 
-        provider = get_provider(provider_name)
+        provider = get_provider(provider_name, **provider_config)
         if not provider:
             raise ValueError(f"Unknown provider: {provider_name}")
         self.provider = provider

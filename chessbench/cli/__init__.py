@@ -25,11 +25,21 @@ from chessbench.providers import get_provider, list_providers  # noqa: E402
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _load_api_keys() -> dict[str, str]:
+def _load_api_keys(
+    provider_configs: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, str]:
     """Load API keys from environment variables."""
-    keys = {}
-    for provider in list_providers():
+    provider_configs = provider_configs or {}
+    keys: dict[str, str] = {}
+    providers = set(list_providers()) | set(provider_configs)
+    for provider in providers:
         key = os.getenv(f"{provider.upper()}_API_KEY")
+        if (
+            not key
+            and provider_configs.get(provider, {}).get("adapter")
+            == "openai_compatible"
+        ):
+            key = os.getenv("OPENAI_COMPATIBLE_API_KEY")
         if key:
             keys[provider] = key
     return keys
@@ -165,7 +175,9 @@ def run(
         benchmark_config.run_name = name
 
     # Load API keys from environment
-    benchmark_config.api_keys = _load_api_keys()
+    benchmark_config.api_keys.update(
+        _load_api_keys(benchmark_config.provider_configs)
+    )
 
     # Validate
     if not benchmark_config.players:

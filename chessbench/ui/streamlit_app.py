@@ -10,11 +10,18 @@ writes to ``runs/<run_id>/``.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import html
+import ipaddress
+import json
 import os
+import re
+import socket
 import threading
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import chess
 import chess.svg
@@ -246,14 +253,19 @@ def _safe_async_run(coro: Any) -> Any:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def _cached_list_models(provider_name: str, api_key: str) -> list:
+def _cached_list_models(
+    provider_name: str,
+    api_key: str,
+    provider_config_json: str = "{}",
+) -> list:
     """Cache successful model-list responses to accelerate Streamlit Cloud reruns.
 
     IMPORTANT: failures raise instead of returning [] — st.cache_data only
     caches successful returns, so a transient error (bad key, flaky network)
     must NOT be cached for the full 30-minute TTL.
     """
-    provider = get_provider(provider_name)
+    provider_config = json.loads(provider_config_json)
+    provider = get_provider(provider_name, **provider_config)
     if not provider:
         raise ProviderError(f"Unknown provider: {provider_name}", provider=provider_name)
     return _safe_async_run(provider.list_models(api_key))
@@ -277,22 +289,34 @@ def _on_provider_key_changed(provider_name: str) -> None:
     _invalidate_model_cache()
 
 
-async def fetch_models_for_provider(provider_name: str, api_key: str) -> list:
+async def fetch_models_for_provider(
+    provider_name: str,
+    api_key: str,
+    provider_config: dict[str, Any] | None = None,
+    *,
+    force_live: bool = False,
+) -> list:
     """Fetch available models for a provider with caching.
 
     Uses the cached list when available; on a cache miss or cached failure,
     falls back to a live, uncached fetch so transient errors never poison
     the cache and the freshest data is always retrievable.
     """
-    provider = get_provider(provider_name)
+    provider_config = provider_config or {}
+    provider = get_provider(provider_name, **provider_config)
     if not provider:
         return []
-    try:
-        models = _cached_list_models(provider_name, api_key)
-        if models:
-            return models
-    except Exception:
-        pass  # Fall through to a live fetch — errors are not cached.
+    if not force_live:
+        try:
+            models = _cached_list_models(
+                provider_name,
+                api_key,
+                json.dumps(provider_config, sort_keys=True),
+            )
+            if models:
+                return models
+        except Exception:
+            pass  # Fall through to a live fetch — errors are not cached.
     try:
         return await provider.list_models(api_key)
     except ProviderError as exc:
@@ -326,12 +350,124 @@ def _get_secret_or_env(provider_name: str) -> str | None:
         return env_key
     try:
         if hasattr(st, "secrets"):
-            return st.secrets.get(f"{provider_name.lower()}_api_key") or st.secrets.get(
+            value = st.secrets.get(
+                f"{provider_name.lower()}_api_key"
+            ) or st.secrets.get(
                 f"{provider_name.upper()}_API_KEY"
             )
+            return str(value) if value else None
     except Exception:
         pass
     return None
+
+
+def _get_runtime_setting(name: str) -> str | None:
+    """Read a trusted server-side endpoint setting from env or secrets."""
+    value = os.getenv(name)
+    if value and value.strip():
+        return value.strip()
+    try:
+        if hasattr(st, "secrets"):
+            secret = st.secrets.get(name.lower()) or st.secrets.get(name)
+            if secret is not None and str(secret).strip():
+                return str(secret).strip()
+    except Exception:
+        pass
+    return None
+
+
+def _openai_compatible_config() -> dict[str, Any]:
+    """Build non-secret configuration for the generic compatible provider."""
+    base_url = _get_runtime_setting("OPENAI_COMPATIBLE_BASE_URL")
+    if not base_url:
+        return {}
+
+    config: dict[str, Any] = {"base_url": base_url}
+    models = _get_runtime_setting("OPENAI_COMPATIBLE_MODELS")
+    if models:
+        config["models"] = models
+    context_window = _get_runtime_setting("OPENAI_COMPATIBLE_CONTEXT_WINDOW")
+    if context_window:
+        config["context_window"] = int(context_window)
+    for setting, option in (
+        ("OPENAI_COMPATIBLE_SUPPORTS_TOOLS", "supports_tools"),
+        ("OPENAI_COMPATIBLE_SEND_TEMPERATURE", "send_temperature"),
+        ("OPENAI_COMPATIBLE_MAX_TOKENS_FIELD", "max_tokens_field"),
+    ):
+        value = _get_runtime_setting(setting)
+        if value is not None:
+            config[option] = value
+    return config
+
+
+def _custom_provider_id(label: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", label.strip().lower()).strip("_")
+    if not slug:
+        raise ValueError("Provider name must contain a letter or number")
+    return f"custom_{slug}"
+
+
+def _validate_user_endpoint(base_url: str, api_key: str) -> str:
+    """Validate a session-added endpoint before the server connects to it."""
+    normalized = base_url.strip().rstrip("/")
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(
+            "Base URL must be an absolute http(s) URL including the API prefix"
+        )
+
+    hosted = bool(HOSTED_PROVIDERS)
+    allow_private = os.getenv("CHESSBENCH_ALLOW_PRIVATE_ENDPOINTS", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if hosted and api_key and parsed.scheme != "https":
+        raise ValueError("Hosted deployments require HTTPS when an API key is used")
+    if hosted and not allow_private:
+        hostname = parsed.hostname.lower()
+        if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
+            raise ValueError("Private/local endpoints are disabled on hosted deployments")
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            raise ValueError(
+                "Private/local endpoints are disabled on hosted deployments"
+            )
+        if address is None:
+            try:
+                resolved = {
+                    item[4][0]
+                    for item in socket.getaddrinfo(
+                        hostname,
+                        parsed.port or (443 if parsed.scheme == "https" else 80),
+                        type=socket.SOCK_STREAM,
+                    )
+                }
+            except socket.gaierror as exc:
+                raise ValueError(f"Could not resolve endpoint host: {hostname}") from exc
+            if any(not ipaddress.ip_address(item).is_global for item in resolved):
+                raise ValueError(
+                    "Private/local endpoints are disabled on hosted deployments"
+                )
+    return normalized
+
+
+def _custom_provider_entries() -> list[dict[str, Any]]:
+    providers = st.session_state.setdefault("custom_openai_providers", {})
+    return [dict(value) for value in providers.values()]
+
+
+def _clear_player_model_probe(slot: int) -> None:
+    for key in (
+        f"_player_provider_fingerprint_{slot}",
+        f"_player_models_{slot}",
+        f"player_model_{slot}",
+    ):
+        st.session_state.pop(key, None)
 
 
 def _test_model_async(model_info: dict):
@@ -342,7 +478,10 @@ def _test_model_async(model_info: dict):
     model_id = model_info.get("model_id", "")
     api_key = model_info.get("api_key", "")
 
-    provider = get_provider(provider_name)
+    provider = get_provider(
+        provider_name,
+        **model_info.get("provider_config", {}),
+    )
     if not provider:
         st.sidebar.error(f"Provider {provider_name} not available.")
         return
@@ -383,14 +522,32 @@ def render_sidebar_header_and_nav():
 
 
 def render_provider_keys_section():
-    """Render provider status badges in sidebar based on Streamlit Secrets / Env Vars."""
+    """Render configured providers plus session-added compatible endpoints."""
     providers = list_providers()
-    available_providers = []
-    status_list = []
+    available_providers: list[dict[str, Any]] = []
+    status_list: list[tuple[str, bool, str]] = []
 
     for provider_name in providers:
         if HOSTED_PROVIDERS and provider_name not in HOSTED_PROVIDERS:
             continue
+
+        if provider_name == "openai_compatible":
+            provider_config = _openai_compatible_config()
+            if provider_config:
+                api_key = st.session_state.get(
+                    "user_key_openai_compatible"
+                ) or _get_secret_or_env(provider_name) or ""
+                available_providers.append(
+                    {
+                        "id": provider_name,
+                        "label": "Configured endpoint",
+                        "api_key": api_key,
+                        "provider_config": provider_config,
+                    }
+                )
+                status_list.append(("Configured endpoint", True, "OpenAI compatible"))
+            continue
+
         provider = get_provider(provider_name)
         if provider is None:
             continue
@@ -398,7 +555,14 @@ def render_provider_keys_section():
         if not provider.requires_api_key:
             reachable, _ = _probe_local_provider(provider_name)
             if reachable:
-                available_providers.append((provider_name, ""))
+                available_providers.append(
+                    {
+                        "id": provider_name,
+                        "label": provider_name.replace("_", " ").title(),
+                        "api_key": "",
+                        "provider_config": {},
+                    }
+                )
                 status_list.append((provider_name, True, "local active"))
             else:
                 status_list.append((provider_name, False, "local offline"))
@@ -409,26 +573,123 @@ def render_provider_keys_section():
         ) or _get_secret_or_env(provider_name)
         env_var_name = f"{provider_name.upper()}_API_KEY"
         if secret_key and provider.validate_key(secret_key):
-            available_providers.append((provider_name, secret_key))
+            available_providers.append(
+                {
+                    "id": provider_name,
+                    "label": provider_name.replace("_", " ").title(),
+                    "api_key": secret_key,
+                    "provider_config": {},
+                }
+            )
             status_list.append((provider_name, True, "Active"))
         else:
             status_list.append((provider_name, False, f"Needs {env_var_name}"))
+
+    for custom_provider in _custom_provider_entries():
+        available_providers.append(custom_provider)
+        status_list.append(
+            (custom_provider["label"], True, "session endpoint")
+        )
 
     active_count = len(available_providers)
     total_count = len(status_list)
 
     expander_title = f"🔑 Provider Keys ({active_count}/{total_count} Active)"
-    with st.sidebar.expander(expander_title, expanded=False):
+    with st.sidebar.expander(expander_title, expanded=not available_providers):
+        st.markdown("**Add OpenAI-compatible provider**")
+        st.caption(
+            "Add a provider for this browser session. The endpoint is probed "
+            "only after you select it for a player."
+        )
+        with st.form("add_openai_compatible_provider", clear_on_submit=False):
+            custom_label = st.text_input(
+                "Provider name",
+                placeholder="Local vLLM",
+            )
+            custom_base_url = st.text_input(
+                "Base URL",
+                placeholder="http://localhost:8000/v1",
+            )
+            custom_api_key = st.text_input(
+                "API key (optional)",
+                type="password",
+                placeholder="Leave blank for unauthenticated endpoints",
+            )
+            custom_models = st.text_input(
+                "Fallback models (optional)",
+                placeholder="model-a,model-b",
+                help="Used only when the endpoint does not implement GET /models.",
+            )
+            custom_tools = st.checkbox("Endpoint supports tool calling", value=False)
+            custom_temperature = st.checkbox("Send temperature", value=True)
+            custom_token_field = st.selectbox(
+                "Token limit field",
+                options=["max_tokens", "max_completion_tokens", ""],
+                format_func=lambda value: value or "Do not send a token limit",
+            )
+            add_provider = st.form_submit_button(
+                "Add provider",
+                type="primary",
+                width="stretch",
+            )
+
+        if add_provider:
+            try:
+                provider_id = _custom_provider_id(custom_label)
+                base_url = _validate_user_endpoint(custom_base_url, custom_api_key)
+                custom_provider_config: dict[str, Any] = {
+                    "adapter": "openai_compatible",
+                    "base_url": base_url,
+                    "supports_tools": custom_tools,
+                    "send_temperature": custom_temperature,
+                    "max_tokens_field": custom_token_field,
+                    "probe_timeout": 5.0,
+                }
+                if custom_models.strip():
+                    custom_provider_config["models"] = custom_models.strip()
+                if get_provider(provider_id, **custom_provider_config) is None:
+                    raise ValueError("OpenAI-compatible adapter is unavailable")
+                st.session_state.setdefault("custom_openai_providers", {})[
+                    provider_id
+                ] = {
+                    "id": provider_id,
+                    "label": custom_label.strip(),
+                    "api_key": custom_api_key.strip(),
+                    "provider_config": custom_provider_config,
+                }
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+
+        custom_providers = st.session_state.get("custom_openai_providers", {})
+        if custom_providers:
+            st.markdown("**Session providers**")
+            for provider_id, provider_entry in list(custom_providers.items()):
+                label_col, remove_col = st.columns([4, 1])
+                label_col.caption(
+                    f"{provider_entry['label']} · "
+                    f"{provider_entry['provider_config']['base_url']}"
+                )
+                if remove_col.button(
+                    "✕",
+                    key=f"remove_provider_{provider_id}",
+                    help=f"Remove {provider_entry['label']}",
+                ):
+                    del custom_providers[provider_id]
+                    st.rerun()
+
         st.caption(
             "API keys are loaded automatically from Streamlit Secrets or Environment Variables."
         )
 
         grid_html = '<div class="sb-provider-grid">'
         for pname, is_active, label in status_list:
+            safe_name = html.escape(pname.replace("_", " ").title())
+            safe_label = html.escape(label)
             if is_active:
-                grid_html += f'<div class="sb-provider-badge-active"><span>✓ {pname.capitalize()}</span><span style="font-size:0.64rem; opacity:0.85;">{label}</span></div>'
+                grid_html += f'<div class="sb-provider-badge-active"><span>✓ {safe_name}</span><span style="font-size:0.64rem; opacity:0.85;">{safe_label}</span></div>'
             else:
-                grid_html += f'<div class="sb-provider-badge-inactive"><span>🔒 {pname.capitalize()}</span><span style="font-size:0.64rem; opacity:0.65;">{label}</span></div>'
+                grid_html += f'<div class="sb-provider-badge-inactive"><span>🔒 {safe_name}</span><span style="font-size:0.64rem; opacity:0.65;">{safe_label}</span></div>'
         grid_html += "</div>"
         st.markdown(grid_html, unsafe_allow_html=True)
 
@@ -452,6 +713,20 @@ def render_provider_keys_section():
                     args=(pname,),
                 )
 
+        if _openai_compatible_config():
+            st.caption(
+                "The OpenAI-compatible endpoint is configured server-side. "
+                "Its API key is optional for local servers."
+            )
+            st.text_input(
+                "OPENAI_COMPATIBLE_API_KEY (optional)",
+                type="password",
+                key="user_key_openai_compatible",
+                placeholder="Leave blank for unauthenticated local endpoints",
+                on_change=_on_provider_key_changed,
+                args=("openai_compatible",),
+            )
+
         with st.popover("📋 Streamlit Secrets Template"):
             st.markdown(
                 "Copy the template below into **App Settings → Secrets** on Streamlit Cloud, "
@@ -467,166 +742,198 @@ def render_provider_keys_section():
                 'OPENROUTER_API_KEY = "your_openrouter_key_here"\n'
                 'TOGETHER_API_KEY = "your_together_key_here"\n'
                 'FIREWORKS_API_KEY = "your_fireworks_key_here"\n'
-                'DEEPINFRA_API_KEY = "your_deepinfra_key_here"\n',
+                'DEEPINFRA_API_KEY = "your_deepinfra_key_here"\n'
+                'OPENAI_COMPATIBLE_BASE_URL = "http://localhost:8000/v1"\n'
+                'OPENAI_COMPATIBLE_API_KEY = "optional_endpoint_key"\n'
+                'OPENAI_COMPATIBLE_MODELS = "model-a,model-b"\n',
                 language="toml",
             )
 
     return available_providers
 
 
-def render_model_selectors(available_providers: list):
-    """Render model selection for White and Black players."""
+def _provider_fingerprint(provider_entry: dict[str, Any]) -> str:
+    payload = {
+        "id": provider_entry["id"],
+        "api_key": provider_entry.get("api_key", ""),
+        "provider_config": provider_entry.get("provider_config", {}),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode()
+    ).hexdigest()
+
+
+def _selected_provider_models(
+    slot: int,
+    provider_entry: dict[str, Any],
+) -> list:
+    fingerprint = _provider_fingerprint(provider_entry)
+    fingerprint_key = f"_player_provider_fingerprint_{slot}"
+    models_key = f"_player_models_{slot}"
+    if st.session_state.get(fingerprint_key) != fingerprint:
+        with st.spinner(f"Probing {provider_entry['label']} models..."):
+            models = asyncio.run(
+                fetch_models_for_provider(
+                    provider_entry["id"],
+                    provider_entry.get("api_key", ""),
+                    provider_entry.get("provider_config", {}),
+                    force_live=True,
+                )
+            )
+        st.session_state[fingerprint_key] = fingerprint
+        st.session_state[models_key] = models
+    models = st.session_state.get(models_key, [])
+    return models if isinstance(models, list) else []
+
+
+def _render_player_selector(
+    slot: int,
+    available_providers: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    provider_by_id = {entry["id"]: entry for entry in available_providers}
+    provider_options = list(provider_by_id)
+    provider_key = f"player_provider_{slot}"
+    if st.session_state.get(provider_key) not in provider_options:
+        st.session_state[provider_key] = provider_options[min(slot - 1, len(provider_options) - 1)]
+
+    provider_id = st.sidebar.selectbox(
+        f"Player {slot} provider",
+        options=provider_options,
+        key=provider_key,
+        format_func=lambda value: provider_by_id[value]["label"],
+        on_change=_clear_player_model_probe,
+        args=(slot,),
+    )
+    provider_entry = provider_by_id[provider_id]
+    models = _selected_provider_models(slot, provider_entry)
+    chess_models = [model for model in models if is_chess_capable(model)]
+    filtered_count = len(models) - len(chess_models)
+    if filtered_count:
+        st.sidebar.caption(f"ⓘ {filtered_count} non-chat model(s) hidden")
+    if not chess_models:
+        st.sidebar.warning(
+            f"No usable models returned by {provider_entry['label']}. "
+            "Check the endpoint or add fallback model IDs."
+        )
+        return None
+
+    model_by_id = {model.id: model for model in chess_models}
+    model_options = list(model_by_id)
+    model_key = f"player_model_{slot}"
+    if st.session_state.get(model_key) not in model_options:
+        st.session_state.pop(model_key, None)
+
+    model_col, test_col = st.sidebar.columns([4, 1])
+    model_id = model_col.selectbox(
+        f"Player {slot} model",
+        options=model_options,
+        key=model_key,
+        format_func=lambda value: model_by_id[value].name,
+    )
+    model = model_by_id[model_id]
+    config = {
+        "provider": provider_id,
+        "provider_label": provider_entry["label"],
+        "model_id": model.id,
+        "api_key": provider_entry.get("api_key", ""),
+        "context_window": model.context_window,
+        "provider_config": provider_entry.get("provider_config", {}),
+    }
+    if test_col.button(
+        "🔬",
+        key=f"test_model_{slot}",
+        help="Test model latency & connectivity",
+    ):
+        _test_model_async(config)
+
+    context_label = (
+        f"{model.context_window // 1024}k ctx"
+        if model.context_window
+        else "standard"
+    )
+    safe_provider = html.escape(provider_entry["label"])
+    st.sidebar.markdown(
+        f'<div class="sb-model-meta"><span class="sb-tag">{safe_provider}</span>'
+        f'<span class="sb-tag">{context_label}</span></div>',
+        unsafe_allow_html=True,
+    )
+    return config
+
+
+def render_model_selectors(available_providers: list[dict[str, Any]]):
+    """Select a provider first, then probe and select one of its models."""
     col_header, col_refresh = st.sidebar.columns([5, 1])
     col_header.markdown(
         '<div style="font-weight:650; font-size:0.95rem; margin-bottom:8px; color:var(--arena-text);">⚔️ Player Matchup</div>',
         unsafe_allow_html=True,
     )
     if col_refresh.button(
-        "↻", key="btn_refresh_models", help="Refetch model lists from all providers"
+        "↻",
+        key="btn_refresh_models",
+        help="Probe the selected providers again",
     ):
         _invalidate_model_cache()
+        _clear_player_model_probe(1)
+        _clear_player_model_probe(2)
         st.rerun()
 
-    all_models: dict[str, dict] = {}
-    filtered_count = 0
-
-    for provider_name, api_key in available_providers:
-        with st.spinner(f"Fetching models from {provider_name}..."):
-            models = asyncio.run(fetch_models_for_provider(provider_name, api_key))
-
-        for model in models:
-            if not is_chess_capable(model):
-                filtered_count += 1
-                continue
-            display_name = f"[{provider_name}] {model.name}"
-            all_models[display_name] = {
-                "provider": provider_name,
-                "model_id": model.id,
-                "api_key": api_key,
-                "context_window": model.context_window,
-            }
-
-    if filtered_count:
-        st.sidebar.caption(f"ⓘ {filtered_count} non-chat model(s) hidden")
-
-    if not all_models:
-        st.sidebar.warning("Couldn't fetch models")
-        return None, None
-
-    if len(all_models) < 2:
-        st.sidebar.warning(
-            "At least 2 distinct chess-capable models are required to start a match. Please configure another provider in Streamlit Secrets."
+    if not available_providers:
+        st.sidebar.info(
+            "No providers configured. Add an OpenAI-compatible provider above "
+            "or configure a built-in provider key."
         )
         return None, None
 
-    model_options = list(all_models.keys())
-
-    # Only touch selection state here and in on_change callbacks — mutating a
-    # selectbox's key mid-render (or passing index=) resets the user's choice.
-    if st.session_state.get("player_model_1") not in model_options:
-        st.session_state["player_model_1"] = model_options[0]
-
-    if st.session_state.get("player_model_2") not in model_options:
-        st.session_state["player_model_2"] = model_options[1 % len(model_options)]
-
-    def _first_alternative(exclude: str) -> str:
-        return next(m for m in model_options if m != exclude)
-
-    if st.session_state["player_model_2"] == st.session_state["player_model_1"]:
-        st.session_state["player_model_2"] = _first_alternative(st.session_state["player_model_1"])
-
-    def _on_model_1_changed() -> None:
-        p1 = st.session_state["player_model_1"]
-        if st.session_state.get("player_model_2") == p1:
-            st.session_state["player_model_2"] = _first_alternative(p1)
-
-    def _on_model_2_changed() -> None:
-        p2 = st.session_state["player_model_2"]
-        if st.session_state.get("player_model_1") == p2:
-            st.session_state["player_model_1"] = _first_alternative(p2)
-
-    # Player 1 Card
     st.sidebar.markdown(
         '<div class="sb-player-card sb-player-card-white">'
         '  <div class="sb-player-header"><span>Player 1</span><span class="sb-player-badge-white">P1</span></div>',
         unsafe_allow_html=True,
     )
-    col_m1, col_t1 = st.sidebar.columns([4, 1])
-    model_1 = col_m1.selectbox(
-        "Select First Model",
-        options=[m for m in model_options if m != st.session_state["player_model_2"]],
-        key="player_model_1",
-        on_change=_on_model_1_changed,
-        label_visibility="collapsed",
-    )
-    if col_t1.button(
-        "🔬", key="test_model_1", help="Test model latency & connectivity"
-    ):
-        _test_model_async(all_models[model_1])
+    model_1 = _render_player_selector(1, available_providers)
+    st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
-    m1_info = all_models[model_1]
-    ctx1 = (
-        f"{m1_info['context_window']//1024}k ctx"
-        if m1_info.get("context_window")
-        else "standard"
-    )
-    st.sidebar.markdown(
-        f'<div class="sb-model-meta"><span class="sb-tag">{m1_info["provider"]}</span><span class="sb-tag">{ctx1}</span></div>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    def _swap_player_selections() -> None:
+        for suffix in (
+            "provider",
+            "model",
+            "_provider_fingerprint",
+            "_models",
+        ):
+            if suffix.startswith("_"):
+                key_1 = f"_player{suffix}_1"
+                key_2 = f"_player{suffix}_2"
+            else:
+                key_1 = f"player_{suffix}_1"
+                key_2 = f"player_{suffix}_2"
+            value_1 = st.session_state.get(key_1)
+            value_2 = st.session_state.get(key_2)
+            if value_2 is None:
+                st.session_state.pop(key_1, None)
+            else:
+                st.session_state[key_1] = value_2
+            if value_1 is None:
+                st.session_state.pop(key_2, None)
+            else:
+                st.session_state[key_2] = value_1
 
-    def _swap_player_models():
-        p1 = st.session_state.get("player_model_1")
-        p2 = st.session_state.get("player_model_2")
-        if p1 and p2:
-            st.session_state["player_model_1"] = p2
-            st.session_state["player_model_2"] = p1
-
-    # Swap Button
     _, col_swap, _ = st.sidebar.columns([1, 3, 1])
     col_swap.button(
         "⇄ Swap White & Black",
         key="btn_swap_players",
         help="Swap White and Black model assignments",
         width="stretch",
-        on_click=_swap_player_models,
+        on_click=_swap_player_selections,
     )
 
-    # Player 2 Card
     st.sidebar.markdown(
         '<div class="sb-player-card sb-player-card-black">'
         '  <div class="sb-player-header"><span>Player 2</span><span class="sb-player-badge-black">P2</span></div>',
         unsafe_allow_html=True,
     )
-    col_m2, col_t2 = st.sidebar.columns([4, 1])
-    model_2 = col_m2.selectbox(
-        "Select Second Model",
-        options=[m for m in model_options if m != st.session_state["player_model_1"]],
-        key="player_model_2",
-        on_change=_on_model_2_changed,
-        label_visibility="collapsed",
-    )
-    if col_t2.button(
-        "🔬", key="test_model_2", help="Test model latency & connectivity"
-    ):
-        _test_model_async(all_models[model_2])
+    model_2 = _render_player_selector(2, available_providers)
+    st.sidebar.markdown("</div>", unsafe_allow_html=True)
 
-    m2_info = all_models[model_2]
-    ctx2 = (
-        f"{m2_info['context_window']//1024}k ctx"
-        if m2_info.get("context_window")
-        else "standard"
-    )
-    st.sidebar.markdown(
-        f'<div class="sb-model-meta"><span class="sb-tag">{m2_info["provider"]}</span><span class="sb-tag">{ctx2}</span></div>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    if model_1 and model_2 and model_1 != model_2:
-        return all_models[model_1], all_models[model_2]
-    return None, None
+    return model_1, model_2
 
 
 def render_prompt_management(model_1_config, model_2_config):
@@ -645,6 +952,7 @@ def create_provider_ai(white_config: dict, black_config: dict):
         provider_name=white_config["provider"],
         model_id=white_config["model_id"],
         api_key=white_config["api_key"],
+        provider_config=white_config.get("provider_config", {}),
         **params,
     )
     black_params: dict = dict(params)
@@ -652,6 +960,7 @@ def create_provider_ai(white_config: dict, black_config: dict):
         provider_name=black_config["provider"],
         model_id=black_config["model_id"],
         api_key=black_config["api_key"],
+        provider_config=black_config.get("provider_config", {}),
         **black_params,
     )
     return white_ai, black_ai
@@ -1101,12 +1410,18 @@ def run_in_process_benchmark(
     black_spec = f"{black_config['provider']}:{black_config['model_id']}"
 
     api_keys: dict[str, str] = {}
+    provider_configs: dict[str, dict[str, Any]] = {}
     for provider_name, key in (
         (white_config["provider"], white_config["api_key"]),
         (black_config["provider"], black_config["api_key"]),
     ):
         if key:
             api_keys[provider_name] = key
+
+    for model_config in (white_config, black_config):
+        provider_config = model_config.get("provider_config", {})
+        if provider_config:
+            provider_configs[model_config["provider"]] = provider_config
 
     config = BenchmarkConfig(
         players=[white_spec, black_spec],
@@ -1117,6 +1432,7 @@ def run_in_process_benchmark(
         max_tokens=None,
         reasoning_level=reasoning_level,
         api_keys=api_keys,
+        provider_configs=provider_configs,
         colors=colors,
         system_prompt=system_prompts or {},
         turn_prompt=turn_prompts or {},
@@ -1662,8 +1978,12 @@ def main():
 
     # Match Preview Summary Box
     if model_1_config and model_2_config:
-        m1_name = model_1_config["model_id"].split("/")[-1]
-        m2_name = model_2_config["model_id"].split("/")[-1]
+        m1_name = html.escape(
+            model_1_config["model_id"].split("/")[-1], quote=True
+        )
+        m2_name = html.escape(
+            model_2_config["model_id"].split("/")[-1], quote=True
+        )
         st.sidebar.markdown(
             '<div class="sb-match-summary">'
             '  <div class="sb-match-vs">'

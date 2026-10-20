@@ -3,6 +3,7 @@
 
 import importlib
 import logging
+from typing import Any
 
 from chessbench.common.common_types import ModelProvider
 
@@ -21,6 +22,7 @@ LAZY_PROVIDER_MODULES: tuple[str, ...] = (
     "nim",
     "ollama",
     "openai",
+    "openai_compatible",
     "openrouter",
     "stockfish",
     "together",
@@ -54,12 +56,16 @@ def register_provider(cls: type[ModelProvider]) -> type[ModelProvider]:
     return cls
 
 
-def get_provider(name: str) -> ModelProvider | None:
+def get_provider(name: str, **config: Any) -> ModelProvider | None:
     """Get a provider instance by name."""
     ensure_providers_registered()
-    provider_cls = PROVIDER_REGISTRY.get(name)
+    adapter = str(config.pop("adapter", name))
+    provider_cls = PROVIDER_REGISTRY.get(adapter)
     if provider_cls:
-        return provider_cls()
+        provider = provider_cls(**config)
+        if adapter != name:
+            provider.name = name
+        return provider
     return None
 
 

@@ -26,7 +26,8 @@ move_timeout_seconds: 120
 game_timeout_seconds: 7200
 
 # Players: list of "provider:model_id"
-# Available providers: openai, anthropic, google, nim, openrouter, deepinfra, fireworks, together, groq
+# Available providers: openai, openai_compatible, anthropic, google, nim,
+# openrouter, deepinfra, fireworks, together, groq, ollama, stockfish
 # Use `python -m benchmark.runner --players openai:gpt-4o anthropic:claude-3-5-sonnet` to override
 players:
   - "openai:gpt-4o"
@@ -38,6 +39,14 @@ players:
 # OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, NIM_API_KEY, OPENROUTER_API_KEY
 # Or set here (not recommended for shared configs)
 api_keys: {}
+
+# Non-secret provider options. Environment variables are also supported.
+# provider_configs:
+#   openai_compatible:
+#     base_url: "http://localhost:8000/v1"
+#     models: ["model-a", "model-b"]  # Fallback if GET /models is unavailable
+#     supports_tools: false
+provider_configs: {}
 
 # Output
 output_dir: "runs"

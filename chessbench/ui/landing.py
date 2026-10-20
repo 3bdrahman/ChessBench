@@ -1,6 +1,6 @@
 """Landing page hero for the Streamlit app.
 
-Renders the immersive hero from DESIGN.md § 3 (Landing):
+Renders the immersive landing experience:
 1. Centered animated chess board with 3D parallax tilt
 2. Display title + subtitle value proposition
 3. Provider/feature chip row

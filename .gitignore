@@ -50,5 +50,9 @@ streamlit_*.png
 *.agent.log
 *.run.json
 .agent/
+.agents/
+.aws/
 .claude/
+.codex/
 .cursor/
+.omx/

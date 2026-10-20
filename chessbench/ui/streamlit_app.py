@@ -687,7 +687,7 @@ def render_live_game_screen(
 ) -> None:
     """Render the arena-style live game screen.
 
-    Layout (DESIGN.md § 3):
+    Layout:
     - Top: progress bar
     - Left column (board): eval bar left, board centered 560px desktop / 100% mobile, move ticker above
     - Right column (panels): player banners stacked, metrics 2x3, last completion drawer, thinking trace drawer
@@ -810,7 +810,7 @@ def render_live_game_screen(
 
             render_board_with_evalbar(
                 state.board,
-                size=560,  # Fixed desktop width per DESIGN.md
+                size=560,  # Fixed desktop width for the arena layout
                 lastmove=last_mv,
                 check_square=check_sq,
                 cp_score=cp,

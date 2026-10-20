@@ -1,9 +1,9 @@
 """Arena theme injection for the Streamlit app.
 
-Injects the design tokens from DESIGN.md as CSS custom properties and applies
-them to the Streamlit surface (background, sidebar, cards, typography, focus
-ring). The tokens stay scoped to the app container so we never fight
-Streamlit's own theme in surprising ways.
+Defines the arena design tokens as CSS custom properties and applies them to
+the Streamlit surface (background, sidebar, cards, typography, focus ring).
+The tokens stay scoped to the app container so we never fight Streamlit's own
+theme in surprising ways.
 
 All visual identities route through here — every other UI module consumes
 the same tokens, so changing a value here re-skins the entire app.

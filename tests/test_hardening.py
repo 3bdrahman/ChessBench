@@ -6,6 +6,8 @@ hangs, silent failures, injection, and dead registration paths.
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -20,6 +22,33 @@ from chessbench.common.exceptions import ProviderAPIError
 from chessbench.game.async_game import AsyncChessGame
 from chessbench.move_parser import parse_move
 from chessbench.providers.chess_ai import ProviderChessAI
+
+# ---------------------------------------------------------------------------
+# Package hygiene: imports must not emit debug output or rewrite sys.path
+# ---------------------------------------------------------------------------
+
+
+class TestPackageImportHygiene:
+    def test_ui_package_import_is_silent_and_side_effect_free(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        script = """
+import json
+import sys
+
+before = list(sys.path)
+import chessbench.ui  # noqa: F401
+print(json.dumps({"path_unchanged": sys.path == before}))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert json.loads(result.stdout) == {"path_unchanged": True}
+        assert result.stderr == ""
 
 # ---------------------------------------------------------------------------
 # Move parser: castling and thinking-tag robustness

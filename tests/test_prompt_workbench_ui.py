@@ -1,5 +1,3 @@
-import os
-import shutil
 from pathlib import Path
 
 from chessbench.ui.prompt_workbench import can_launch_match, compute_budget_state, is_ab_eligible
@@ -24,15 +22,8 @@ class MockValidationResult:
 
 
 def test_strategy_store_roundtrip(tmp_path, monkeypatch):
-    # Mock the home directory to tmp_path
-    monkeypatch.setenv('HOME', str(tmp_path))
-    print(f"HOME set to: {os.environ.get('HOME')}")
+    monkeypatch.setenv("HOME", str(tmp_path))
     strategy_dir = Path.home() / ".chessbench" / "strategies"
-    print(f"strategy_dir: {strategy_dir}")
-    # Ensure clean state
-    if strategy_dir.exists():
-        shutil.rmtree(strategy_dir)
-    # Save a strategy
     name = "test_strategy"
     system_prompt = "You are a helpful assistant."
     turn_prompt = "What is the best move?"
@@ -42,71 +33,45 @@ def test_strategy_store_roundtrip(tmp_path, monkeypatch):
     assert saved_path.exists()
     assert saved_path.name == f"{name}.yaml"
 
-    # List strategies
     strategies = list_strategies()
     assert len(strategies) == 1
     meta = strategies[0]
     assert meta.name == name
     assert meta.description == description
-    # Note: created_at will be set, we can check it's a string
-
-    # Load the strategy
     loaded_sys, loaded_turn = load_strategy(name)
     assert loaded_sys == system_prompt
     assert loaded_turn == turn_prompt
 
-    # Export YAML
     yaml_text = export_yaml(name)
     assert system_prompt in yaml_text
     assert turn_prompt in yaml_text
     assert description in yaml_text
 
-    # Import YAML (should overwrite if we allow, but we'll test with a new name)
     new_name = "imported_strategy"
     import_yaml(yaml_text, new_name)
     loaded_sys_new, loaded_turn_new = load_strategy(new_name)
     assert loaded_sys_new == system_prompt
     assert loaded_turn_new == turn_prompt
 
-    # Delete the original strategy
     delete_strategy(name)
     strategies_after = list_strategies()
     assert len(strategies_after) == 1
     assert strategies_after[0].name == new_name
 
-    # Clean up the imported one
     delete_strategy(new_name)
-    # Finally, clean up the entire directory to ensure isolation
-    if strategy_dir.exists():
-        shutil.rmtree(strategy_dir)
+    assert list(strategy_dir.glob("*.yaml")) == []
 
 
 def test_strategy_store_sanitize_filename(tmp_path, monkeypatch):
-    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
     strategy_dir = Path.home() / ".chessbench" / "strategies"
-    # Test unsafe characters
     unsafe_name = "invalid/name\\:*?\"<>|"
-    # The store should sanitize or reject? We'll see what the implementation does.
-    # We expect it to either reject or rename to a safe name.
-    # For now, we'll just test that it doesn't break and produces a safe filename.
-    print(f"Before save, strategy_dir: {strategy_dir}, exists: {strategy_dir.exists()}")
-    try:
-        path = save_strategy(unsafe_name, "sys", "turn")
-        print(f"After save, strategy_dir: {strategy_dir}, exists: {strategy_dir.exists()}")
-        # If it doesn't raise, check the saved file name is safe
-        assert ".." not in path.name
-        assert "/" not in path.name
-        # ... etc.
-    except Exception as e:
-        # If it raises, that's acceptable too.
-        print(f"Exception in save_strategy: {e}")
-    finally:
-        # Clean up the entire strategy directory to ensure isolation
-        if strategy_dir.exists():
-            print(f"Cleaning up strategy directory: {strategy_dir}")
-            shutil.rmtree(strategy_dir)
-        else:
-            print(f"Strategy directory does not exist: {strategy_dir}")
+    path = save_strategy(unsafe_name, "sys", "turn")
+
+    assert path.exists()
+    assert path.parent == strategy_dir
+    assert ".." not in path.name
+    assert not any(character in path.name for character in "/\\:*?\"<>|")
 
 
 def test_compute_budget_state():

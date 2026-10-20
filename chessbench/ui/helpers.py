@@ -106,7 +106,7 @@ def render_board_with_evalbar(
 ) -> None:
     """Render the board + a thin eval bar to its left.
 
-    Eval bar semantics (DESIGN.md § 2):
+    Eval bar semantics:
     - White advantage fills the bar white (fill from top).
     - Black advantage fills the bar black (fill from bottom).
     - A mate score fills solid white with a "M{N}" glyph.
